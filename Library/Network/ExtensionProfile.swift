@@ -186,6 +186,15 @@ public class ExtensionProfile: ObservableObject {
             return
         }
         guard let manager else { return }
+        // A usable shared app-group container is required for the tunnel: the
+        // extension reads its configuration from it. Without it the tunnel would
+        // appear to start but never receive the profile - refuse instead, with a
+        // clear message, so there is no false "connected" state.
+        guard FilePath.hasSharedContainer else {
+            throw NSError(domain: "ExtensionProfile", code: 1, userInfo: [
+                NSLocalizedDescriptionKey: String(localized: "No App Group is available for this signature. The VPN cannot start - please re-sign the app with a profile that includes an App Group."),
+            ])
+        }
         try await fetchProfile()
         manager.isEnabled = true
         let alwaysOn = await SharedPreferences.alwaysOn.get()

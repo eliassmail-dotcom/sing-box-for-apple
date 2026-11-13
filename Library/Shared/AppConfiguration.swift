@@ -77,7 +77,15 @@ public enum AppConfiguration {
     }
 
     public static var backgroundTaskID: String {
-        "\(packageName).update_profiles"
+        // Must match the Info.plist BGTaskSchedulerPermittedIdentifiers entry
+        // exactly. Re-signing tools rename the bundle identifier but leave this
+        // key untouched, so deriving it from packageName would desync from the
+        // plist after re-signing; read the actual plist value instead.
+        if let items = Bundle.main.object(forInfoDictionaryKey: "BGTaskSchedulerPermittedIdentifiers") as? [String],
+           let first = items.first, !first.isEmpty {
+            return first
+        }
+        return "\(packageName).update_profiles"
     }
 
     public static var iCloudContainerID: String {
@@ -101,31 +109,31 @@ public enum AppConfiguration {
     // custom Info.plist keys untouched. The resolvers below prefer the actual signed
     // values so the app keeps working no matter which certificate signed it.
 
-    /// Bundle identifier of the host application. Valid in both the app process and
+    /// Bundle of the host application. Valid in both the app process and
     /// extension processes (extensions live inside <Host>.app/PlugIns/*.appex).
-    private static let resolvedHostBundleID: String? = {
+    private static let hostBundle: Bundle? = {
         let bundle = Bundle.main
         if bundle.bundleURL.pathExtension == "appex" {
             var url = bundle.bundleURL
             while url.pathComponents.count > 1 {
                 url = url.deletingLastPathComponent()
                 if url.pathExtension == "app" {
-                    return Bundle(url: url)?.bundleIdentifier
+                    return Bundle(url: url)
                 }
             }
             return nil
         }
-        return bundle.bundleIdentifier
+        return bundle
     }()
 
-    /// Identifier of the embedded packet-tunnel extension, discovered from the app
-    /// bundle contents instead of assuming the ".extension" suffix.
-    private static let resolvedExtensionBundleID: String? = {
-        let bundle = Bundle.main
-        if bundle.bundleURL.pathExtension == "appex" {
-            return bundle.bundleIdentifier
+    /// Bundle of the embedded packet-tunnel extension, discovered from the app
+    /// bundle contents instead of assuming the ".extension" suffix. In the
+    /// extension process itself this is Bundle.main.
+    private static let packetTunnelBundle: Bundle? = {
+        if Bundle.main.bundleURL.pathExtension == "appex" {
+            return Bundle.main
         }
-        guard let plugins = bundle.builtInPlugInsURL,
+        guard let plugins = Bundle.main.builtInPlugInsURL,
               let items = try? FileManager.default.contentsOfDirectory(at: plugins, includingPropertiesForKeys: nil) else {
             return nil
         }
@@ -133,20 +141,68 @@ public enum AppConfiguration {
             guard let info = Bundle(url: item)?.infoDictionary else { continue }
             guard let ext = info["NSExtension"] as? [String: Any] else { continue }
             guard ext["NSExtensionPointIdentifier"] as? String == "com.apple.networkextension.packet-tunnel" else { continue }
-            return info["CFBundleIdentifier"] as? String
+            return Bundle(url: item)
         }
         return nil
     }()
 
-    /// First app group (sorted for determinism across processes) that this process
-    /// can actually access according to its signed entitlements.
-    private static let resolvedAppGroupID: String? = {
-        let groups = SignedEntitlements.stringArray("com.apple.security.application-groups").sorted()
-        for group in groups {
-            if FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: group) != nil {
-                return group
-            }
+    /// The peer binary for app-group negotiation: the packet-tunnel extension
+    /// when running in the app process, the host app when running in an
+    /// extension process. The main app and the tunnel must agree on the same
+    /// group, and their signatures may come from different profiles, so each
+    /// side intersects its own groups with the peer's.
+    private static let peerBundle: Bundle? = {
+        if Bundle.main.bundleURL.pathExtension == "appex" {
+            return hostBundle
         }
-        return nil
+        return packetTunnelBundle
     }()
+
+    private static let resolvedHostBundleID: String? = hostBundle?.bundleIdentifier
+
+    private static let resolvedExtensionBundleID: String? = packetTunnelBundle?.bundleIdentifier
+
+    /// App groups usable in this process: entitled per this binary's signature,
+    /// intersected with the peer binary's signed groups (when discoverable),
+    /// with a live container, sorted for determinism.
+    private static let usableAppGroups: [String] = {
+        var candidates = SignedEntitlements.stringArray("com.apple.security.application-groups")
+        let peerGroups = peerBundle.map { SignedEntitlements.stringArray("com.apple.security.application-groups", of: $0) } ?? []
+        if !peerGroups.isEmpty {
+            candidates = Array(Set(candidates).intersection(Set(peerGroups)))
+        }
+        return candidates
+            .filter { FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: $0) != nil }
+            .sorted()
+    }()
+
+    /// The build-time AppGroupIdentifier, when it is still entitled and usable
+    /// under the current signature (priority 1).
+    private static let preferredAppGroup: String? = {
+        guard let value = Bundle.main.object(forInfoDictionaryKey: "AppGroupIdentifier") as? String,
+              !value.isEmpty,
+              usableAppGroups.contains(value) else {
+            return nil
+        }
+        return value
+    }()
+
+    /// App group resolved from the signed entitlements, with priority:
+    /// 1. build-time AppGroupIdentifier if still usable;
+    /// 2. intersection of the host/extension signed groups;
+    /// 3. the single remaining usable group;
+    /// 4. with several remaining, a deterministic (sorted) choice - see
+    ///    appGroupSelectionAmbiguous for diagnostics.
+    private static let resolvedAppGroupID: String? = {
+        if let preferredAppGroup {
+            return preferredAppGroup
+        }
+        return usableAppGroups.first
+    }()
+
+    /// True when several app groups remained eligible and none was preferred:
+    /// the chosen group is deterministic, but not provably the intended one.
+    public static var appGroupSelectionAmbiguous: Bool {
+        preferredAppGroup == nil && usableAppGroups.count > 1
+    }
 }

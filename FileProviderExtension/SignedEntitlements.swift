@@ -24,6 +24,21 @@ public enum SignedEntitlements {
         return parse(data)
     }
 
+    /// Entitlements dictionary of the given bundle's executable, or nil.
+    /// Used to inspect the peer binary (host app / packet-tunnel extension),
+    /// whose signature may come from a different provisioning profile.
+    public static func load(of bundle: Bundle) -> [String: Any]? {
+        guard let url = bundle.executableURL else { return nil }
+        guard let data = try? Data(contentsOf: url) else { return nil }
+        return parse(data)
+    }
+
+    /// The value of `key` in the given bundle's signed entitlements.
+    public static func stringArray(_ key: String, of bundle: Bundle) -> [String] {
+        guard let dict = load(of: bundle) else { return [] }
+        return dict[key] as? [String] ?? []
+    }
+
     /// Parses the XML entitlements blob out of a Mach-O image (thin or universal).
     public static func parse(_ data: Data) -> [String: Any]? {
         var slice = data
