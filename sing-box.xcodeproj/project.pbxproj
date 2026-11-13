@@ -2283,7 +2283,7 @@
 				MARKETING_VERSION = 1.0;
 				MODULE_VERIFIER_SUPPORTED_LANGUAGES = "objective-c objective-c++";
 				MODULE_VERIFIER_SUPPORTED_LANGUAGE_STANDARDS = "gnu17 gnu++20";
-				PRODUCT_BUNDLE_IDENTIFIER = "app.amethyst4184.corn1816";
+				PRODUCT_BUNDLE_IDENTIFIER = "app.amethyst4184.singboxlx";
 				PRODUCT_NAME = "$(TARGET_NAME:c99extidentifier)";
 				PROVISIONING_PROFILE_SPECIFIER = "";
 				SDKROOT = iphoneos;
@@ -2325,7 +2325,7 @@
 				MARKETING_VERSION = 1.0;
 				MODULE_VERIFIER_SUPPORTED_LANGUAGES = "objective-c objective-c++";
 				MODULE_VERIFIER_SUPPORTED_LANGUAGE_STANDARDS = "gnu17 gnu++20";
-				PRODUCT_BUNDLE_IDENTIFIER = "app.amethyst4184.corn1816";
+				PRODUCT_BUNDLE_IDENTIFIER = "app.amethyst4184.singboxlx";
 				PRODUCT_NAME = "$(TARGET_NAME:c99extidentifier)";
 				PROVISIONING_PROFILE_SPECIFIER = "";
 				SDKROOT = iphoneos;
@@ -2554,7 +2554,7 @@
 		3A7B322F2FDE1D54008C0F7F /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				APP_GROUP_IDENTIFIER = "group.a1a3126d75ee90bd.1";
+				APP_GROUP_IDENTIFIER = "group.a1a3126d75ee90bd.2";
 				CODE_SIGNING_ALLOWED = NO;
 				CODE_SIGN_STYLE = Manual;
 				CREATE_INFOPLIST_SECTION_IN_BINARY = YES;
@@ -2579,7 +2579,7 @@
 		3A7B32302FDE1D54008C0F7F /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				APP_GROUP_IDENTIFIER = "group.a1a3126d75ee90bd.1";
+				APP_GROUP_IDENTIFIER = "group.a1a3126d75ee90bd.2";
 				CODE_SIGNING_ALLOWED = NO;
 				CODE_SIGN_STYLE = Manual;
 				CREATE_INFOPLIST_SECTION_IN_BINARY = YES;
@@ -2604,7 +2604,7 @@
 		3AAAFB2F2EF5218F004C69AD /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				APP_GROUP_IDENTIFIER = "group.a1a3126d75ee90bd.1";
+				APP_GROUP_IDENTIFIER = "group.a1a3126d75ee90bd.2";
 				CODE_SIGN_ENTITLEMENTS = FileProviderExtension/FileProviderExtension.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
@@ -2637,7 +2637,7 @@
 		3AAAFB302EF5218F004C69AD /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				APP_GROUP_IDENTIFIER = "group.a1a3126d75ee90bd.1";
+				APP_GROUP_IDENTIFIER = "group.a1a3126d75ee90bd.2";
 				CODE_SIGN_ENTITLEMENTS = FileProviderExtension/FileProviderExtension.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
@@ -2880,7 +2880,7 @@
 		3AE595762F08C34000C13426 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				APP_GROUP_IDENTIFIER = "group.a1a3126d75ee90bd.1";
+				APP_GROUP_IDENTIFIER = "group.a1a3126d75ee90bd.2";
 				AUTOMATION_APPLE_EVENTS = NO;
 				CODE_SIGN_ENTITLEMENTS = HelperService/RootHelper.entitlements;
 				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
@@ -2921,7 +2921,7 @@
 		3AE595772F08C34000C13426 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				APP_GROUP_IDENTIFIER = "group.a1a3126d75ee90bd.1";
+				APP_GROUP_IDENTIFIER = "group.a1a3126d75ee90bd.2";
 				AUTOMATION_APPLE_EVENTS = NO;
 				CODE_SIGN_ENTITLEMENTS = HelperService/RootHelper.entitlements;
 				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
@@ -2963,9 +2963,9 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
-				APP_GROUP_IDENTIFIER = "group.a1a3126d75ee90bd.1";
+				APP_GROUP_IDENTIFIER = "group.a1a3126d75ee90bd.2";
 				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
-				BASE_PACKAGE_IDENTIFIER = app.amethyst4184.corn1816;
+				BASE_PACKAGE_IDENTIFIER = app.amethyst4184.singboxlx;
 				CLANG_ANALYZER_LOCALIZABILITY_NONLOCALIZED = YES;
 				CLANG_ANALYZER_NONNULL = YES;
 				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
@@ -3033,9 +3033,9 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
-				APP_GROUP_IDENTIFIER = "group.a1a3126d75ee90bd.1";
+				APP_GROUP_IDENTIFIER = "group.a1a3126d75ee90bd.2";
 				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
-				BASE_PACKAGE_IDENTIFIER = app.amethyst4184.corn1816;
+				BASE_PACKAGE_IDENTIFIER = app.amethyst4184.singboxlx;
 				CLANG_ANALYZER_LOCALIZABILITY_NONLOCALIZED = YES;
 				CLANG_ANALYZER_NONNULL = YES;
 				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
@@ -3106,6 +3106,7 @@
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = SFI/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = "sing-box lx";
 				INFOPLIST_KEY_CFBundleDisplayName = "sing-box";
 				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
@@ -3149,6 +3150,7 @@
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = SFI/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = "sing-box lx";
 				INFOPLIST_KEY_CFBundleDisplayName = "sing-box";
 				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
@@ -3354,7 +3356,7 @@
 		3AEECBFD2A6DF40A006A0E0C /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				APP_GROUP_IDENTIFIER = "group.a1a3126d75ee90bd.1";
+				APP_GROUP_IDENTIFIER = "group.a1a3126d75ee90bd.2";
 				CODE_SIGN_ENTITLEMENTS = SystemExtension/SystemExtension.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Developer ID Application";
@@ -3402,7 +3404,7 @@
 		3AEECBFE2A6DF40A006A0E0C /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				APP_GROUP_IDENTIFIER = "group.a1a3126d75ee90bd.1";
+				APP_GROUP_IDENTIFIER = "group.a1a3126d75ee90bd.2";
 				CODE_SIGN_ENTITLEMENTS = SystemExtension/SystemExtension.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Developer ID Application";
@@ -3450,7 +3452,7 @@
 		3AEECC112A6DF9CA006A0E0C /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				APP_GROUP_IDENTIFIER = "group.a1a3126d75ee90bd.1";
+				APP_GROUP_IDENTIFIER = "group.a1a3126d75ee90bd.2";
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = NO;
@@ -3492,7 +3494,7 @@
 		3AEECC122A6DF9CA006A0E0C /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				APP_GROUP_IDENTIFIER = "group.a1a3126d75ee90bd.1";
+				APP_GROUP_IDENTIFIER = "group.a1a3126d75ee90bd.2";
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = NO;
@@ -3767,7 +3769,7 @@
 		3AF7B2092FF10003000A0001 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				APP_GROUP_IDENTIFIER = "group.a1a3126d75ee90bd.1";
+				APP_GROUP_IDENTIFIER = "group.a1a3126d75ee90bd.2";
 				CLANG_ENABLE_MODULES = YES;
 				CODE_SIGN_ENTITLEMENTS = ShareExtension.System/ShareExtension.entitlements;
 				CODE_SIGN_IDENTITY = "Developer ID Application";
@@ -3803,7 +3805,7 @@
 		3AF7B20A2FF10003000A0001 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				APP_GROUP_IDENTIFIER = "group.a1a3126d75ee90bd.1";
+				APP_GROUP_IDENTIFIER = "group.a1a3126d75ee90bd.2";
 				CLANG_ENABLE_MODULES = YES;
 				CODE_SIGN_ENTITLEMENTS = ShareExtension.System/ShareExtension.entitlements;
 				CODE_SIGN_IDENTITY = "Developer ID Application";
