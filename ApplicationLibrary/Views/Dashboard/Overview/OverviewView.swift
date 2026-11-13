@@ -104,6 +104,12 @@ public struct OverviewView: View {
         case .strategyMode:
             StrategyModeCard()
                 .environmentObject(environments.commandClient)
+        case .strategyNode:
+            CurrentOutboundCard(groupTag: "Стратегия", title: "Узел • Стратегия")
+                .environmentObject(environments.commandClient)
+        case .geminiNode:
+            CurrentOutboundCard(groupTag: "Gemini", title: "Узел • Gemini")
+                .environmentObject(environments.commandClient)
         case .profile:
             ProfileCard(
                 profileList: $profileList,

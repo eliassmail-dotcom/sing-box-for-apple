@@ -184,6 +184,10 @@ public struct RemoteDashboardView: View {
             ClashModeCard()
         case .strategyMode:
             StrategyModeCard()
+        case .strategyNode:
+            CurrentOutboundCard(groupTag: "Стратегия", title: "Узел • Стратегия")
+        case .geminiNode:
+            CurrentOutboundCard(groupTag: "Gemini", title: "Узел • Gemini")
         case .httpProxy, .profile:
             EmptyView()
         }
