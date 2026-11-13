@@ -11,7 +11,7 @@
 	<key>BasePackageIdentifier</key>
 	<string>$(BASE_PACKAGE_IDENTIFIER)</string>
 	<key>CFBundleDisplayName</key>
-	<string>sing-box lx</string>
+	<string>sing-box</string>
 	<key>CFBundleDocumentTypes</key>
 	<array>
 		<dict>
