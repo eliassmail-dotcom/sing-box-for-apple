@@ -7,9 +7,9 @@ public struct CurrentOutboundCard: View {
     @EnvironmentObject private var commandClient: CommandClient
 
     private let groupTag: String
-    private let title: String
+    private let title: LocalizedStringKey
 
-    public init(groupTag: String, title: String) {
+    public init(groupTag: String, title: LocalizedStringKey) {
         self.groupTag = groupTag
         self.title = title
     }

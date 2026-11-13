@@ -67,7 +67,7 @@ public struct OverviewView: View {
 
     private func shouldShowCard(_ card: DashboardCard) -> Bool {
         switch card {
-        case .status, .connections, .uploadTraffic, .downloadTraffic, .clashMode:
+        case .status, .connections, .uploadTraffic, .downloadTraffic, .clashMode, .strategyMode, .strategyNode, .geminiNode:
             return Variant.screenshotMode || profile.status.isConnected
         case .httpProxy:
             return (Variant.screenshotMode || profile.status.isConnectedStrict) && systemProxyAvailable
