@@ -8,6 +8,7 @@ public enum DashboardCard: String, CaseIterable, Identifiable, Codable, Hashable
     case downloadTraffic
     case httpProxy
     case clashMode
+    case strategyMode
     case profile
 
     public var id: String {
@@ -28,6 +29,8 @@ public enum DashboardCard: String, CaseIterable, Identifiable, Codable, Hashable
             return "System HTTP Proxy"
         case .clashMode:
             return "Clash Mode"
+        case .strategyMode:
+            return "Стратегия"
         case .profile:
             return "Profile"
         }
@@ -47,6 +50,8 @@ public enum DashboardCard: String, CaseIterable, Identifiable, Codable, Hashable
             return "network"
         case .clashMode:
             return "circle.grid.2x2.fill"
+        case .strategyMode:
+            return "wand.and.stars"
         case .profile:
             return "doc.text.fill"
         }
@@ -58,7 +63,7 @@ public enum DashboardCard: String, CaseIterable, Identifiable, Codable, Hashable
             return .traffic
         case .status, .connections:
             return .statistics
-        case .httpProxy, .clashMode, .profile:
+        case .httpProxy, .clashMode, .strategyMode, .profile:
             return nil
         }
     }
@@ -84,7 +89,7 @@ public enum DashboardCard: String, CaseIterable, Identifiable, Codable, Hashable
     }
 
     public static var defaultOrder: [DashboardCard] {
-        [.uploadTraffic, .downloadTraffic, .status, .connections, .httpProxy, .clashMode, .profile]
+        [.uploadTraffic, .downloadTraffic, .status, .connections, .httpProxy, .clashMode, .strategyMode, .profile]
     }
 }
 

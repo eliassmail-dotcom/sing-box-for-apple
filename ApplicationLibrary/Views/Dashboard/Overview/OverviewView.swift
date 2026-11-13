@@ -101,6 +101,9 @@ public struct OverviewView: View {
         case .clashMode:
             ClashModeCard()
                 .environmentObject(environments.commandClient)
+        case .strategyMode:
+            StrategyModeCard()
+                .environmentObject(environments.commandClient)
         case .profile:
             ProfileCard(
                 profileList: $profileList,

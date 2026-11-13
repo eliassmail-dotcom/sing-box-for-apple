@@ -182,6 +182,8 @@ public struct RemoteDashboardView: View {
             DownloadTrafficCard()
         case .clashMode:
             ClashModeCard()
+        case .strategyMode:
+            StrategyModeCard()
         case .httpProxy, .profile:
             EmptyView()
         }
