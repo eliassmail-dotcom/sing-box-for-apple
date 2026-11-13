@@ -2,151 +2,102 @@ import Libbox
 import Library
 import SwiftUI
 
+//gru: strategy quick-switch card (replaces clash mode picker).
+// Buttons map to selector groups of the generated profile:
+//   Авто • Базовая -> Стратегия: Авто · Базовая, Gemini: Gemini • Super • A
+//   Авто • Белые   -> Стратегия: Авто · Белые,   Gemini: Gemini • Super • A
+//   Авто • Полная  -> Стратегия: Авто · Полная,  Gemini: Gemini • Super • A
+//   Ручной режим   -> Стратегия: Ручной выбор,    Gemini: Gemini • Выбор
+// A button is shown only when the profile actually has the target group.
 public struct ClashModeCard: View {
     @EnvironmentObject private var commandClient: CommandClient
-    @State private var clashMode: String = ""
     @State private var alert: AlertState?
-    #if !os(tvOS)
-        @Namespace private var tabNamespace
-        @State private var availableWidth: CGFloat = 0
-        @State private var tabBarWidth: CGFloat = 0
-    #endif
+
+    private struct StrategyOption {
+        let title: String
+        let strategyOutbound: String
+        let geminiOutbound: String
+    }
+
+    private static let strategyGroupTag = "Стратегия"
+    private static let geminiGroupTag = "Gemini"
+
+    private var allOptions: [StrategyOption] {
+        [
+            StrategyOption(title: "Авто • Базовая", strategyOutbound: "Авто · Базовая", geminiOutbound: "Gemini • Super • A"),
+            StrategyOption(title: "Авто • Белые", strategyOutbound: "Авто · Белые", geminiOutbound: "Gemini • Super • A"),
+            StrategyOption(title: "Авто • Полная", strategyOutbound: "Авто · Полная", geminiOutbound: "Gemini • Super • A"),
+            StrategyOption(title: "Ручной режим", strategyOutbound: "Ручной выбор", geminiOutbound: "Gemini • Выбор"),
+        ]
+    }
 
     public init() {}
 
     public var body: some View {
-        if shouldShowPicker {
+        if let strategyGroup {
             DashboardCardView(title: "") {
                 VStack(alignment: .leading, spacing: 12) {
-                    DashboardCardHeader(icon: "circle.grid.2x2.fill", title: "Mode")
-                    #if os(tvOS)
-                        modeMenu
-                    #else
-                        if tabsFit {
-                            modeTabBar
-                        } else {
-                            modeMenu
+                    DashboardCardHeader(icon: "circle.grid.2x2.fill", title: "Режим")
+                    LazyVGrid(columns: [GridItem(.flexible(), spacing: 8), GridItem(.flexible(), spacing: 8)], spacing: 8) {
+                        ForEach(visibleOptions, id: \.title) { option in
+                            Button {
+                                Task {
+                                    await apply(option)
+                                }
+                            } label: {
+                                Text(option.title)
+                                    .font(.system(size: buttonFontSize, weight: .medium))
+                                    .foregroundStyle(isActive(option, strategyGroup: strategyGroup) ? .primary : .secondary)
+                                    .lineLimit(1)
+                                    .minimumScaleFactor(0.7)
+                                    .frame(maxWidth: .infinity)
+                                    .frame(height: buttonHeight)
+                                    .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                            .background(
+                                RoundedRectangle(cornerRadius: 12)
+                                    .fill(isActive(option, strategyGroup: strategyGroup) ? Color.primary.opacity(0.16) : Color.secondary.opacity(0.1))
+                            )
                         }
-                    #endif
-                }
-                #if !os(tvOS)
-                .background(
-                    GeometryReader { geo in
-                        Color.clear.preference(key: AvailableWidthKey.self, value: geo.size.width)
                     }
-                )
-                .onPreferenceChange(AvailableWidthKey.self) { newValue in
-                    availableWidth = newValue
                 }
-                .background(
-                    tabBarContent
-                        .fixedSize()
-                        .hidden()
-                        .background(GeometryReader { geo in
-                            Color.clear.preference(key: TabBarWidthKey.self, value: geo.size.width)
-                        })
-                )
-                .onPreferenceChange(TabBarWidthKey.self) { newValue in
-                    tabBarWidth = newValue
-                }
-                #endif
-            }
-            .onAppear {
-                clashMode = commandClient.clashMode
-            }
-            .onChangeCompat(of: commandClient.clashMode) { newValue in
-                clashMode = newValue
             }
             .alert($alert)
         }
     }
 
-    private var modeMenu: some View {
-        Menu {
-            ForEach(commandClient.clashModeList, id: \.self) { mode in
-                Button {
-                    clashMode = mode
-                    Task {
-                        await setClashMode(mode)
-                    }
-                } label: {
-                    if mode == clashMode {
-                        Label(mode, systemImage: "checkmark")
-                    } else {
-                        Text(mode)
-                    }
-                }
-            }
-        } label: {
-            HStack {
-                Text(clashMode)
-                    .font(.system(size: buttonFontSize, weight: .medium))
-                    .foregroundStyle(.primary)
-                    .lineLimit(1)
-
-                Spacer()
-
-                Image(systemName: "chevron.up.chevron.down")
-                    .font(.system(size: chevronSize, weight: .semibold))
-                    .foregroundStyle(.secondary)
-            }
-            .padding(.horizontal, 14)
-            .frame(height: buttonHeight)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .selectorBackground()
+    private var strategyGroup: OutboundGroup? {
+        commandClient.groups?.first { $0.tag == Self.strategyGroupTag && $0.selectable }
     }
 
-    #if !os(tvOS)
-        private var modeTabBar: some View {
-            HStack(spacing: 0) {
-                ForEach(commandClient.clashModeList, id: \.self) { mode in
-                    Button {
-                        withAnimation {
-                            clashMode = mode
-                        }
-                        Task {
-                            await setClashMode(mode)
-                        }
-                    } label: {
-                        Text(mode)
-                            .font(.system(size: buttonFontSize, weight: .medium))
-                            .foregroundStyle(mode == clashMode ? .primary : .secondary)
-                            .lineLimit(1)
-                            .frame(maxWidth: .infinity)
-                            .frame(height: buttonHeight)
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .background {
-                        if mode == clashMode {
-                            selectorCapsule
-                                .matchedGeometryEffect(id: "selector", in: tabNamespace)
-                        }
-                    }
-                }
-            }
-            .selectorBackground()
-        }
+    private var geminiGroup: OutboundGroup? {
+        commandClient.groups?.first { $0.tag == Self.geminiGroupTag && $0.selectable }
+    }
 
-        private var tabBarContent: some View {
-            HStack(spacing: 0) {
-                ForEach(commandClient.clashModeList, id: \.self) { mode in
-                    Text(mode)
-                        .font(.system(size: buttonFontSize, weight: .medium))
-                        .lineLimit(1)
-                        .padding(.horizontal, 14)
-                        .frame(height: buttonHeight)
-                }
-            }
+    private var visibleOptions: [StrategyOption] {
+        guard let strategyGroup else {
+            return []
         }
+        return allOptions.filter { option in
+            strategyGroup.items.contains { $0.tag == option.strategyOutbound }
+        }
+    }
 
-        private var selectorCapsule: some View {
-            RoundedRectangle(cornerRadius: 12)
-                .fill(Color.primary.opacity(0.1))
+    private func isActive(_ option: StrategyOption, strategyGroup: OutboundGroup) -> Bool {
+        strategyGroup.selected == option.strategyOutbound
+    }
+
+    private func apply(_ option: StrategyOption) async {
+        do {
+            try await CommandTarget.standaloneClient().selectOutbound(Self.strategyGroupTag, outboundTag: option.strategyOutbound)
+            if let geminiGroup, geminiGroup.items.contains(where: { $0.tag == option.geminiOutbound }) {
+                try await CommandTarget.standaloneClient().selectOutbound(Self.geminiGroupTag, outboundTag: option.geminiOutbound)
+            }
+        } catch {
+            alert = AlertState(action: "select outbound", error: error)
         }
-    #endif
+    }
 
     private var buttonHeight: CGFloat {
         #if os(tvOS)
@@ -162,51 +113,7 @@ public struct ClashModeCard: View {
         #if os(macOS)
             13
         #else
-            17
+            15
         #endif
-    }
-
-    private var chevronSize: CGFloat {
-        #if os(macOS)
-            10
-        #else
-            12
-        #endif
-    }
-
-    #if !os(tvOS)
-        private var tabsFit: Bool {
-            tabBarWidth > 0 && tabBarWidth <= availableWidth
-        }
-    #endif
-
-    private var shouldShowPicker: Bool {
-        commandClient.clashModeList.count > 1
-    }
-
-    private nonisolated func setClashMode(_ newMode: String) async {
-        do {
-            try CommandTarget.standaloneClient().setClashMode(newMode)
-        } catch {
-            await MainActor.run {
-                alert = AlertState(action: "set clash mode", error: error)
-            }
-        }
     }
 }
-
-#if !os(tvOS)
-    private struct AvailableWidthKey: PreferenceKey {
-        static var defaultValue: CGFloat = 0
-        static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
-            value = max(value, nextValue())
-        }
-    }
-
-    private struct TabBarWidthKey: PreferenceKey {
-        static var defaultValue: CGFloat = 0
-        static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
-            value = max(value, nextValue())
-        }
-    }
-#endif
