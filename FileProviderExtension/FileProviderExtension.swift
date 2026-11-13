@@ -5,6 +5,14 @@ class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
     let domain: NSFileProviderDomain
 
     private static let appGroupID: String = {
+        // Prefer an app group this extension is actually entitled to: re-signing
+        // tools rewrite entitlements to groups available in the signing profile.
+        let groups = SignedEntitlements.stringArray("com.apple.security.application-groups").sorted()
+        for group in groups {
+            if FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: group) != nil {
+                return group
+            }
+        }
         guard let value = Bundle.main.object(forInfoDictionaryKey: "AppGroupIdentifier") as? String else {
             fatalError("Missing AppGroupIdentifier in Info.plist")
         }
@@ -12,7 +20,8 @@ class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
     }()
 
     private var workingDirectory: URL {
-        let groupURL = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: Self.appGroupID)!
+        let groupURL = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: Self.appGroupID)
+            ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
         return groupURL
             .appendingPathComponent("Library", isDirectory: true)
             .appendingPathComponent("Caches", isDirectory: true)

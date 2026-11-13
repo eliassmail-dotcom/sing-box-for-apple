@@ -3,6 +3,12 @@ import NetworkExtension
 
 enum WidgetAppConfiguration {
     static let packageName: String = {
+        // Prefer the actual host bundle identifier: re-signing tools rename bundle
+        // identifiers to match the signing profile; the widget lives inside the host
+        // app, so resolve the host the same way the main app does.
+        if let id = resolvedHostBundleID, !id.isEmpty {
+            return id
+        }
         guard let value = Bundle.main.object(forInfoDictionaryKey: "BasePackageIdentifier") as? String else {
             fatalError("Missing BasePackageIdentifier in Info.plist")
         }
@@ -10,6 +16,14 @@ enum WidgetAppConfiguration {
     }()
 
     static let appGroupID: String = {
+        // Prefer an app group this widget is actually entitled to: re-signing tools
+        // rewrite entitlements to groups available in the signing profile.
+        let groups = SignedEntitlements.stringArray("com.apple.security.application-groups").sorted()
+        for group in groups {
+            if FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: group) != nil {
+                return group
+            }
+        }
         guard let value = Bundle.main.object(forInfoDictionaryKey: "AppGroupIdentifier") as? String else {
             fatalError("Missing AppGroupIdentifier in Info.plist")
         }
@@ -19,6 +33,21 @@ enum WidgetAppConfiguration {
     static var widgetControlKind: String {
         "\(packageName).widget.ServiceToggle"
     }
+
+    private static let resolvedHostBundleID: String? = {
+        let bundle = Bundle.main
+        if bundle.bundleURL.pathExtension == "appex" {
+            var url = bundle.bundleURL
+            while url.pathComponents.count > 1 {
+                url = url.deletingLastPathComponent()
+                if url.pathExtension == "app" {
+                    return Bundle(url: url)?.bundleIdentifier
+                }
+            }
+            return nil
+        }
+        return bundle.bundleIdentifier
+    }()
 }
 
 extension NEVPNStatus {
