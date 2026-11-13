@@ -565,6 +565,11 @@ public class CommandClient: ObservableObject {
                 commandClient.hasAnyConnection = result.hasAny
             }
         }
+
+        // lx: SPEC 018 — structured DNS-query events (CommandDNS).
+        // The SFI UI has no DNS-queries screen yet, so events are accepted and dropped.
+        func write(_ query: LibboxDnsQuery?) {
+        }
     }
 }
 
