@@ -74,6 +74,28 @@ public enum LXNextNodeSelection {
     public static let commandTag = "__lx_next_node__"
     public static let strategyGroupTag = "Стратегия"
 
+    /// Resolve the actual selected node through nested selectors and URLTest
+    /// groups. The outer Strategy tag is intentionally not a node identifier.
+    /// Used to verify that a Control Center request really changed the route.
+    public static func activeLeafTag(in groups: [OutboundGroup]) -> String? {
+        let byTag = Dictionary(groups.map { ($0.tag, $0) },
+                               uniquingKeysWith: { first, _ in first })
+        guard let strategy = byTag[strategyGroupTag], strategy.type == "selector" else {
+            return nil
+        }
+        var next = strategy.selected
+        var visited: Set<String> = [strategyGroupTag]
+        for _ in 0..<12 {
+            guard !next.isEmpty, visited.insert(next).inserted else { return nil }
+            guard let nested = byTag[next] else { return next }
+            guard nested.type == "selector" || nested.type == "urltest" else {
+                return next
+            }
+            next = nested.selected
+        }
+        return nil
+    }
+
     public static func nextHealthyTag(
         current: String,
         candidates: [(tag: String, delayMs: UInt16)]
