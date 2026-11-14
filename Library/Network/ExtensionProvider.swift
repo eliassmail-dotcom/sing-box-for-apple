@@ -371,9 +371,7 @@ open class ExtensionProvider: NEPacketTunnelProvider {
     /// enforced by the core, not duplicated in a widget process.
     private static func changeActiveNode() throws {
         let client = try CommandTarget.standaloneClient()
-        guard let iterator = try client.getGroups() else {
-            throw ExtensionStartupError("LX: список групп не получен")
-        }
+        let iterator = try client.getGroups()
         var groups: [OutboundGroup] = []
         while iterator.hasNext() {
             if let group = iterator.next() {
