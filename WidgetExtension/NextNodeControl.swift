@@ -11,8 +11,8 @@ struct NextNodeControl: ControlWidget {
         ) {
             ControlWidgetButton(action: NextNodeControlIntent()) {
                 Label("Сменить узел", systemImage: "arrow.triangle.2.circlepath")
+                    .controlWidgetActionHint("Сменить узел")
             }
-            .controlWidgetActionHint("Сменить узел")
         }
         .displayName("Сменить узел")
         .description("Переключить сервер внутри активного режима VPN.")
