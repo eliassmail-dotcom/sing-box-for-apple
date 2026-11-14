@@ -156,4 +156,43 @@ final class StrategyModeCatalogTests: XCTestCase {
         XCTAssertEqual(LXNextNodeSelection.strategyGroupTag, "Стратегия")
     }
 
+
+    func testControlCenterVerifiesActiveLeafInNestedSmartMode() {
+        func makeGroup(_ tag: String, _ type: String, _ selected: String) -> OutboundGroup {
+            OutboundGroup(tag: tag, type: type, selected: selected,
+                          selectable: type == "selector", isExpand: false, items: [])
+        }
+        let base: [OutboundGroup] = [
+            makeGroup("Стратегия", "selector", "Авто · База → Белые"),
+            makeGroup("Авто · База → Белые", "urltest", "Авто · Базовая"),
+            makeGroup("Авто · Базовая", "urltest", "server-a"),
+            makeGroup("Авто · Белые", "urltest", "white-a"),
+        ]
+        XCTAssertEqual(LXNextNodeSelection.activeLeafTag(in: base), "server-a")
+        var changed = base
+        changed[2] = makeGroup("Авто · Базовая", "urltest", "server-b")
+        XCTAssertEqual(LXNextNodeSelection.activeLeafTag(in: changed), "server-b")
+        changed[1] = makeGroup("Авто · База → Белые", "urltest", "Авто · Белые")
+        XCTAssertEqual(LXNextNodeSelection.activeLeafTag(in: changed), "white-a")
+        changed[0] = makeGroup("Стратегия", "selector", "Ручной выбор")
+        changed.append(makeGroup("Ручной выбор", "selector", "manual-a"))
+        XCTAssertEqual(LXNextNodeSelection.activeLeafTag(in: changed), "manual-a")
+    }
+
+    func testControlCenterRejectsMissingOrCyclicStrategyGraph() {
+        func group(_ tag: String, _ type: String, _ selected: String) -> OutboundGroup {
+            OutboundGroup(tag: tag, type: type, selected: selected,
+                          selectable: type == "selector", isExpand: false, items: [])
+        }
+        XCTAssertNil(LXNextNodeSelection.activeLeafTag(in: []))
+        XCTAssertNil(LXNextNodeSelection.activeLeafTag(in: [
+            group("Стратегия", "selector", "loop"),
+            group("loop", "selector", "Стратегия"),
+        ]))
+        XCTAssertNil(LXNextNodeSelection.activeLeafTag(in: [
+            group("Стратегия", "selector", "Авто"),
+            group("Авто", "urltest", ""),
+        ]))
+    }
+
 }
