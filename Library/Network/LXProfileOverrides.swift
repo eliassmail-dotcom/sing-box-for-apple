@@ -315,6 +315,22 @@ public enum LXProfileOverrides {
 
         if injectFallback {
             try addWhiteFallback(to: &root)
+            // The generated smart fallback group is appended after the normal
+            // URLTest override pass. Apply the same reliability controls to it.
+            if var outbounds = root["outbounds"] as? [[String: Any]],
+               let index = outbounds.firstIndex(where: { ($0["tag"] as? String) == preferredFallbackTag }) {
+                if settings.adaptiveTolerancePercent > 0 {
+                    outbounds[index]["tolerance_percent"] = settings.adaptiveTolerancePercent
+                }
+                if settings.minHoldSeconds > 0 {
+                    outbounds[index]["min_hold"] = "\(settings.minHoldSeconds)s"
+                }
+                if !healthURLs.isEmpty {
+                    outbounds[index].removeValue(forKey: "url")
+                    outbounds[index]["urls"] = healthURLs
+                }
+                root["outbounds"] = outbounds
+            }
             changed = true
         }
 
