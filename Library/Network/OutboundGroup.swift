@@ -65,3 +65,30 @@ public struct OutboundGroupItem: Codable, Hashable {
         "\(urlTestDelay)ms"
     }
 }
+
+
+/// Shared selection rules for the Dashboard and the Control Center command.
+/// Keep these rules in Library so the packet tunnel and iOS UI agree.
+public enum LXNextNodeSelection {
+    // Must match group.LXNextNodeTag in the sing-box-lx Go core.
+    public static let commandTag = "__lx_next_node__"
+    public static let strategyGroupTag = "Стратегия"
+
+    public static func nextHealthyTag(
+        current: String,
+        candidates: [(tag: String, delayMs: UInt16)]
+    ) -> String? {
+        var seen = Set<String>()
+        let healthy = candidates.compactMap { candidate -> String? in
+            guard candidate.delayMs > 0, !seen.contains(candidate.tag) else { return nil }
+            seen.insert(candidate.tag)
+            return candidate.tag
+        }
+        guard !healthy.isEmpty else { return nil }
+        if let index = healthy.firstIndex(of: current) {
+            let next = healthy[(index + 1) % healthy.count]
+            return next == current ? nil : next
+        }
+        return healthy.first
+    }
+}
