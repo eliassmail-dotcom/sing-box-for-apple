@@ -57,6 +57,9 @@ public struct LXRuntimeSettingsView: View {
                             TextField("Проверочные URL через запятую", text: probeURLsBinding)
                             Text("До трёх HTTP(S)-адресов. Узел доступен, если ответил хотя бы один. Пустое поле сохраняет исходный URL. Порог и удержание действуют только для Least Test; при отказе или возврате на базовые удержание не мешает переключению.")
                                 .font(.footnote).foregroundStyle(.secondary)
+                            Toggle("Passive Guard · карантин узлов", isOn: passiveGuardEnabledBinding)
+                            Text("Экспериментально, по умолчанию выключено. Учитывает независимые ошибки соединений и зависания потоков; при подтверждённом отказе исключает узел на 60 с без разрыва действующих соединений. Только Least Test и Failover, не Round Robin. Это не гарантированный обход ТСПУ.")
+                                .font(.footnote).foregroundStyle(.secondary)
                         }
                         Section("Переопределения групп") {
                             ForEach(summary.urlTests) { group in
@@ -200,6 +203,11 @@ public struct LXRuntimeSettingsView: View {
     private var probeURLsBinding: Binding<String> {
         Binding(get: { currentSettings.probeURLs },
                 set: { value in mutate { $0.probeURLs = value } })
+    }
+
+    private var passiveGuardEnabledBinding: Binding<Bool> {
+        Binding(get: { currentSettings.passiveGuardEnabled },
+                set: { enabled in mutate { $0.passiveGuardEnabled = enabled } })
     }
 
     private var globalModeBinding: Binding<String> {
