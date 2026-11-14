@@ -66,9 +66,24 @@ public struct StrategyModeCard: View {
                             .controlSize(.small)
                     }
                 }
-                Text("Selector")
-                    .font(.caption)
-                    .foregroundStyle(Color.accentColor)
+                HStack(spacing: 6) {
+                    Text("Selector")
+                        .font(.caption)
+                        .foregroundStyle(Color.accentColor)
+                    Spacer(minLength: 2)
+                    if let count = respondingCount(mode, strategyGroup: strategyGroup) {
+                        Text("\(count)")
+                            .font(.caption.monospacedDigit().weight(.semibold))
+                            .foregroundColor(.urlTestGood)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.8)
+                            .accessibilityLabel("Успешный пинг: \(count) узлов")
+                    } else {
+                        Text("—")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
             }
             .frame(maxWidth: .infinity, minHeight: modeTileHeight, alignment: .leading)
             .padding(EdgeInsets(top: 10, leading: 12, bottom: 10, trailing: 12))
@@ -98,6 +113,23 @@ public struct StrategyModeCard: View {
 
     private func strategyTags(_ group: OutboundGroup) -> [String] {
         group.items.map(\.tag)
+    }
+
+    // Count only unique leaf nodes with a positive URLTest result.
+    // Do not count selector/URLTest group proxies as available nodes.
+    private func respondingCount(_ mode: StrategyModeSpec, strategyGroup: OutboundGroup) -> Int? {
+        guard let target = StrategyModeCatalog.strategyTarget(
+            mode, strategyTags: strategyTags(strategyGroup)
+        ), let groups = commandClient.groups else { return nil }
+        let snapshots = groups.map { group in
+            ModeLatencyGroup(
+                tag: group.tag,
+                members: group.items.map {
+                    ModeLatencyItem(tag: $0.tag, delayMs: $0.urlTestDelay)
+                }
+            )
+        }
+        return ModeRespondingNodeCounter.count(rootTag: target, groups: snapshots)
     }
 
     private func availability(_ mode: StrategyModeSpec, strategyGroup: OutboundGroup) -> Bool {
