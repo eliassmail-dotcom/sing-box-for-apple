@@ -157,17 +157,26 @@ enum WidgetTunnelControl {
         let expectedIDs = Set(packageNames.flatMap { base in
             ["\(base).extension", "\(base).system"]
         })
-        let matching = managers.filter { manager in
+        let exact = managers.filter { manager in
             guard let tunnel = manager.protocolConfiguration as? NETunnelProviderProtocol,
                   let provider = tunnel.providerBundleIdentifier else { return false }
-            // The serverAddress is written by ExtensionProfile.install and
-            // remains stable after third-party IPA resigning.
-            return expectedIDs.contains(provider) ||
-                (tunnel.serverAddress == "sing-box" &&
-                 (provider.hasSuffix(".extension") || provider.hasSuffix(".system")))
+            return expectedIDs.contains(provider)
         }
-        // Never control a different VPN just because it was listed first.
-        let candidates = matching
+        // Fallback for unusual IPA resigning: only use the stable serverAddress
+        // when exactly one candidate exists. Never guess between two sing-box
+        // installations or send our widget command to an unrelated VPN.
+        let candidates: [NETunnelProviderManager]
+        if !exact.isEmpty {
+            candidates = exact
+        } else {
+            let fallback = managers.filter { manager in
+                guard let tunnel = manager.protocolConfiguration as? NETunnelProviderProtocol,
+                      let provider = tunnel.providerBundleIdentifier else { return false }
+                return tunnel.serverAddress == "sing-box" &&
+                    (provider.hasSuffix(".extension") || provider.hasSuffix(".system"))
+            }
+            candidates = fallback.count == 1 ? fallback : []
+        }
         if connectedOnly {
             return candidates.first(where: { $0.connection.status == .connected })
         }
