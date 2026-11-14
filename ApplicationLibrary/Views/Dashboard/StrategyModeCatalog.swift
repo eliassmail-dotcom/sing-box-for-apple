@@ -1,4 +1,5 @@
 import Foundation
+import Library
 
 // gru: pure mapping between the four dashboard mode switches and the actual
 // selector tags of the generated profile (Dashboard TZ 14.11.2026, stage 4).
