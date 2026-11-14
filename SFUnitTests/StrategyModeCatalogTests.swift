@@ -90,4 +90,41 @@ final class StrategyModeCatalogTests: XCTestCase {
             "Ручной режим"
         )
     }
+    func testActiveModeManualNextNodeCyclesAmongHealthyCandidates() {
+        let candidates: [(tag: String, delayMs: UInt16)] = [
+            ("a", 120), ("dead", 0), ("b", 70), ("c", 85)
+        ]
+        XCTAssertEqual(
+            StrategyNodeChange.nextHealthyManualTag(current: "a", candidates: candidates),
+            "b"
+        )
+        XCTAssertEqual(
+            StrategyNodeChange.nextHealthyManualTag(current: "b", candidates: candidates),
+            "c"
+        )
+        XCTAssertEqual(
+            StrategyNodeChange.nextHealthyManualTag(current: "c", candidates: candidates),
+            "a"
+        )
+        XCTAssertEqual(
+            StrategyNodeChange.nextHealthyManualTag(current: "dead", candidates: candidates),
+            "a"
+        )
+    }
+
+    func testActiveModeNoHealthyAlternativeDoesNotSelectSameNode() {
+        XCTAssertNil(StrategyNodeChange.nextHealthyManualTag(
+            current: "a", candidates: [("a", 100)]
+        ))
+        XCTAssertNil(StrategyNodeChange.nextHealthyManualTag(
+            current: "a", candidates: [("a", 100), ("b", 0)]
+        ))
+        XCTAssertEqual(StrategyNodeChange.nextHealthyManualTag(
+            current: "dead", candidates: [("a", 100), ("dead", 0)]
+        ), "a")
+        XCTAssertNil(StrategyNodeChange.nextHealthyManualTag(
+            current: "dead", candidates: [("a", 0), ("dead", 0)]
+        ))
+    }
+
 }
