@@ -212,4 +212,45 @@ final class LXProfileOverridesTests: XCTestCase {
         XCTAssertThrowsError(try LXProfileOverrides.apply(config, profileID: 42, storedJSON: store.encode()))
         XCTAssertThrowsError(try LXProfileOverrides.apply("invalid json", profileID: 42, storedJSON: store.encode()))
     }
+    func testAdaptiveHealthOverridesOnlyLeastTestAndKeepSource() throws {
+        var store = LXOverridesStore()
+        var settings = LXProfileSettings()
+        var auto = LXURLTestOverride()
+        auto.mode = "least_test"
+        settings.urlTests["Auto"] = auto
+        settings.adaptiveTolerancePercent = 30
+        settings.minHoldSeconds = 30
+        settings.probeURLs = "https://example.org/generate_204, https://example.net/health"
+        store.profiles["42"] = settings
+        let root = try parsed(LXProfileOverrides.apply(config, profileID: 42, storedJSON: store.encode()))
+        let groups = try XCTUnwrap(root["outbounds"] as? [[String: Any]])
+        XCTAssertEqual(groups[0]["mode"] as? String, "least_test")
+        XCTAssertEqual(groups[0]["tolerance_percent"] as? Int, 30)
+        XCTAssertEqual(groups[0]["min_hold"] as? String, "30s")
+        XCTAssertEqual(groups[0]["urls"] as? [String], ["https://example.org/generate_204", "https://example.net/health"])
+        XCTAssertNil(groups[0]["url"])
+        XCTAssertNil(groups[1]["tolerance_percent"])
+        XCTAssertNil(groups[1]["min_hold"])
+        XCTAssertEqual(groups[1]["mode"] as? String, "failover")
+        XCTAssertEqual(groups[1]["urls"] as? [String], ["https://example.org/generate_204", "https://example.net/health"])
+        XCTAssertEqual(try LXProfileOverrides.apply(config, profileID: 41, storedJSON: store.encode()), config)
+    }
+
+    func testAdaptiveHealthInvalidURLAndBackwardCompatibility() throws {
+        let oldJSON = #"{"profiles":{"42":{"urlTests":{},"dnsGroups":{},"wgIdle":"profile"}}}"#
+        let oldStore = try LXOverridesStore.decode(oldJSON)
+        XCTAssertEqual(oldStore.profiles["42"]?.adaptiveTolerancePercent, 0)
+        XCTAssertEqual(oldStore.profiles["42"]?.minHoldSeconds, 0)
+        XCTAssertEqual(oldStore.profiles["42"]?.probeURLs, "")
+        for urls in ["https://example.org,https://example.org",
+                     "ftp://example.org",
+                     "http://a,http://b,http://c,http://d"] {
+            var settings = LXProfileSettings()
+            settings.probeURLs = urls
+            var store = LXOverridesStore()
+            store.profiles["42"] = settings
+            XCTAssertThrowsError(try LXProfileOverrides.apply(config, profileID: 42, storedJSON: store.encode()))
+        }
+    }
+
 }
