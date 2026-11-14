@@ -43,6 +43,23 @@ public struct LXRuntimeSettingsView: View {
                             Text("Общий режим применяется ко всем группам выбранного профиля, кроме групп с индивидуальным переопределением.")
                                 .font(.footnote).foregroundStyle(.secondary)
                         }
+                        Section("Устойчивость URLTest") {
+                            Toggle("Адаптивный порог задержки", isOn: adaptiveEnabledBinding)
+                            if currentSettings.adaptiveTolerancePercent > 0 {
+                                Stepper("Относительный порог: \(currentSettings.adaptiveTolerancePercent)%",
+                                        value: adaptivePercentBinding, in: 5...60, step: 5)
+                            }
+                            Toggle("Удерживать выбранный узел", isOn: holdEnabledBinding)
+                            if currentSettings.minHoldSeconds > 0 {
+                                Stepper("Минимальное удержание: \(currentSettings.minHoldSeconds) с",
+                                        value: holdSecondsBinding, in: 5...120, step: 5)
+                            }
+                            TextField("Проверочные URL через запятую", text: probeURLsBinding)
+                                .textInputAutocapitalization(.never)
+                                .autocorrectionDisabled()
+                            Text("До трёх HTTP(S)-адресов. Узел доступен, если ответил хотя бы один. Пустое поле сохраняет исходный URL. Порог и удержание действуют только для Least Test; при отказе или возврате на базовые удержание не мешает переключению.")
+                                .font(.footnote).foregroundStyle(.secondary)
+                        }
                         Section("Переопределения групп") {
                             ForEach(summary.urlTests) { group in
                                 VStack(alignment: .leading, spacing: 8) {
@@ -160,6 +177,31 @@ public struct LXRuntimeSettingsView: View {
         } else {
             draft.profiles[String(profileID)] = settings
         }
+    }
+
+    private var adaptiveEnabledBinding: Binding<Bool> {
+        Binding(get: { currentSettings.adaptiveTolerancePercent > 0 },
+                set: { enabled in mutate { $0.adaptiveTolerancePercent = enabled ? 30 : 0 } })
+    }
+
+    private var adaptivePercentBinding: Binding<Int> {
+        Binding(get: { currentSettings.adaptiveTolerancePercent },
+                set: { value in mutate { $0.adaptiveTolerancePercent = value } })
+    }
+
+    private var holdEnabledBinding: Binding<Bool> {
+        Binding(get: { currentSettings.minHoldSeconds > 0 },
+                set: { enabled in mutate { $0.minHoldSeconds = enabled ? 30 : 0 } })
+    }
+
+    private var holdSecondsBinding: Binding<Int> {
+        Binding(get: { currentSettings.minHoldSeconds },
+                set: { value in mutate { $0.minHoldSeconds = value } })
+    }
+
+    private var probeURLsBinding: Binding<String> {
+        Binding(get: { currentSettings.probeURLs },
+                set: { value in mutate { $0.probeURLs = value } })
     }
 
     private var globalModeBinding: Binding<String> {
