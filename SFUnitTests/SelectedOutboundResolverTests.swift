@@ -83,6 +83,45 @@ final class SelectedOutboundResolverTests: XCTestCase {
         XCTAssertNil(result.latencyMs)
     }
 
+    func testNativeGeminiChainTracksDynamicStrategySelection() {
+        let resolver = SelectedOutboundResolver(nodes: [
+            OutboundConfigNode(tag: "Gemini", type: "selector",
+                               members: ["Gemini • Super • A"]),
+            OutboundConfigNode(tag: "Gemini • Super • A", type: "urltest",
+                               members: ["LX • Gemini • Chain • Swiss"]),
+            OutboundConfigNode(tag: "LX • Gemini • Chain • Swiss", type: "chain",
+                               members: ["Стратегия", "Swiss"]),
+            OutboundConfigNode(tag: "Стратегия", type: "selector",
+                               members: ["Авто · База → Белые"]),
+            OutboundConfigNode(tag: "Авто · База → Белые", type: "urltest",
+                               members: ["Авто · Базовая", "Авто · Белые"]),
+            OutboundConfigNode(tag: "Авто · Базовая", type: "urltest",
+                               members: ["France", "Netherlands"]),
+            OutboundConfigNode(tag: "Авто · Белые", type: "urltest",
+                               members: ["White"]),
+            OutboundConfigNode(tag: "Swiss", type: "vless"),
+            OutboundConfigNode(tag: "France", type: "vless"),
+            OutboundConfigNode(tag: "Netherlands", type: "vless"),
+            OutboundConfigNode(tag: "White", type: "vless"),
+        ])
+        func liveGroups(firstHop: String) -> [OutboundLiveGroup] {
+            [
+                live("Gemini", "Gemini • Super • A"),
+                live("Gemini • Super • A", "LX • Gemini • Chain • Swiss", type: "urltest"),
+                live("Стратегия", "Авто · База → Белые"),
+                live("Авто · База → Белые", "Авто · Базовая", type: "urltest"),
+                live("Авто · Базовая", firstHop, type: "urltest"),
+                live("Авто · Белые", "White", type: "urltest"),
+            ]
+        }
+        let before = resolver.resolve(rootTag: "Gemini", live: liveGroups(firstHop: "France"))
+        XCTAssertEqual(before.status, .resolved)
+        XCTAssertEqual(before.chainHops, ["France", "Swiss"])
+        let after = resolver.resolve(rootTag: "Gemini", live: liveGroups(firstHop: "Netherlands"))
+        XCTAssertEqual(after.status, .resolved)
+        XCTAssertEqual(after.chainHops, ["Netherlands", "Swiss"])
+    }
+
     func testUnresolvableDetourIsFlaggedIncomplete() {
         let resolver = SelectedOutboundResolver(nodes: [
             OutboundConfigNode(tag: "Gemini", type: "selector", members: ["C • exit"], defaultMember: "C • exit"),
