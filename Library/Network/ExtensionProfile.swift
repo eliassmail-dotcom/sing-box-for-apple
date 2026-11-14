@@ -19,6 +19,7 @@ public class ExtensionProfile: ObservableObject {
     // Prevent concurrent manual starts while the first request is still preparing.
     private var startInProgress = false
     public private(set) var lastStartAttemptID: String?
+    public private(set) var startRequestIssued = false
     private var lastStartAttemptTime: Date?
 
     @Published public var status: NEVPNStatus
@@ -66,6 +67,7 @@ public class ExtensionProfile: ObservableObject {
                 self.connection = connection
                 self.status = connection.status
                 self.connectedDate = connection.connectedDate
+                if connection.status == .connected { self.startRequestIssued = false }
                 if let attempt = self.lastStartAttemptID,
                    let startedAt = self.lastStartAttemptTime,
                    Date().timeIntervalSince(startedAt) < 90 {
@@ -246,6 +248,7 @@ public class ExtensionProfile: ObservableObject {
 
         let attempt = UUID().uuidString
         lastStartAttemptID = attempt
+        startRequestIssued = false
         lastStartAttemptTime = Date()
         LXStartupDiagnostics.record("app.prepareProfile", attempt: attempt)
         // Resolve the selected subscription BEFORE touching VPN preferences.
@@ -293,6 +296,7 @@ public class ExtensionProfile: ObservableObject {
         }
 
         LXStartupDiagnostics.record("app.requestTunnelStart", attempt: attempt)
+        startRequestIssued = true
         do {
             try manager.connection.startVPNTunnel(options: options)
             LXStartupDiagnostics.record("app.startRequestAccepted", attempt: attempt)
