@@ -71,9 +71,17 @@ public final class LocalGeneratorEngine: NSObject, WKNavigationDelegate {
         guard !body.isEmpty && body.utf8.count <= 2_000_000 else {
             throw GeneratorError.invalidInput("Пустая подписка или превышен лимит 2 МБ")
         }
+        // Decode and verify the bundled script BEFORE starting WebKit.
+        // A corrupted bundle must not create an orphaned WebContent process.
+        let script = try LocalGeneratorBundle.javascript()
+        defer {
+            webView?.stopLoading()
+            webView?.navigationDelegate = nil
+            webView = nil
+            pageContinuation = nil
+        }
         try await preparePage()
         guard let webView else { throw GeneratorError.javascriptUnavailable }
-        let script = try LocalGeneratorBundle.javascript()
         // Never embed untrusted input into executable JavaScript source.
         // The payload is UTF-8 JSON, then Base64-encoded and decoded in WebKit.
         let input: [String: Any] = [
@@ -82,11 +90,6 @@ public final class LocalGeneratorEngine: NSObject, WKNavigationDelegate {
         ]
         let inputData = try JSONSerialization.data(withJSONObject: input, options: [.sortedKeys])
         let encoded = inputData.base64EncodedString()
-        defer {
-            webView.stopLoading()
-            webView.navigationDelegate = nil
-            self.webView = nil
-        }
         do {
             _ = try await webView.evaluateJavaScript(script)
             let execute = "globalThis.__localYcGenerator(new TextDecoder().decode(Uint8Array.from(atob('" + encoded + "'), c => c.charCodeAt(0))))"
