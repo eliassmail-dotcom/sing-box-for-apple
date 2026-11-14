@@ -18,6 +18,7 @@ public class ExtensionProfile: ObservableObject {
     private let isMock: Bool
     // Prevent concurrent manual starts while the first request is still preparing.
     private var startInProgress = false
+    public private(set) var lastStartAttemptID: String?
 
     @Published public var status: NEVPNStatus
     @Published public var connectedDate: Date?
@@ -237,10 +238,15 @@ public class ExtensionProfile: ObservableObject {
         startInProgress = true
         defer { startInProgress = false }
 
+        let attempt = UUID().uuidString
+        lastStartAttemptID = attempt
+        LXStartupDiagnostics.record("app.prepareProfile", attempt: attempt)
         // Resolve the selected subscription BEFORE touching VPN preferences.
         // This also prevents a long remote-profile read between save and start.
         try await fetchProfile()
-        let options = try await prepareStartOptions()
+        var options = try await prepareStartOptions()
+        options["lxStartupAttemptID"] = NSString(string: attempt)
+        LXStartupDiagnostics.record("app.profileReady", attempt: attempt)
 
         // Always read Apple's current manager snapshot before deciding if a
         // preference write is necessary (also resolves configurationStale).
@@ -272,15 +278,19 @@ public class ExtensionProfile: ObservableObject {
         }
 
         if preferencesChanged {
+            LXStartupDiagnostics.record("app.savePreferences", attempt: attempt)
             try await manager.saveToPreferences()
             try await manager.loadFromPreferences()
         } else {
             logger.debug("start VPN: using existing preferences without a redundant save")
         }
 
+        LXStartupDiagnostics.record("app.requestTunnelStart", attempt: attempt)
         do {
             try manager.connection.startVPNTunnel(options: options)
+            LXStartupDiagnostics.record("app.startRequestAccepted", attempt: attempt)
         } catch {
+            LXStartupDiagnostics.record("app.startRequestRejected", attempt: attempt)
             guard Self.isTransientStartError(error) else { throw error }
             let initialError = error as NSError
             logger.warning(
@@ -292,7 +302,9 @@ public class ExtensionProfile: ObservableObject {
             try await manager.loadFromPreferences()
             switch manager.connection.status {
             case .disconnected:
+                LXStartupDiagnostics.record("app.retryRequest", attempt: attempt)
                 try manager.connection.startVPNTunnel(options: options)
+                LXStartupDiagnostics.record("app.retryRequestAccepted", attempt: attempt)
             case .connecting, .connected, .reasserting:
                 logger.debug("VPN is already starting/connected after preferences reload")
             default:
