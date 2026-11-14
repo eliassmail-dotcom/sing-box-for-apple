@@ -318,4 +318,47 @@ final class LXProfileOverridesTests: XCTestCase {
     }
 
 
+    func testDashboardResiliencePresetPreservesOtherProfileOverrides() throws {
+        var store = LXOverridesStore()
+        var current = LXProfileSettings()
+        current.geminiChainsEnabled = true
+        current.probeURLs = "https://example.org/health"
+        current.urlTestDefault.mode = "failover"
+        var customGroup = LXURLTestOverride()
+        customGroup.mode = "least_test"
+        current.urlTests["Gemini"] = customGroup
+        current.dnsGroups["dns"] = "stable"
+        store.profiles["42"] = current
+
+        var otherProfile = LXProfileSettings()
+        otherProfile.applyResiliencePreset("antiblock")
+        store.profiles["77"] = otherProfile
+
+        current.applyResiliencePreset("balance")
+        store.profiles["42"] = current
+        let saved = try LXOverridesStore.decode(store.encode())
+
+        XCTAssertEqual(saved.profiles["42"]?.resiliencePreset, "balance")
+        XCTAssertEqual(saved.profiles["42"]?.adaptiveTolerancePercent, 20)
+        XCTAssertEqual(saved.profiles["42"]?.minHoldSeconds, 30)
+        XCTAssertEqual(saved.profiles["42"]?.passiveGuardEnabled, false)
+        XCTAssertEqual(saved.profiles["42"]?.geminiChainsEnabled, true)
+        XCTAssertEqual(saved.profiles["42"]?.probeURLs, "https://example.org/health")
+        XCTAssertEqual(saved.profiles["42"]?.urlTestDefault.mode, "failover")
+        XCTAssertEqual(saved.profiles["42"]?.urlTests["Gemini"]?.mode, "least_test")
+        XCTAssertEqual(saved.profiles["42"]?.dnsGroups["dns"], "stable")
+        XCTAssertEqual(saved.profiles["77"], otherProfile)
+
+        current.applyResiliencePreset("economy") // Stable label, legacy storage ID.
+        XCTAssertEqual(current.adaptiveTolerancePercent, 0)
+        XCTAssertEqual(current.minHoldSeconds, 60)
+        XCTAssertEqual(current.passiveGuardEnabled, false)
+
+        current.applyResiliencePreset("antiblock")
+        XCTAssertEqual(current.adaptiveTolerancePercent, 35)
+        XCTAssertEqual(current.minHoldSeconds, 10)
+        XCTAssertEqual(current.passiveGuardEnabled, true)
+    }
+
+
 }
