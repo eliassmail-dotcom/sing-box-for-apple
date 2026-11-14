@@ -9,6 +9,14 @@ import os.log
     import CoreLocation
 #endif
 
+// Small, versioned command sent by the Control Center widget via
+// NETunnelProviderSession.sendProviderMessage. Keep separate from the
+// existing start-options payload; never reload the VPN for a node change.
+private struct LXWidgetControlRequest: Decodable {
+    let lxControl: String
+    let version: Int
+}
+
 open class ExtensionProvider: NEPacketTunnelProvider {
     private static let logger = Logger(category: "ExtensionProvider")
 
@@ -349,7 +357,73 @@ open class ExtensionProvider: NEPacketTunnelProvider {
         #endif
     }
 
+    private static func widgetControlReply(ok: Bool, error: String? = nil) -> Data {
+        let payload: [String: Any] = [
+            "ok": ok,
+            "error": error ?? "",
+        ]
+        return (try? JSONSerialization.data(withJSONObject: payload)) ?? Data()
+    }
+
+    /// Process the active Strategy group's *current* selected child. Both the
+    /// Dashboard and the Control Center use the same LX command for URLTest,
+    /// so Smart base/white preference and 30-second healthy-node hold are
+    /// enforced by the core, not duplicated in a widget process.
+    private static func changeActiveNode() throws {
+        let client = try CommandTarget.standaloneClient()
+        guard let iterator = try client.getGroups() else {
+            throw ExtensionStartupError("LX: список групп не получен")
+        }
+        var groups: [OutboundGroup] = []
+        while iterator.hasNext() {
+            if let group = iterator.next() {
+                groups.append(OutboundGroup(group))
+            }
+        }
+        guard let strategy = groups.first(where: { $0.tag == LXNextNodeSelection.strategyGroupTag }),
+              strategy.type == "selector",
+              let active = groups.first(where: { $0.tag == strategy.selected }) else {
+            throw ExtensionStartupError("LX: активная стратегия не найдена")
+        }
+
+        switch active.type {
+        case "urltest":
+            // The Go URLTest group performs the actual node rotation. The
+            // outer Strategy selector, Gemini selector and current streams
+            // remain unchanged.
+            try client.selectOutbound(active.tag, outboundTag: LXNextNodeSelection.commandTag)
+        case "selector":
+            // Manual mode: choose the next responding node inside its
+            // selector, consistent with the Dashboard's behavior.
+            guard let next = LXNextNodeSelection.nextHealthyTag(
+                current: active.selected,
+                candidates: active.items.map { (tag: $0.tag, delayMs: $0.urlTestDelay) }
+            ) else {
+                throw ExtensionStartupError("В выбранном режиме нет другого доступного узла")
+            }
+            try client.selectOutbound(active.tag, outboundTag: next)
+        default:
+            throw ExtensionStartupError("Этот режим не поддерживает ручную смену узла")
+        }
+    }
+
     override open func handleAppMessage(_ messageData: Data) async -> Data? {
+        // The control command must be recognized BEFORE the legacy settings
+        // decoder. Otherwise a widget tap would trigger reloadService().
+        if let request = try? JSONDecoder().decode(LXWidgetControlRequest.self, from: messageData) {
+            guard request.version == 1, request.lxControl == "changeNode" else {
+                return Self.widgetControlReply(ok: false, error: "Неизвестная команда LX")
+            }
+            do {
+                try await Task.detached(priority: .userInitiated) {
+                    try Self.changeActiveNode()
+                }.value
+                return Self.widgetControlReply(ok: true)
+            } catch {
+                Self.logger.error("LX next-node widget command failed: \(error.localizedDescription)")
+                return Self.widgetControlReply(ok: false, error: error.localizedDescription)
+            }
+        }
         do {
             let options = try ExtensionStartOptions.decode(messageData)
             try applyStartOptions(options)
