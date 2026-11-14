@@ -120,6 +120,12 @@ enum WidgetTunnelControl {
             throw nodeError("Получен некорректный ответ туннеля")
         }
         if reply["ok"] as? Bool == true {
+            guard let previous = reply["previousNode"] as? String,
+                  let selected = reply["selectedNode"] as? String,
+                  !selected.isEmpty, selected != previous else {
+                throw nodeError("Туннель не подтвердил смену активного узла")
+            }
+            NSLog("[WidgetTunnelControl] LX Next Node confirmed")
             return
         }
         let reason = reply["error"] as? String ?? "Не удалось сменить узел"
