@@ -186,7 +186,7 @@ public struct SelectedOutboundResolver: Hashable {
         }
     }
 
-    private func latency(for tag: String?, in live: [OutboundLiveGroup]) -> (delay: UInt16, measuredAt: Date)? {
+    private func latency(for tag: String?, in live: [OutboundLiveGroup]) -> (delay: UInt16, measuredAt: Date?)? {
         guard let tag else { return nil }
         for group in live.reversed() {
             guard let delay = group.itemDelays[tag], delay > 0 else { continue }
@@ -293,7 +293,7 @@ public final class OutboundResolverModel: ObservableObject {
             result = nil
             return
         }
-        guard let graph else {
+        guard let configGraph = graph else {
             result = SelectedOutboundResolver(nodes: liveFallbackNodes())
                 .resolve(rootTag: rootTag, live: live)
             if !didAttemptGraphLoad {
@@ -301,7 +301,7 @@ public final class OutboundResolverModel: ObservableObject {
             }
             return
         }
-        result = SelectedOutboundResolver(nodes: Array(graph.values))
+        result = SelectedOutboundResolver(nodes: Array(configGraph.values))
             .resolve(rootTag: rootTag, live: live)
         if case .incomplete(.unknownReference) = result?.status, !didAttemptGraphLoad {
             didAttemptGraphLoad = true
