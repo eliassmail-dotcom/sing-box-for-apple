@@ -23,6 +23,27 @@ public struct StrategyModeSpec: Hashable, Identifiable {
     public var id: String { title }
 }
 
+// UI-only choice for a selector-backed Manual mode. Automatic URLTest modes
+// use the LX core command below and never change the top-level Strategy tag.
+public enum StrategyNodeChange {
+    // SelectOutbound RPC's reserved LX URLTest command. Must match the core's
+    // group.LXNextNodeTag; no protobuf change or subscription edit is needed.
+    public static let nextNodeCommand = "__lx_next_node__"
+
+    public static func nextHealthyManualTag(
+        current: String,
+        candidates: [(tag: String, delayMs: UInt16)]
+    ) -> String? {
+        let healthy = candidates.filter { $0.delayMs > 0 }.map(\.tag)
+        guard !healthy.isEmpty else { return nil }
+        if let index = healthy.firstIndex(of: current) {
+            let next = healthy[(index + 1) % healthy.count]
+            return next == current ? nil : next
+        }
+        return healthy.first
+    }
+}
+
 public enum StrategyModeCatalog {
     public static let strategyGroupTag = "Стратегия"
     public static let geminiGroupTag = "Gemini"
