@@ -9,6 +9,12 @@ public struct LXURLTestOverride: Codable, Equatable {
     public init() {}
 }
 
+/// Presets do not alter node pools, routes, DNS, selector interruption or the
+/// source health URLs. They tune only the existing LX reliability controls.
+public enum LXResiliencePreset: String, CaseIterable {
+    case custom, economy, balance, antiblock
+}
+
 public struct LXProfileSettings: Codable, Equatable {
     // Common mode for every URLTest group inside this profile.
     // Per-group entries take precedence, including an explicit "profile" opt-out.
@@ -22,12 +28,37 @@ public struct LXProfileSettings: Codable, Equatable {
     public var probeURLs: String = ""
     // Experimental: passive watchdog/quarantine; off until explicitly enabled.
     public var passiveGuardEnabled: Bool = false
+    /// Off by default: source Gemini+ still provides ordinary Gemini nodes.
+    public var geminiChainsEnabled: Bool = false
+    /// Existing saved settings are treated as Custom, never silently migrated.
+    public var resiliencePreset: String = LXResiliencePreset.custom.rawValue
+
+    public mutating func applyResiliencePreset(_ name: String) {
+        resiliencePreset = name
+        switch LXResiliencePreset(rawValue: name) ?? .custom {
+        case .custom:
+            break
+        case .economy:
+            adaptiveTolerancePercent = 0
+            minHoldSeconds = 60
+            passiveGuardEnabled = false
+        case .balance:
+            adaptiveTolerancePercent = 20
+            minHoldSeconds = 30
+            passiveGuardEnabled = false
+        case .antiblock:
+            adaptiveTolerancePercent = 35
+            minHoldSeconds = 10
+            passiveGuardEnabled = true
+        }
+        // Preserve probeURLs, URLTest mode, DNS, priorities and interrupt flag.
+    }
 
     public init() {}
 
     // Backward-compatible with previously saved LX settings that lack urlTestDefault.
     private enum CodingKeys: String, CodingKey {
-        case urlTestDefault, urlTests, dnsGroups, wgIdle, adaptiveTolerancePercent, minHoldSeconds, probeURLs, passiveGuardEnabled
+        case urlTestDefault, urlTests, dnsGroups, wgIdle, adaptiveTolerancePercent, minHoldSeconds, probeURLs, passiveGuardEnabled, geminiChainsEnabled, resiliencePreset
     }
 
     public init(from decoder: Decoder) throws {
@@ -40,6 +71,8 @@ public struct LXProfileSettings: Codable, Equatable {
         minHoldSeconds = try container.decodeIfPresent(Int.self, forKey: .minHoldSeconds) ?? 0
         probeURLs = try container.decodeIfPresent(String.self, forKey: .probeURLs) ?? ""
         passiveGuardEnabled = try container.decodeIfPresent(Bool.self, forKey: .passiveGuardEnabled) ?? false
+        geminiChainsEnabled = try container.decodeIfPresent(Bool.self, forKey: .geminiChainsEnabled) ?? false
+        resiliencePreset = try container.decodeIfPresent(String.self, forKey: .resiliencePreset) ?? LXResiliencePreset.custom.rawValue
     }
 
     public var isEmpty: Bool {
@@ -47,6 +80,7 @@ public struct LXProfileSettings: Codable, Equatable {
         urlTests.isEmpty &&
         dnsGroups.values.allSatisfy { $0 == "profile" } && wgIdle == "profile" &&
         adaptiveTolerancePercent == 0 && minHoldSeconds == 0 && !passiveGuardEnabled &&
+        !geminiChainsEnabled && resiliencePreset == LXResiliencePreset.custom.rawValue &&
         probeURLs.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 }
@@ -207,12 +241,19 @@ public enum LXProfileOverrides {
         // No user overrides and no compatible base/white groups: byte-identical.
         // The fallback group's presence no longer depends on a separate toggle.
         let injectFallback = supportsWhiteFallback(source)
-        guard !settings.isEmpty || injectFallback else { return source }
+        let injectGemini = LXGeminiBuilder.hasSource(source)
+        guard !settings.isEmpty || injectFallback || injectGemini else { return source }
 
         var root = try document(source)
         var changed = false
+        // Build on-device BEFORE applying URLTest health overrides so the
+        // locally created Gemini groups inherit the same resilience settings.
+        if try LXGeminiBuilder.apply(to: &root, chainsEnabled: settings.geminiChainsEnabled) {
+            changed = true
+        }
 
-        guard (0...100).contains(settings.adaptiveTolerancePercent),
+        guard LXResiliencePreset(rawValue: settings.resiliencePreset) != nil,
+              (0...100).contains(settings.adaptiveTolerancePercent),
               (0...600).contains(settings.minHoldSeconds) else {
             throw OverrideError.invalidOption("порог адаптации / время удержания")
         }
