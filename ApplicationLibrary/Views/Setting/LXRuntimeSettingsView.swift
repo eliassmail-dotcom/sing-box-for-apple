@@ -46,7 +46,7 @@ public struct LXRuntimeSettingsView: View {
                         Section("Профиль устойчивости") {
                             Picker("Профиль", selection: resiliencePresetBinding) {
                                 Text("Мои настройки").tag("custom")
-                                Text("Экономный").tag("economy")
+                                Text("Стабильный").tag("economy")
                                 Text("Баланс").tag("balance")
                                 Text("Антиблок").tag("antiblock")
                             }
