@@ -51,28 +51,41 @@ public struct StrategyModeCard: View {
                 await apply(mode)
             }
         } label: {
-            Group {
-                if switchingMode == mode {
-                    ProgressView()
-                } else {
+            // Same visual hierarchy as GroupItemView: left-aligned title,
+            // a secondary type label and a blue outline on selection.
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 6) {
                     Text(mode.title)
-                        .font(.system(size: buttonFontSize, weight: .medium))
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.7)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.primary)
+                        .lineLimit(2)
+                        .minimumScaleFactor(0.85)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    if switchingMode == mode {
+                        ProgressView()
+                            .controlSize(.small)
+                    }
                 }
+                Text("Selector")
+                    .font(.caption)
+                    .foregroundStyle(Color.accentColor)
             }
-            .frame(maxWidth: .infinity)
-            .frame(height: buttonHeight)
+            .frame(maxWidth: .infinity, minHeight: modeTileHeight, alignment: .leading)
+            .padding(EdgeInsets(top: 10, leading: 12, bottom: 10, trailing: 12))
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .foregroundStyle(isActive ? .primary : availability ? .secondary : .tertiary)
         .opacity(availability || isActive ? 1 : 0.45)
         .disabled(!availability || isSwitching)
         .background(
             RoundedRectangle(cornerRadius: 12)
-                .fill(isActive ? Color.primary.opacity(0.16) : Color.secondary.opacity(0.1))
+                .fill(isActive ? Color.accentColor.opacity(0.12) : modeTileBackground)
         )
+        .overlay(
+            RoundedRectangle(cornerRadius: 12)
+                .strokeBorder(isActive ? Color.accentColor : Color.urlTestNeutral, lineWidth: isActive ? 2 : 1)
+        )
+        .animation(.easeOut(duration: 0.12), value: isActive)
     }
 
     private var strategyGroup: OutboundGroup? {
@@ -138,21 +151,23 @@ public struct StrategyModeCard: View {
         // states pushed by the core (see activeMode).
     }
 
-    private var buttonHeight: CGFloat {
+    private var modeTileHeight: CGFloat {
         #if os(tvOS)
-            60
+            70
         #elseif os(macOS)
-            32
+            48
         #else
-            44
+            58
         #endif
     }
 
-    private var buttonFontSize: CGFloat {
-        #if os(macOS)
-            13
+    private var modeTileBackground: Color {
+        #if os(iOS)
+            Color(uiColor: .systemGroupedBackground)
+        #elseif os(macOS)
+            Color(nsColor: .windowBackgroundColor)
         #else
-            15
+            Color.clear
         #endif
     }
 }
