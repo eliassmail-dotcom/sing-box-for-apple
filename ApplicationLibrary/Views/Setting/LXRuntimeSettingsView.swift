@@ -1,0 +1,241 @@
+import Library
+import SwiftUI
+
+/// LX controls work on the effective configuration, not on the subscription.
+public struct LXRuntimeSettingsView: View {
+    @EnvironmentObject private var environments: ExtensionEnvironments
+    @State private var isLoading = true
+    @State private var isApplying = false
+    @State private var alert: AlertState?
+    @State private var profileID: Int64 = -1
+    @State private var profileContent = ""
+    @State private var summary: LXConfigSummary?
+    @State private var saved = LXOverridesStore()
+    @State private var draft = LXOverridesStore()
+
+    public init() {}
+
+    public var body: some View {
+        Group {
+            if isLoading {
+                ProgressView()
+            } else if let summary {
+                FormView {
+                    Section {
+                        Text("Настройки действуют только на выбранный профиль и переживают обновления подписки. Исходный JSON не изменяется.")
+                            .font(.footnote).foregroundStyle(.secondary)
+                    }
+                    if !summary.urlTests.isEmpty {
+                        Section("Автовыбор узлов · URLTest") {
+                            ForEach(summary.urlTests) { group in
+                                VStack(alignment: .leading, spacing: 8) {
+                                    Text(group.tag).font(.headline)
+                                    Text("В профиле: \(group.mode)")
+                                        .font(.caption).foregroundStyle(.secondary)
+                                    Picker("Режим", selection: urlModeBinding(group.tag)) {
+                                        Text("Как в профиле").tag("profile")
+                                        Text("Least Test · самый быстрый").tag("least_test")
+                                        Text("Failover · стабильный").tag("failover")
+                                        Text("Round Robin · балансировка").tag("round_robin")
+                                    }
+                                    if urlSetting(group.tag).mode == "round_robin" {
+                                        Stepper("Размер пула: \(urlSetting(group.tag).pool)",
+                                                value: poolBinding(group.tag), in: 1...32)
+                                        Stepper("Pool tolerance: \(urlSetting(group.tag).poolTolerance) мс",
+                                                value: toleranceBinding(group.tag), in: 0...500, step: 25)
+                                        Toggle("Sticky Hash · закреплять соединения", isOn: stickyBinding(group.tag))
+                                    }
+                                }.padding(.vertical, 4)
+                            }
+                        }
+                    }
+
+                    if !summary.dnsGroups.isEmpty {
+                        Section("DNS-группы") {
+                            ForEach(summary.dnsGroups) { group in
+                                Picker(group.tag, selection: dnsBinding(group.tag)) {
+                                    Text("Как в профиле (\(group.mode))").tag("profile")
+                                    Text("Stable").tag("stable")
+                                    Text("Fastest").tag("fastest")
+                                    Text("Parallel").tag("parallel")
+                                }
+                            }
+                        }
+                    }
+
+                    if summary.wireGuardCount > 0 {
+                        Section("WireGuard / AmneziaWG") {
+                            Picker("Экономия энергии · Idle Suspend", selection: wgIdleBinding) {
+                                Text("Как в профиле").tag("profile")
+                                Text("Включить").tag("on")
+                                Text("Выключить").tag("off")
+                            }
+                            Text("Включено: 30 с для неиспользуемых узлов, 5 мин для достижимых, разборка через 10 мин. Требует мобильного LX-ядра с idle suspend.")
+                                .font(.footnote).foregroundStyle(.secondary)
+                        }
+                    }
+
+                    Section("Функции, зависящие от конфигурации") {
+                        statusRow("Multi-hop Chain", value: "\(summary.chainCount) цепочек")
+                        statusRow("XHTTP", value: "\(summary.xhttpCount) узлов")
+                        statusRow("VLESS Encryption", value: "\(summary.encryptedVlessCount) узлов")
+                        Text("Цепочки, XHTTP и VLESS Encryption нельзя включить общим тумблером: нужна соответствующая конфигурация узлов и поддержка серверов. Существующие цепочки выбираются в разделе «Группы».")
+                            .font(.footnote).foregroundStyle(.secondary)
+                        statusRow("Clash API / CommandClient", value: "Функции ядра")
+                        Text("API и события определяются сборкой ядра, а не переключателем в профиле.")
+                            .font(.footnote).foregroundStyle(.secondary)
+                    }
+
+                    Section {
+                        Button {
+                            Task { await apply() }
+                        } label: {
+                            HStack {
+                                Text("Применить к VPN")
+                                Spacer()
+                                if isApplying { ProgressView() }
+                            }
+                        }.disabled(isApplying || draft == saved)
+
+                        Button("Вернуть настройки профиля", role: .destructive) {
+                            draft.profiles.removeValue(forKey: String(profileID))
+                        }.disabled(isApplying || currentSettings.isEmpty)
+                    } footer: {
+                        Text("Применение перезагружает VPN-конфигурацию и может прервать текущие соединения. При ошибке сохранённые настройки откатываются.")
+                    }
+                }
+            } else {
+                VStack(spacing: 12) {
+                    Image(systemName: "exclamationmark.triangle")
+                    Text("Нет данных профиля")
+                    Text("Выбери JSON-профиль sing-box.").font(.footnote)
+                }
+            }
+        }
+        .navigationTitle("Функции LX")
+        .alert($alert)
+        #if os(iOS)
+            .navigationBarTitleDisplayMode(.inline)
+        #endif
+        .task { await load() }
+    }
+
+    private func statusRow(_ title: String, value: String) -> some View {
+        HStack {
+            Text(title)
+            Spacer()
+            Text(value).foregroundStyle(.secondary)
+        }
+    }
+
+    private var currentSettings: LXProfileSettings {
+        draft.profiles[String(profileID)] ?? LXProfileSettings()
+    }
+
+    private func mutate(_ update: (inout LXProfileSettings) -> Void) {
+        var settings = currentSettings
+        update(&settings)
+        if settings.isEmpty {
+            draft.profiles.removeValue(forKey: String(profileID))
+        } else {
+            draft.profiles[String(profileID)] = settings
+        }
+    }
+
+    private func urlSetting(_ tag: String) -> LXURLTestOverride {
+        currentSettings.urlTests[tag] ?? LXURLTestOverride()
+    }
+
+    private func changeURLSetting(_ tag: String, _ update: (inout LXURLTestOverride) -> Void) {
+        mutate { settings in
+            var item = settings.urlTests[tag] ?? LXURLTestOverride()
+            update(&item)
+            if item.mode == "profile" { settings.urlTests.removeValue(forKey: tag) }
+            else { settings.urlTests[tag] = item }
+        }
+    }
+
+    private func urlModeBinding(_ tag: String) -> Binding<String> {
+        Binding(get: { urlSetting(tag).mode }, set: { value in changeURLSetting(tag) { $0.mode = value } })
+    }
+
+    private func poolBinding(_ tag: String) -> Binding<Int> {
+        Binding(get: { urlSetting(tag).pool }, set: { value in changeURLSetting(tag) { $0.pool = value } })
+    }
+
+    private func toleranceBinding(_ tag: String) -> Binding<Int> {
+        Binding(get: { urlSetting(tag).poolTolerance }, set: { value in changeURLSetting(tag) { $0.poolTolerance = value } })
+    }
+
+    private func stickyBinding(_ tag: String) -> Binding<Bool> {
+        Binding(get: { urlSetting(tag).sticky }, set: { value in changeURLSetting(tag) { $0.sticky = value } })
+    }
+
+    private func dnsBinding(_ tag: String) -> Binding<String> {
+        Binding(
+            get: { currentSettings.dnsGroups[tag] ?? "profile" },
+            set: { value in
+                mutate { settings in
+                    if value == "profile" { settings.dnsGroups.removeValue(forKey: tag) }
+                    else { settings.dnsGroups[tag] = value }
+                }
+            }
+        )
+    }
+
+    private var wgIdleBinding: Binding<String> {
+        Binding(get: { currentSettings.wgIdle }, set: { value in mutate { $0.wgIdle = value } })
+    }
+
+    @MainActor
+    private func load() async {
+        isLoading = true
+        defer { isLoading = false }
+        do {
+            let id = await SharedPreferences.selectedProfileID.get()
+            guard let profile = try await ProfileManager.get(id) else { return }
+            let source = try await profile.readAsync()
+            let info = try LXProfileOverrides.inspect(source)
+            let persisted = try LXOverridesStore.decode(await SharedPreferences.lxOverridesJSON.get())
+            profileID = id
+            profileContent = source
+            summary = info
+            saved = persisted
+            draft = persisted
+        } catch {
+            alert = AlertState(action: "load LX settings", error: error)
+        }
+    }
+
+    @MainActor
+    private func apply() async {
+        guard !isApplying, draft != saved else { return }
+        isApplying = true
+        defer { isApplying = false }
+        let previousJSON = await SharedPreferences.lxOverridesJSON.get()
+        do {
+            let desiredJSON = try draft.encode()
+            _ = try LXProfileOverrides.apply(profileContent, profileID: profileID, storedJSON: desiredJSON)
+            let activeID = await SharedPreferences.selectedProfileID.get()
+            guard activeID == profileID else {
+                throw NSError(domain: "LXRuntimeSettings", code: 1, userInfo: [NSLocalizedDescriptionKey: "Активный профиль изменился. Открой настройки LX заново."])
+            }
+            await SharedPreferences.lxOverridesJSON.set(desiredJSON)
+            guard await SharedPreferences.lxOverridesJSON.get() == desiredJSON else {
+                throw NSError(domain: "LXRuntimeSettings", code: 2, userInfo: [NSLocalizedDescriptionKey: "Настройки не сохранились."])
+            }
+            if let profile = environments.extensionProfile, profile.status.isConnected {
+                do {
+                    try await profile.reloadService()
+                } catch {
+                    await SharedPreferences.lxOverridesJSON.set(previousJSON)
+                    try? await profile.reloadService()
+                    throw error
+                }
+            }
+            saved = draft
+        } catch {
+            alert = AlertState(action: "apply LX settings", error: error)
+        }
+    }
+}

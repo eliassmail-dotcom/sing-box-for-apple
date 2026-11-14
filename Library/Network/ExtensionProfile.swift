@@ -247,7 +247,9 @@ public class ExtensionProfile: ObservableObject {
             ])
         }
 
-        let configContent = try await profile.readAsync()
+        let originalContent = try await profile.readAsync()
+        let lxSettings = await SharedPreferences.lxOverridesJSON.get()
+        let configContent = try LXProfileOverrides.apply(originalContent, profileID: profileID, storedJSON: lxSettings)
         options["configContent"] = NSString(string: configContent)
 
         #if os(macOS)
