@@ -55,8 +55,6 @@ public struct LXRuntimeSettingsView: View {
                                         value: holdSecondsBinding, in: 5...120, step: 5)
                             }
                             TextField("Проверочные URL через запятую", text: probeURLsBinding)
-                                .textInputAutocapitalization(.never)
-                                .autocorrectionDisabled()
                             Text("До трёх HTTP(S)-адресов. Узел доступен, если ответил хотя бы один. Пустое поле сохраняет исходный URL. Порог и удержание действуют только для Least Test; при отказе или возврате на базовые удержание не мешает переключению.")
                                 .font(.footnote).foregroundStyle(.secondary)
                         }
