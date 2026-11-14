@@ -158,7 +158,7 @@ public struct LXRuntimeSettingsView: View {
                             draft.profiles.removeValue(forKey: String(profileID))
                         }.disabled(isApplying || currentSettings.isEmpty)
                     } footer: {
-                        Text("Применение перезагружает VPN-конфигурацию и может прервать текущие соединения. При ошибке сохранённые настройки откатываются.")
+                        Text("«Применить к VPN» сохраняет настройки и полностью перезапускает подключённый VPN, включая группы Gemini Chains. Все текущие соединения прервутся. Если VPN выключен — настройки сохранятся для следующего запуска. При ошибке будет предпринята попытка отката.")
                     }
                 }
             } else {
@@ -354,6 +354,23 @@ public struct LXRuntimeSettingsView: View {
         }
     }
 
+    /// A new Gemini Chains graph requires a fresh Packet Tunnel lifecycle:
+    /// reloading the running service does not reliably rebuild nested groups.
+    /// Confirm .connected before reporting the Apply action as successful.
+    @MainActor
+    private func restartVPNAndAwaitConnection(_ profile: ExtensionProfile) async throws {
+        try await profile.restart()
+        let deadline = Date().addingTimeInterval(18)
+        while profile.status != .connected {
+            if Date() >= deadline {
+                throw NSError(domain: "LXRuntimeSettings", code: 4, userInfo: [
+                    NSLocalizedDescriptionKey: "VPN не подключился в течение 18 секунд после перезапуска."
+                ])
+            }
+            try await Task.sleep(nanoseconds: 250_000_000)
+        }
+    }
+
     @MainActor
     private func apply() async {
         guard !isApplying, draft != saved else { return }
@@ -365,25 +382,43 @@ public struct LXRuntimeSettingsView: View {
             _ = try LXProfileOverrides.apply(profileContent, profileID: profileID, storedJSON: desiredJSON)
             let activeID = await SharedPreferences.selectedProfileID.get()
             guard activeID == profileID else {
-                throw NSError(domain: "LXRuntimeSettings", code: 1, userInfo: [NSLocalizedDescriptionKey: "Активный профиль изменился. Открой настройки LX заново."])
+                throw NSError(domain: "LXRuntimeSettings", code: 1, userInfo: [
+                    NSLocalizedDescriptionKey: "Активный профиль изменился. Открой настройки LX заново."
+                ])
             }
+            let runningProfile = environments.extensionProfile
+            if let runningProfile, runningProfile.status.isConnected &&
+                runningProfile.status != .connected && runningProfile.status != .reasserting {
+                throw NSError(domain: "LXRuntimeSettings", code: 5, userInfo: [
+                    NSLocalizedDescriptionKey: "Дождитесь окончания подключения или отключения VPN и повторите."
+                ])
+            }
+            let shouldRestart = runningProfile?.status.isConnectedStrict == true
+
             await SharedPreferences.lxOverridesJSON.set(desiredJSON)
             guard await SharedPreferences.lxOverridesJSON.get() == desiredJSON else {
-                throw NSError(domain: "LXRuntimeSettings", code: 2, userInfo: [NSLocalizedDescriptionKey: "Настройки не сохранились."])
+                await SharedPreferences.lxOverridesJSON.set(previousJSON)
+                throw NSError(domain: "LXRuntimeSettings", code: 2, userInfo: [
+                    NSLocalizedDescriptionKey: "Настройки не сохранились."
+                ])
             }
-            if let profile = environments.extensionProfile, profile.status.isConnected {
+
+            if shouldRestart, let runningProfile {
                 do {
-                    try await profile.reloadService()
+                    try await restartVPNAndAwaitConnection(runningProfile)
                 } catch {
+                    // Restore the last good configuration and attempt to bring
+                    // back the previous VPN. If the restoration also fails, the
+                    // original error remains visible; never claim success.
                     await SharedPreferences.lxOverridesJSON.set(previousJSON)
-                    try? await profile.reloadService()
+                    try? await restartVPNAndAwaitConnection(runningProfile)
                     throw error
                 }
             }
             saved = draft
             NotificationCenter.default.post(name: .lxResilienceSettingsChanged, object: nil)
         } catch {
-            alert = AlertState(action: "apply LX settings", error: error)
+            alert = AlertState(action: "применить настройки LX и перезапустить VPN", error: error)
         }
     }
 }
