@@ -26,19 +26,39 @@ public struct LXRuntimeSettingsView: View {
                             .font(.footnote).foregroundStyle(.secondary)
                     }
                     if !summary.urlTests.isEmpty {
-                        Section("Автовыбор узлов · URLTest") {
+                        Section("Для всех URLTest") {
+                            Picker("Общий режим", selection: globalModeBinding) {
+                                Text("Как в профиле").tag("profile")
+                                Text("Least Test · самый быстрый").tag("least_test")
+                                Text("Failover · стабильный").tag("failover")
+                                Text("Round Robin · балансировка").tag("round_robin")
+                            }
+                            if currentSettings.urlTestDefault.mode == "round_robin" {
+                                Stepper("Размер пула: \(currentSettings.urlTestDefault.pool)",
+                                        value: globalPoolBinding, in: 1...32)
+                                Stepper("Pool tolerance: \(currentSettings.urlTestDefault.poolTolerance) мс",
+                                        value: globalToleranceBinding, in: 0...500, step: 25)
+                                Toggle("Sticky Hash · закреплять соединения", isOn: globalStickyBinding)
+                            }
+                            Text("Общий режим применяется ко всем группам выбранного профиля, кроме групп с индивидуальным переопределением.")
+                                .font(.footnote).foregroundStyle(.secondary)
+                        }
+                        Section("Переопределения групп") {
                             ForEach(summary.urlTests) { group in
                                 VStack(alignment: .leading, spacing: 8) {
                                     Text(group.tag).font(.headline)
-                                    Text("В профиле: \(group.mode)")
+                                    Text("В исходном профиле: \(group.mode)")
                                         .font(.caption).foregroundStyle(.secondary)
                                     Picker("Режим", selection: urlModeBinding(group.tag)) {
-                                        Text("Как в профиле").tag("profile")
+                                        Text("Наследовать общий").tag("inherit")
+                                        Text("Как в исходном профиле").tag("profile")
                                         Text("Least Test · самый быстрый").tag("least_test")
                                         Text("Failover · стабильный").tag("failover")
                                         Text("Round Robin · балансировка").tag("round_robin")
                                     }
-                                    if urlSetting(group.tag).mode == "round_robin" {
+                                    Text("Итог: \(effectiveURLMode(group))")
+                                        .font(.caption).foregroundStyle(.secondary)
+                                    if currentSettings.urlTests[group.tag]?.mode == "round_robin" {
                                         Stepper("Размер пула: \(urlSetting(group.tag).pool)",
                                                 value: poolBinding(group.tag), in: 1...32)
                                         Stepper("Pool tolerance: \(urlSetting(group.tag).poolTolerance) мс",
@@ -142,21 +162,67 @@ public struct LXRuntimeSettingsView: View {
         }
     }
 
+    private var globalModeBinding: Binding<String> {
+        Binding(
+            get: { currentSettings.urlTestDefault.mode },
+            set: { value in mutate { $0.urlTestDefault.mode = value } }
+        )
+    }
+
+    private var globalPoolBinding: Binding<Int> {
+        Binding(
+            get: { currentSettings.urlTestDefault.pool },
+            set: { value in mutate { $0.urlTestDefault.pool = value } }
+        )
+    }
+
+    private var globalToleranceBinding: Binding<Int> {
+        Binding(
+            get: { currentSettings.urlTestDefault.poolTolerance },
+            set: { value in mutate { $0.urlTestDefault.poolTolerance = value } }
+        )
+    }
+
+    private var globalStickyBinding: Binding<Bool> {
+        Binding(
+            get: { currentSettings.urlTestDefault.sticky },
+            set: { value in mutate { $0.urlTestDefault.sticky = value } }
+        )
+    }
+
+    private func effectiveURLMode(_ group: LXConfigGroup) -> String {
+        if let individual = currentSettings.urlTests[group.tag] {
+            if individual.mode == "profile" { return "\(group.mode) (из профиля)" }
+            return "\(individual.mode) (свой)"
+        }
+        let common = currentSettings.urlTestDefault.mode
+        return common == "profile" ? "\(group.mode) (из профиля)" : "\(common) (общий)"
+    }
+
     private func urlSetting(_ tag: String) -> LXURLTestOverride {
-        currentSettings.urlTests[tag] ?? LXURLTestOverride()
+        currentSettings.urlTests[tag] ?? currentSettings.urlTestDefault
     }
 
     private func changeURLSetting(_ tag: String, _ update: (inout LXURLTestOverride) -> Void) {
         mutate { settings in
-            var item = settings.urlTests[tag] ?? LXURLTestOverride()
+            var item = settings.urlTests[tag] ?? settings.urlTestDefault
             update(&item)
-            if item.mode == "profile" { settings.urlTests.removeValue(forKey: tag) }
-            else { settings.urlTests[tag] = item }
+            // Keep explicit "profile" to allow opting out of the global mode.
+            settings.urlTests[tag] = item
         }
     }
 
     private func urlModeBinding(_ tag: String) -> Binding<String> {
-        Binding(get: { urlSetting(tag).mode }, set: { value in changeURLSetting(tag) { $0.mode = value } })
+        Binding(
+            get: { currentSettings.urlTests[tag]?.mode ?? "inherit" },
+            set: { value in
+                if value == "inherit" {
+                    mutate { $0.urlTests.removeValue(forKey: tag) }
+                } else {
+                    changeURLSetting(tag) { $0.mode = value }
+                }
+            }
+        )
     }
 
     private func poolBinding(_ tag: String) -> Binding<Int> {

@@ -85,6 +85,71 @@ final class LXProfileOverridesTests: XCTestCase {
         XCTAssertEqual((dns["servers"] as? [[String: Any]])?.first?["mode"] as? String, "fastest")
     }
 
+    func testGlobalOverrideAndPerGroupException() throws {
+        var store = LXOverridesStore()
+        var settings = LXProfileSettings()
+        settings.urlTestDefault.mode = "failover"
+        var gemini = LXURLTestOverride()
+        gemini.mode = "least_test"
+        settings.urlTests["Gemini"] = gemini
+        store.profiles["42"] = settings
+        let root = try parsed(LXProfileOverrides.apply(config, profileID: 42, storedJSON: store.encode()))
+        let groups = try XCTUnwrap(root["outbounds"] as? [[String: Any]])
+        XCTAssertEqual(groups[0]["mode"] as? String, "failover")
+        XCTAssertNil(groups[0]["balancer"])
+        XCTAssertEqual(groups[1]["mode"] as? String, "least_test")
+        XCTAssertEqual(groups[1]["interrupt_exist_connections"] as? Bool, nil)
+    }
+
+    func testExplicitProfileOptOutOfGlobal() throws {
+        var store = LXOverridesStore()
+        var settings = LXProfileSettings()
+        settings.urlTestDefault.mode = "least_test"
+        var exclude = LXURLTestOverride()
+        exclude.mode = "profile"
+        settings.urlTests["Auto"] = exclude
+        store.profiles["42"] = settings
+        let root = try parsed(LXProfileOverrides.apply(config, profileID: 42, storedJSON: store.encode()))
+        let groups = try XCTUnwrap(root["outbounds"] as? [[String: Any]])
+        XCTAssertEqual(groups[0]["mode"] as? String, "round_robin")
+        XCTAssertNotNil(groups[0]["balancer"])
+        XCTAssertEqual(groups[1]["mode"] as? String, "least_test")
+    }
+
+    func testGlobalRoundRobinParametersInheritedByGroups() throws {
+        var store = LXOverridesStore()
+        var settings = LXProfileSettings()
+        settings.urlTestDefault.mode = "round_robin"
+        settings.urlTestDefault.pool = 4
+        settings.urlTestDefault.poolTolerance = 175
+        settings.urlTestDefault.sticky = false
+        store.profiles["42"] = settings
+        let root = try parsed(LXProfileOverrides.apply(config, profileID: 42, storedJSON: store.encode()))
+        let groups = try XCTUnwrap(root["outbounds"] as? [[String: Any]])
+        for group in groups.prefix(2) {
+            XCTAssertEqual(group["mode"] as? String, "round_robin")
+            let balancer = try XCTUnwrap(group["balancer"] as? [String: Any])
+            XCTAssertEqual(balancer["pool"] as? Int, 4)
+            XCTAssertEqual(balancer["pool_tolerance"] as? Int, 175)
+            XCTAssertEqual(balancer["sticky_hash"] as? [String], ["none"])
+        }
+    }
+
+    func testLegacySavedSettingsDecodeAndRemainScoped() throws {
+        let legacy = """
+        {"profiles":{"42":{"urlTests":{"Auto":{"mode":"failover","pool":3,"poolTolerance":0,"sticky":true}},"dnsGroups":{},"wgIdle":"profile"}}}
+        """
+        let store = try LXOverridesStore.decode(legacy)
+        XCTAssertEqual(store.profiles["42"]?.urlTestDefault.mode, "profile")
+        let output = try LXProfileOverrides.apply(config, profileID: 42, storedJSON: legacy)
+        let root = try parsed(output)
+        let groups = try XCTUnwrap(root["outbounds"] as? [[String: Any]])
+        XCTAssertEqual(groups[0]["mode"] as? String, "failover")
+        XCTAssertEqual(groups[1]["mode"] as? String, "failover")
+        XCTAssertEqual(try LXProfileOverrides.apply(config, profileID: 43, storedJSON: legacy), config)
+        XCTAssertNoThrow(try LXOverridesStore.decode(store.encode()))
+    }
+
     func testInspectorAndInvalidOptions() throws {
         let summary = try LXProfileOverrides.inspect(config)
         XCTAssertEqual(summary.urlTests.map(\.tag), ["Auto", "Gemini"])

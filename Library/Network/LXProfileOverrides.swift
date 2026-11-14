@@ -10,12 +10,31 @@ public struct LXURLTestOverride: Codable, Equatable {
 }
 
 public struct LXProfileSettings: Codable, Equatable {
+    // Common mode for every URLTest group inside this profile.
+    // Per-group entries take precedence, including an explicit "profile" opt-out.
+    public var urlTestDefault = LXURLTestOverride()
     public var urlTests: [String: LXURLTestOverride] = [:]
     public var dnsGroups: [String: String] = [:]
     public var wgIdle: String = "profile"
+
     public init() {}
+
+    // Backward-compatible with previously saved LX settings that lack urlTestDefault.
+    private enum CodingKeys: String, CodingKey {
+        case urlTestDefault, urlTests, dnsGroups, wgIdle
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        urlTestDefault = try container.decodeIfPresent(LXURLTestOverride.self, forKey: .urlTestDefault) ?? LXURLTestOverride()
+        urlTests = try container.decodeIfPresent([String: LXURLTestOverride].self, forKey: .urlTests) ?? [:]
+        dnsGroups = try container.decodeIfPresent([String: String].self, forKey: .dnsGroups) ?? [:]
+        wgIdle = try container.decodeIfPresent(String.self, forKey: .wgIdle) ?? "profile"
+    }
+
     public var isEmpty: Bool {
-        urlTests.values.allSatisfy { $0.mode == "profile" } &&
+        urlTestDefault.mode == "profile" &&
+        urlTests.isEmpty &&
         dnsGroups.values.allSatisfy { $0 == "profile" } && wgIdle == "profile"
     }
 }
@@ -111,8 +130,10 @@ public enum LXProfileOverrides {
         if var outbounds = root["outbounds"] as? [[String: Any]] {
             for index in outbounds.indices {
                 guard (outbounds[index]["type"] as? String) == "urltest",
-                      let tag = outbounds[index]["tag"] as? String,
-                      let setting = settings.urlTests[tag], setting.mode != "profile" else { continue }
+                      let tag = outbounds[index]["tag"] as? String else { continue }
+                let setting = settings.urlTests[tag] ?? settings.urlTestDefault
+                // Explicit group "profile" prevents the common default from overriding this tag.
+                guard setting.mode != "profile" else { continue }
                 guard ["least_test", "failover", "round_robin"].contains(setting.mode) else {
                     throw OverrideError.invalidOption("urltest \(tag): mode")
                 }
