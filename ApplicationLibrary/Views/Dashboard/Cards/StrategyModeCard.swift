@@ -21,7 +21,13 @@ public struct StrategyModeCard: View {
                     VStack(alignment: .leading, spacing: 12) {
                         DashboardCardHeader(icon: "wand.and.stars", title: "Режим")
 
-                        // Four regular modes use the compact Group tile height.
+                        // Primary strategy first: full width and separate Base/White
+                        // availability, instead of a misleading aggregate count.
+                        if let smartMode = StrategyModeCatalog.modes.first(where: { $0.title == "Авто • Умный" }) {
+                            modeButton(smartMode, strategyGroup: strategyGroup, isWide: true)
+                        }
+
+                        // Alternative modes retain their existing two-column layout.
                         LazyVGrid(
                             columns: [GridItem(.flexible(), spacing: 8), GridItem(.flexible(), spacing: 8)],
                             spacing: 8
@@ -29,12 +35,6 @@ public struct StrategyModeCard: View {
                             ForEach(StrategyModeCatalog.modes.filter { $0.title != "Авто • Умный" }) { mode in
                                 modeButton(mode, strategyGroup: strategyGroup, isWide: false)
                             }
-                        }
-
-                        // Smart mode gets a full-width row with separate Base/White
-                        // availability, instead of a misleading aggregate count.
-                        if let smartMode = StrategyModeCatalog.modes.first(where: { $0.title == "Авто • Умный" }) {
-                            modeButton(smartMode, strategyGroup: strategyGroup, isWide: true)
                         }
 
                         if let unavailable = unavailableModes(strategyGroup: strategyGroup), !unavailable.isEmpty {
