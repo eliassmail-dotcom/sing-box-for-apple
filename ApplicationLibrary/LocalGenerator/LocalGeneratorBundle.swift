@@ -9,7 +9,7 @@ public enum LocalGeneratorBundle {
             throw LocalGeneratorPayloadError.invalidEncoding
         }
         let plain = try (decoded as NSData).decompressed(using: .zlib)
-        guard let script = String(data: plain, encoding: .utf8) else {
+        guard let script = String(data: plain as Data, encoding: .utf8) else {
             throw LocalGeneratorPayloadError.invalidEncoding
         }
         return script
