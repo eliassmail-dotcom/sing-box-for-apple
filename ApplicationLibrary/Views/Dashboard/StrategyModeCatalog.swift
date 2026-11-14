@@ -28,19 +28,13 @@ public struct StrategyModeSpec: Hashable, Identifiable {
 public enum StrategyNodeChange {
     // SelectOutbound RPC's reserved LX URLTest command. Must match the core's
     // group.LXNextNodeTag; no protobuf change or subscription edit is needed.
-    public static let nextNodeCommand = "__lx_next_node__"
+    public static let nextNodeCommand = LXNextNodeSelection.commandTag
 
     public static func nextHealthyManualTag(
         current: String,
         candidates: [(tag: String, delayMs: UInt16)]
     ) -> String? {
-        let healthy = candidates.filter { $0.delayMs > 0 }.map(\.tag)
-        guard !healthy.isEmpty else { return nil }
-        if let index = healthy.firstIndex(of: current) {
-            let next = healthy[(index + 1) % healthy.count]
-            return next == current ? nil : next
-        }
-        return healthy.first
+        LXNextNodeSelection.nextHealthyTag(current: current, candidates: candidates)
     }
 }
 
