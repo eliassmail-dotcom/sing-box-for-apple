@@ -89,6 +89,12 @@ public enum SharedPreferences {
         public static let commandServerSecret = Preference<String>("command_server_secret", defaultValue: "")
     #endif
 
+    // LX feature overrides, scoped by local profile ID. The source JSON is unchanged.
+    public static let lxOverridesJSON = Preference<String>("lx_profile_overrides_v1", defaultValue: "")
+
+    // Per-profile Groups screen layout; no VPN configuration changes.
+    public static let groupPresentationJSON = Preference<String>("group_presentation_settings_v1", defaultValue: "")
+
     // Profile Override
 
     public static let excludeDefaultRoute = Preference<Bool>("exclude_default_route", defaultValue: false)

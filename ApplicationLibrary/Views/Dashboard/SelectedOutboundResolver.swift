@@ -253,12 +253,15 @@ public final class OutboundResolverModel: ObservableObject {
     private var cancellables: Set<AnyCancellable> = []
     private var graphTask: Task<Void, Never>?
     private var didAttemptGraphLoad = false
+    private var isBound = false
 
     public init(rootTag: String) {
         self.rootTag = rootTag
     }
 
     public func bind(to client: CommandClient) {
+        guard !isBound else { return }
+        isBound = true
         client.$groups
             .receive(on: DispatchQueue.main)
             .sink { [weak self] groups in
@@ -311,15 +314,25 @@ public final class OutboundResolverModel: ObservableObject {
     }
 
     private func liveFallbackNodes() -> [OutboundConfigNode] {
-        live.map { group in
-            OutboundConfigNode(
+        var nodes: [String: OutboundConfigNode] = [:]
+        for group in live {
+            nodes[group.tag] = OutboundConfigNode(
                 tag: group.tag,
                 type: group.ownType,
-                members: group.itemTypes.map(\.key),
+                members: Array(group.itemTypes.keys),
                 defaultMember: nil,
                 detour: nil
             )
         }
+        // The live group API describes group members even before the full
+        // running config is available. Add those leaf outbounds explicitly,
+        // otherwise a group -> leaf selection always looks "unknown".
+        for group in live {
+            for (tag, type) in group.itemTypes where nodes[tag] == nil {
+                nodes[tag] = OutboundConfigNode(tag: tag, type: type)
+            }
+        }
+        return Array(nodes.values)
     }
 
     private func loadGraph() {

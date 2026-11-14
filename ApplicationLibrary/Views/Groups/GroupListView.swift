@@ -4,6 +4,19 @@ import SwiftUI
 public struct GroupListView: View {
     @EnvironmentObject private var environments: ExtensionEnvironments
     @StateObject private var viewModel = GroupListViewModel()
+    @State private var presentation = GroupPresentationSettings()
+
+    private var displayedGroups: [OutboundGroup] {
+        let byTag = Dictionary(viewModel.groups.map { ($0.tag, $0) }, uniquingKeysWith: { first, _ in first })
+        return presentation.visibleTags(available: viewModel.groups.map(\.tag)).compactMap { byTag[$0] }
+    }
+
+    private func reloadPresentation() async {
+        let id = await SharedPreferences.selectedProfileID.get()
+        let json = await SharedPreferences.groupPresentationJSON.get()
+        let store = (try? GroupPresentationStore.decode(json)) ?? GroupPresentationStore()
+        presentation = store.profiles[String(id)] ?? GroupPresentationSettings()
+    }
 
     public init() {}
     public var body: some View {
@@ -13,7 +26,7 @@ public struct GroupListView: View {
             } else {
                 ScrollView {
                     LazyVStack(spacing: 0, pinnedViews: [.sectionHeaders]) {
-                        ForEach(viewModel.groups, id: \.tag) { group in
+                        ForEach(displayedGroups, id: \.tag) { group in
                             if group.isExpand {
                                 Section {
                                     GroupContentView(group: group)
@@ -38,6 +51,13 @@ public struct GroupListView: View {
         .alert($viewModel.alert)
         .onAppear {
             viewModel.connect()
+            Task { await reloadPresentation() }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .groupPresentationChanged)) { _ in
+            Task { await reloadPresentation() }
+        }
+        .onReceive(environments.selectedProfileUpdate) { _ in
+            Task { await reloadPresentation() }
         }
         .onReceive(environments.commandClient.$groups) { groups in
             Task { @MainActor in

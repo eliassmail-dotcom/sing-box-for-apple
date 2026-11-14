@@ -60,6 +60,11 @@ public final class DashboardCardConfiguration: ObservableObject {
         guard !saved.isEmpty else { return DashboardCard.defaultCards }
 
         var cards = saved.compactMap { migrateCardName($0) }.compactMap { DashboardCard(rawValue: $0) }
+        // Earlier versions displayed strategy/Gemini in separate cards.
+        // Migrate a previously enabled node card to the consolidated mode card.
+        if (saved.contains("strategyNode") || saved.contains("geminiNode")) && !cards.contains(.strategyMode) {
+            cards.append(.strategyMode)
+        }
         if !cards.contains(.profile) {
             cards.append(.profile)
         }
