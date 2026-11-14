@@ -16,12 +16,16 @@ public struct LXProfileSettings: Codable, Equatable {
     public var urlTests: [String: LXURLTestOverride] = [:]
     public var dnsGroups: [String: String] = [:]
     public var wgIdle: String = "profile"
+    // Global reliability controls. Zero/empty means inherit the source profile.
+    public var adaptiveTolerancePercent: Int = 0
+    public var minHoldSeconds: Int = 0
+    public var probeURLs: String = ""
 
     public init() {}
 
     // Backward-compatible with previously saved LX settings that lack urlTestDefault.
     private enum CodingKeys: String, CodingKey {
-        case urlTestDefault, urlTests, dnsGroups, wgIdle
+        case urlTestDefault, urlTests, dnsGroups, wgIdle, adaptiveTolerancePercent, minHoldSeconds, probeURLs
     }
 
     public init(from decoder: Decoder) throws {
@@ -30,12 +34,16 @@ public struct LXProfileSettings: Codable, Equatable {
         urlTests = try container.decodeIfPresent([String: LXURLTestOverride].self, forKey: .urlTests) ?? [:]
         dnsGroups = try container.decodeIfPresent([String: String].self, forKey: .dnsGroups) ?? [:]
         wgIdle = try container.decodeIfPresent(String.self, forKey: .wgIdle) ?? "profile"
+        adaptiveTolerancePercent = try container.decodeIfPresent(Int.self, forKey: .adaptiveTolerancePercent) ?? 0
+        minHoldSeconds = try container.decodeIfPresent(Int.self, forKey: .minHoldSeconds) ?? 0
+        probeURLs = try container.decodeIfPresent(String.self, forKey: .probeURLs) ?? ""
     }
 
     public var isEmpty: Bool {
         urlTestDefault.mode == "profile" &&
         urlTests.isEmpty &&
-        dnsGroups.values.allSatisfy { $0 == "profile" } && wgIdle == "profile"
+        dnsGroups.values.allSatisfy { $0 == "profile" } && wgIdle == "profile" &&
+        adaptiveTolerancePercent == 0 && minHoldSeconds == 0 && probeURLs.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 }
 
@@ -200,33 +208,68 @@ public enum LXProfileOverrides {
         var root = try document(source)
         var changed = false
 
+        guard (0...100).contains(settings.adaptiveTolerancePercent),
+              (0...600).contains(settings.minHoldSeconds) else {
+            throw OverrideError.invalidOption("порог адаптации / время удержания")
+        }
+        let healthURLs = settings.probeURLs.split(whereSeparator: { $0 == "," || $0 == "\n" })
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        if healthURLs.count > 3 || Set(healthURLs).count != healthURLs.count ||
+            healthURLs.contains(where: { value in
+                guard let url = URLComponents(string: value) else { return true }
+                return !["https", "http"].contains(url.scheme ?? "") || (url.host ?? "").isEmpty
+            }) {
+            throw OverrideError.invalidOption("проверочные URL: 1–3 разных HTTP(S)-адреса")
+        }
+
         if var outbounds = root["outbounds"] as? [[String: Any]] {
             for index in outbounds.indices {
                 guard (outbounds[index]["type"] as? String) == "urltest",
                       let tag = outbounds[index]["tag"] as? String else { continue }
                 let setting = settings.urlTests[tag] ?? settings.urlTestDefault
-                // Explicit group "profile" prevents the common default from overriding this tag.
-                guard setting.mode != "profile" else { continue }
-                guard ["least_test", "failover", "round_robin"].contains(setting.mode) else {
-                    throw OverrideError.invalidOption("urltest \(tag): mode")
-                }
                 var group = outbounds[index]
-                group["mode"] = setting.mode
-                if setting.mode == "round_robin" {
-                    guard (1...32).contains(setting.pool), (0...2000).contains(setting.poolTolerance) else {
-                        throw OverrideError.invalidOption("urltest \(tag): pool / pool_tolerance")
+                var groupChanged = false
+                if setting.mode != "profile" {
+                    guard ["least_test", "failover", "round_robin"].contains(setting.mode) else {
+                        throw OverrideError.invalidOption("urltest \(tag): mode")
                     }
-                    group["balancer"] = [
-                        "pool": setting.pool,
-                        "pool_tolerance": setting.poolTolerance,
-                        "sticky_hash": setting.sticky ? ["process", "domain"] : ["none"],
-                    ] as [String: Any]
-                } else {
-                    group.removeValue(forKey: "balancer")
-                    if setting.mode == "failover" { group.removeValue(forKey: "tolerance") }
+                    group["mode"] = setting.mode
+                    if setting.mode == "round_robin" {
+                        guard (1...32).contains(setting.pool), (0...2000).contains(setting.poolTolerance) else {
+                            throw OverrideError.invalidOption("urltest \(tag): pool / pool_tolerance")
+                        }
+                        group["balancer"] = [
+                            "pool": setting.pool,
+                            "pool_tolerance": setting.poolTolerance,
+                            "sticky_hash": setting.sticky ? ["process", "domain"] : ["none"],
+                        ] as [String: Any]
+                    } else {
+                        group.removeValue(forKey: "balancer")
+                        if setting.mode == "failover" { group.removeValue(forKey: "tolerance") }
+                    }
+                    groupChanged = true
                 }
-                outbounds[index] = group
-                changed = true
+                let effectiveMode = group["mode"] as? String ?? "least_test"
+                if effectiveMode == "least_test" {
+                    if settings.adaptiveTolerancePercent > 0 {
+                        group["tolerance_percent"] = settings.adaptiveTolerancePercent
+                        groupChanged = true
+                    }
+                    if settings.minHoldSeconds > 0 {
+                        group["min_hold"] = "\(settings.minHoldSeconds)s"
+                        groupChanged = true
+                    }
+                }
+                if !healthURLs.isEmpty {
+                    group.removeValue(forKey: "url")
+                    group["urls"] = healthURLs
+                    groupChanged = true
+                }
+                if groupChanged {
+                    outbounds[index] = group
+                    changed = true
+                }
             }
             root["outbounds"] = outbounds
         }
