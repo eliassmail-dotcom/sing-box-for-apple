@@ -278,4 +278,44 @@ final class LXProfileOverridesTests: XCTestCase {
         XCTAssertEqual(outbounds.first(where: { ($0["tag"] as? String) == "Авто · Базовая" })?["mode"] as? String, "failover")
     }
 
+    func testPassiveGuardOptInSkipsRoundRobinAndPersistsPerProfile() throws {
+        let oldJSON = #"{"profiles":{"42":{"urlTests":{},"dnsGroups":{},"wgIdle":"profile"}}}"#
+        XCTAssertEqual(try LXOverridesStore.decode(oldJSON).profiles["42"]?.passiveGuardEnabled, false)
+        XCTAssertEqual(try LXProfileOverrides.apply(config, profileID: 42, storedJSON: ""), config)
+
+        var store = LXOverridesStore()
+        var settings = LXProfileSettings()
+        settings.passiveGuardEnabled = true
+        store.profiles["42"] = settings
+        let applied = try parsed(LXProfileOverrides.apply(config, profileID: 42, storedJSON: store.encode()))
+        let groups = try XCTUnwrap(applied["outbounds"] as? [[String: Any]])
+        XCTAssertNil(groups[0]["passive_guard"]) // round_robin rejects guard
+        XCTAssertEqual(groups[1]["passive_guard"] as? Bool, true) // failover
+        XCTAssertEqual(try LXProfileOverrides.apply(config, profileID: 41, storedJSON: store.encode()), config)
+    }
+
+    func testGeneratedSmartFallbackReceivesPassiveGuardWhenEnabled() throws {
+        let source = """
+        {"outbounds":[
+            {"type":"selector","tag":"Стратегия","outbounds":["Авто · Базовая","Авто · Белые"]},
+            {"type":"urltest","tag":"Авто · Базовая","outbounds":["a"],"mode":"least_test"},
+            {"type":"urltest","tag":"Авто · Белые","outbounds":["b"],"mode":"failover"},
+            {"type":"vless","tag":"a"}, {"type":"vless","tag":"b"}
+        ],"route":{"final":"Стратегия"}}
+        """
+        var store = LXOverridesStore()
+        var settings = LXProfileSettings()
+        settings.passiveGuardEnabled = true
+        store.profiles["42"] = settings
+        let applied = try parsed(LXProfileOverrides.apply(source, profileID: 42, storedJSON: store.encode()))
+        let groups = try XCTUnwrap(applied["outbounds"] as? [[String: Any]])
+        for tag in ["Авто · Базовая", "Авто · Белые", LXProfileOverrides.preferredFallbackTag] {
+            XCTAssertEqual(
+                groups.first(where: { ($0["tag"] as? String) == tag })?["passive_guard"] as? Bool,
+                true
+            )
+        }
+    }
+
+
 }
