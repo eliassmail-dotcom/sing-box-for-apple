@@ -118,6 +118,27 @@ final class SelectedOutboundResolverTests: XCTestCase {
         XCTAssertEqual(result.status, .incomplete(.rootMissing))
     }
 
+    func testPriorityFallbackGroupResolvesToLiveBaseLeaf() {
+        let resolver = SelectedOutboundResolver(nodes: [
+            OutboundConfigNode(tag: "Стратегия", type: "selector", members: ["Авто · База → Белые"]),
+            OutboundConfigNode(tag: "Авто · База → Белые", type: "urltest", members: ["Авто · Базовая", "Авто · Белые"]),
+            OutboundConfigNode(tag: "Авто · Базовая", type: "urltest", members: ["🇩🇪 Германия"]),
+            OutboundConfigNode(tag: "Авто · Белые", type: "urltest", members: ["🇳🇱 Нидерланды"]),
+            OutboundConfigNode(tag: "🇩🇪 Германия", type: "vless"),
+            OutboundConfigNode(tag: "🇳🇱 Нидерланды", type: "vless"),
+        ])
+        let liveGroups = [
+            live("Стратегия", "Авто · База → Белые"),
+            live("Авто · База → Белые", "Авто · Базовая", type: "urltest"),
+            live("Авто · Базовая", "🇩🇪 Германия", type: "urltest", delays: ["🇩🇪 Германия": 83]),
+            live("Авто · Белые", "🇳🇱 Нидерланды", type: "urltest", delays: ["🇳🇱 Нидерланды": 112]),
+        ]
+        let result = resolver.resolve(rootTag: "Стратегия", live: liveGroups)
+        XCTAssertEqual(result.selectedTag, "🇩🇪 Германия")
+        XCTAssertEqual(result.latencyMs, 83)
+        XCTAssertEqual(result.groupPath, ["Стратегия", "Авто · База → Белые", "Авто · Базовая"])
+    }
+
     func testNoLiveStateFallsBackToConfigDefault() {
         let resolver = SelectedOutboundResolver(nodes: corporateGraph())
         let result = resolver.resolve(rootTag: "Стратегия", live: [])

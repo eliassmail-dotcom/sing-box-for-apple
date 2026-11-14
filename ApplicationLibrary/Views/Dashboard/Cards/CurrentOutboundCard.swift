@@ -20,8 +20,9 @@ public struct CurrentOutboundCard: View {
     }
 
     public var body: some View {
-        if let result = model.result, let tag = result.selectedTag {
-            DashboardCardView(title: "") {
+        Group {
+            if let result = model.result, let tag = result.selectedTag {
+                DashboardCardView(title: "") {
                 VStack(alignment: .leading, spacing: 12) {
                     DashboardCardHeader(icon: icon, title: title)
                     VStack(alignment: .leading, spacing: 4) {
@@ -67,10 +68,10 @@ public struct CurrentOutboundCard: View {
                     )
                 }
             }
-            .onAppear {
-                model.bind(to: commandClient)
             }
         }
+        // The subscription must exist before the first non-nil result.
+        .onAppear { model.bind(to: commandClient) }
     }
 
     private func routeText(_ result: ResolvedOutbound) -> String {
