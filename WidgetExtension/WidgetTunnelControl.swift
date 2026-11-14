@@ -143,10 +143,20 @@ enum WidgetTunnelControl {
     /// one of those silently leaves the Dashboard's running route unchanged.
     private static func loadManager(connectedOnly: Bool = false) async throws -> NETunnelProviderManager? {
         let managers = try await NETunnelProviderManager.loadAllFromPreferences()
-        let expectedIDs: Set<String> = [
-            "\(WidgetAppConfiguration.packageName).extension",
-            "\(WidgetAppConfiguration.packageName).system",
-        ]
+        // GBox/other signing tools can rewrite the actual CFBundleIdentifier
+        // while leaving BasePackageIdentifier in Info.plist unchanged.
+        // Derive the installed package from this signed .widget extension too.
+        var packageNames = [WidgetAppConfiguration.packageName]
+        if let signedWidgetID = Bundle.main.bundleIdentifier,
+           signedWidgetID.hasSuffix(".widget") {
+            let signedBase = String(signedWidgetID.dropLast(".widget".count))
+            if !packageNames.contains(signedBase) {
+                packageNames.insert(signedBase, at: 0)
+            }
+        }
+        let expectedIDs = Set(packageNames.flatMap { base in
+            ["\(base).extension", "\(base).system"]
+        })
         let matching = managers.filter { manager in
             guard let tunnel = manager.protocolConfiguration as? NETunnelProviderProtocol,
                   let provider = tunnel.providerBundleIdentifier else { return false }
