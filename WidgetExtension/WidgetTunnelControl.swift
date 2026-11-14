@@ -90,8 +90,8 @@ enum WidgetTunnelControl {
     /// sendProviderMessage avoids importing Libbox into the widget target,
     /// starting a second VPN session, or modifying subscription settings.
     static func changeNode() async throws {
-        guard let manager = try await loadManager() else {
-            throw nodeError("VPN-конфигурация не найдена")
+        guard let manager = try await loadManager(connectedOnly: true) else {
+            throw nodeError("Подключённый туннель sing-box не найден")
         }
         guard manager.connection.status == .connected,
               let session = manager.connection as? NETunnelProviderSession else {
@@ -132,8 +132,29 @@ enum WidgetTunnelControl {
         ])
     }
 
-    private static func loadManager() async throws -> NETunnelProviderManager? {
+    /// Use the tunnel owned by this app instead of loadAllFromPreferences().first.
+    /// iOS may retain old or additional VPN profiles; sending the LX command to
+    /// one of those silently leaves the Dashboard's running route unchanged.
+    private static func loadManager(connectedOnly: Bool = false) async throws -> NETunnelProviderManager? {
         let managers = try await NETunnelProviderManager.loadAllFromPreferences()
-        return managers.first
+        let expectedIDs: Set<String> = [
+            "\(WidgetAppConfiguration.packageName).extension",
+            "\(WidgetAppConfiguration.packageName).system",
+        ]
+        let matching = managers.filter { manager in
+            guard let tunnel = manager.protocolConfiguration as? NETunnelProviderProtocol,
+                  let provider = tunnel.providerBundleIdentifier else { return false }
+            // The serverAddress is written by ExtensionProfile.install and
+            // remains stable after third-party IPA resigning.
+            return expectedIDs.contains(provider) ||
+                (tunnel.serverAddress == "sing-box" &&
+                 (provider.hasSuffix(".extension") || provider.hasSuffix(".system")))
+        }
+        // Never control a different VPN just because it was listed first.
+        let candidates = matching
+        if connectedOnly {
+            return candidates.first(where: { $0.connection.status == .connected })
+        }
+        return candidates.first(where: { $0.connection.status.isStarted }) ?? candidates.first
     }
 }
