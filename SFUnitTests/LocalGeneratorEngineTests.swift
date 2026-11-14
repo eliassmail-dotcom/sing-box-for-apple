@@ -8,7 +8,8 @@ final class LocalGeneratorEngineTests: XCTestCase {
     private let offlineNodes = """
     {"outbounds":[
       {"type":"vless","tag":"🇩🇪 Германия","server":"de.example.invalid","server_port":443,"uuid":"11111111-1111-4111-8111-111111111111","flow":"xtls-rprx-vision","tls":{"enabled":true,"server_name":"example.invalid","reality":{"enabled":true,"public_key":"AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA","short_id":"0123456789abcdef"}}},
-      {"type":"vless","tag":"🇨🇭 Gemini","server":"ch.example.invalid","server_port":443,"uuid":"11111111-1111-4111-8111-111111111111","flow":"xtls-rprx-vision","tls":{"enabled":true,"server_name":"example.invalid","reality":{"enabled":true,"public_key":"AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA","short_id":"0123456789abcdef"}}}
+      {"type":"vless","tag":"🇨🇭 Gemini","server":"ch.example.invalid","server_port":443,"uuid":"11111111-1111-4111-8111-111111111111","flow":"xtls-rprx-vision","tls":{"enabled":true,"server_name":"example.invalid","reality":{"enabled":true,"public_key":"AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA","short_id":"0123456789abcdef"}}},
+      {"type":"vless","tag":"🇫🇷 Франция","server":"fr.example.invalid","server_port":443,"uuid":"11111111-1111-4111-8111-111111111111","flow":"xtls-rprx-vision","tls":{"enabled":true,"server_name":"example.invalid","reality":{"enabled":true,"public_key":"AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA","short_id":"0123456789abcdef"}}}
     ]}
     """
 
