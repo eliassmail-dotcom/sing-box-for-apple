@@ -16,14 +16,12 @@ public struct LXProfileSettings: Codable, Equatable {
     public var urlTests: [String: LXURLTestOverride] = [:]
     public var dnsGroups: [String: String] = [:]
     public var wgIdle: String = "profile"
-    // When enabled, adds a new strategy: Base group is preferred, Whites only as backup.
-    public var whiteFallbackEnabled = false
 
     public init() {}
 
     // Backward-compatible with previously saved LX settings that lack urlTestDefault.
     private enum CodingKeys: String, CodingKey {
-        case urlTestDefault, urlTests, dnsGroups, wgIdle, whiteFallbackEnabled
+        case urlTestDefault, urlTests, dnsGroups, wgIdle
     }
 
     public init(from decoder: Decoder) throws {
@@ -32,14 +30,12 @@ public struct LXProfileSettings: Codable, Equatable {
         urlTests = try container.decodeIfPresent([String: LXURLTestOverride].self, forKey: .urlTests) ?? [:]
         dnsGroups = try container.decodeIfPresent([String: String].self, forKey: .dnsGroups) ?? [:]
         wgIdle = try container.decodeIfPresent(String.self, forKey: .wgIdle) ?? "profile"
-        whiteFallbackEnabled = try container.decodeIfPresent(Bool.self, forKey: .whiteFallbackEnabled) ?? false
     }
 
     public var isEmpty: Bool {
         urlTestDefault.mode == "profile" &&
         urlTests.isEmpty &&
-        dnsGroups.values.allSatisfy { $0 == "profile" } && wgIdle == "profile" &&
-        !whiteFallbackEnabled
+        dnsGroups.values.allSatisfy { $0 == "profile" } && wgIdle == "profile"
     }
 }
 
@@ -129,7 +125,9 @@ public enum LXProfileOverrides {
     private static let whiteTags = ["Авто · Белые", "Авто · Только белые"]
 
     // This feature requires an LX kernel implementing priority_outbounds.
-    // Only existing URLTest groups may be combined; the source subscription stays untouched.
+    // Every compatible profile gets a dormant fallback group automatically.
+    // It is used ONLY when the user selects the mode from the Dashboard.
+    // The source subscription and the user's previous selector choice stay intact.
     public static func supportsWhiteFallback(_ source: String) -> Bool {
         guard let root = try? document(source),
               let outbounds = root["outbounds"] as? [[String: Any]] else { return false }
@@ -159,8 +157,14 @@ public enum LXProfileOverrides {
               }) else {
             throw OverrideError.invalidOption("для резервирования требуются группы Базовая, Белые и селектор Стратегия")
         }
-        guard !outbounds.contains(where: { ($0["tag"] as? String) == preferredFallbackTag }) else {
-            throw OverrideError.invalidOption("тег резервной стратегии уже занят")
+        // Profiles which already contain the generated group must not get duplicates.
+        if let existing = outbounds.first(where: { ($0["tag"] as? String) == preferredFallbackTag }) {
+            guard (existing["type"] as? String) == "urltest",
+                  (existing["outbounds"] as? [String]) == [base, white],
+                  (existing["priority_outbounds"] as? [String]) == [base] else {
+                throw OverrideError.invalidOption("существующая резервная группа имеет несовместимую конфигурацию")
+            }
+            return
         }
         guard var rootTags = outbounds[rootIndex]["outbounds"] as? [String] else {
             throw OverrideError.invalidOption("Стратегия не содержит список outbounds")
@@ -187,7 +191,11 @@ public enum LXProfileOverrides {
 
     public static func apply(_ source: String, profileID: Int64, storedJSON: String) throws -> String {
         let store = try LXOverridesStore.decode(storedJSON)
-        guard let settings = store.profiles[String(profileID)], !settings.isEmpty else { return source }
+        let settings = store.profiles[String(profileID)] ?? LXProfileSettings()
+        // No user overrides and no compatible base/white groups: byte-identical.
+        // The fallback group's presence no longer depends on a separate toggle.
+        let injectFallback = supportsWhiteFallback(source)
+        guard !settings.isEmpty || injectFallback else { return source }
 
         var root = try document(source)
         var changed = false
@@ -262,7 +270,7 @@ public enum LXProfileOverrides {
             }
         }
 
-        if settings.whiteFallbackEnabled {
+        if injectFallback {
             try addWhiteFallback(to: &root)
             changed = true
         }

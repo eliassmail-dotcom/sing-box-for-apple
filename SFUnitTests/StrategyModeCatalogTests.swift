@@ -21,7 +21,7 @@ final class StrategyModeCatalogTests: XCTestCase {
     private let nbStrategy = ["Пулы", "Авто · Базовая", "Авто · Полная", "Ручной выбор"]
 
     func testAllModesAvailableInCorporateProfile() {
-        for mode in StrategyModeCatalog.modes where mode.title != "Авто • Резерв" {
+        for mode in StrategyModeCatalog.modes where mode.title != "Авто с резервом" {
             XCTAssertTrue(StrategyModeCatalog.isAvailable(mode, strategyTags: corporateStrategy, geminiTags: corporateGemini), mode.title)
         }
         XCTAssertEqual(StrategyModeCatalog.strategyTarget(StrategyModeCatalog.modes[0], strategyTags: corporateStrategy), "Авто · Базовая")
@@ -34,11 +34,12 @@ final class StrategyModeCatalogTests: XCTestCase {
     }
 
     func testOptionalPriorityStrategy() {
-        let mode = try! XCTUnwrap(StrategyModeCatalog.modes.first { $0.title == "Авто • Резерв" })
+        let mode = try! XCTUnwrap(StrategyModeCatalog.modes.first { $0.title == "Авто с резервом" })
         XCTAssertFalse(StrategyModeCatalog.isAvailable(mode, strategyTags: corporateStrategy, geminiTags: corporateGemini))
         let withPriority = corporateStrategy + ["Авто · База → Белые"]
         XCTAssertTrue(StrategyModeCatalog.isAvailable(mode, strategyTags: withPriority, geminiTags: corporateGemini))
         XCTAssertEqual(StrategyModeCatalog.strategyTarget(mode, strategyTags: withPriority), "Авто · База → Белые")
+        XCTAssertEqual(StrategyModeCatalog.activeMode(strategySelected: "Авто · База → Белые", geminiSelected: "Gemini • Super • A", strategyTags: withPriority, geminiTags: corporateGemini)?.title, "Авто с резервом")
     }
 
     func testRenamedWhiteGroupMatchesBothNames() {

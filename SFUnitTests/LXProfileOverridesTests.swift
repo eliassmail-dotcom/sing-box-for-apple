@@ -161,12 +161,8 @@ final class LXProfileOverridesTests: XCTestCase {
         ],"route":{"final":"Стратегия"}}
         """
         XCTAssertTrue(LXProfileOverrides.supportsWhiteFallback(source))
-        XCTAssertEqual(try LXProfileOverrides.apply(source, profileID: 42, storedJSON: ""), source)
-        var store = LXOverridesStore()
-        var settings = LXProfileSettings()
-        settings.whiteFallbackEnabled = true
-        store.profiles["42"] = settings
-        let transformed = try LXProfileOverrides.apply(source, profileID: 42, storedJSON: store.encode())
+        // No settings or extra Apply action required: the group is available on first start.
+        let transformed = try LXProfileOverrides.apply(source, profileID: 42, storedJSON: "")
         let root = try parsed(transformed)
         let outbounds = try XCTUnwrap(root["outbounds"] as? [[String: Any]])
         let reserve = try XCTUnwrap(outbounds.first(where: { ($0["tag"] as? String) == LXProfileOverrides.preferredFallbackTag }))
@@ -178,17 +174,25 @@ final class LXProfileOverridesTests: XCTestCase {
         XCTAssertEqual((selector["outbounds"] as? [String])?.last, LXProfileOverrides.preferredFallbackTag)
         XCTAssertEqual(selector["default"] as? String, "Авто · Базовая")
         XCTAssertEqual((root["route"] as? [String: Any])?["final"] as? String, "Стратегия")
-        XCTAssertEqual(try LXProfileOverrides.apply(source, profileID: 12, storedJSON: store.encode()), source)
-        XCTAssertFalse(try LXOverridesStore.decode(#"{"profiles":{"42":{"urlTests":{},"dnsGroups":{},"wgIdle":"profile"}}}"#).profiles["42"]!.whiteFallbackEnabled)
+        // Old per-profile toggle is ignored: both prior enabled and disabled
+        // preferences produce the same effective group, with no duplicate.
+        let legacyOn = #"{"profiles":{"42":{"whiteFallbackEnabled":true}}}"#
+        let legacyOff = #"{"profiles":{"42":{"whiteFallbackEnabled":false}}}"#
+        let withLegacyOn = try LXProfileOverrides.apply(source, profileID: 42, storedJSON: legacyOn)
+        let withLegacyOff = try LXProfileOverrides.apply(source, profileID: 42, storedJSON: legacyOff)
+        XCTAssertEqual(try parsed(withLegacyOn)["outbounds"] as? [[String: Any]] != nil, true)
+        XCTAssertEqual(try parsed(withLegacyOff)["outbounds"] as? [[String: Any]] != nil, true)
+        let onOutbounds = try XCTUnwrap(parsed(withLegacyOn)["outbounds"] as? [[String: Any]])
+        let offOutbounds = try XCTUnwrap(parsed(withLegacyOff)["outbounds"] as? [[String: Any]])
+        XCTAssertEqual(onOutbounds.filter { ($0["tag"] as? String) == LXProfileOverrides.preferredFallbackTag }.count, 1)
+        XCTAssertEqual(offOutbounds.filter { ($0["tag"] as? String) == LXProfileOverrides.preferredFallbackTag }.count, 1)
+        XCTAssertEqual(try LXProfileOverrides.apply(source, profileID: 12, storedJSON: ""), transformed)
     }
 
     func testWhiteFallbackRequiresBothGroupsAndRootSelector() throws {
-        var settings = LXProfileSettings()
-        settings.whiteFallbackEnabled = true
-        var store = LXOverridesStore()
-        store.profiles["42"] = settings
         XCTAssertFalse(LXProfileOverrides.supportsWhiteFallback(config))
-        XCTAssertThrowsError(try LXProfileOverrides.apply(config, profileID: 42, storedJSON: store.encode()))
+        // Unrelated profiles remain byte-identical, even without saved settings.
+        XCTAssertEqual(try LXProfileOverrides.apply(config, profileID: 42, storedJSON: ""), config)
     }
     func testInspectorAndInvalidOptions() throws {
         let summary = try LXProfileOverrides.inspect(config)
