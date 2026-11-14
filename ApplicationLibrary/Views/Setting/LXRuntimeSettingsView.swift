@@ -43,6 +43,16 @@ public struct LXRuntimeSettingsView: View {
                             Text("Общий режим применяется ко всем группам выбранного профиля, кроме групп с индивидуальным переопределением.")
                                 .font(.footnote).foregroundStyle(.secondary)
                         }
+                        Section("Профиль устойчивости") {
+                            Picker("Профиль", selection: resiliencePresetBinding) {
+                                Text("Мои настройки").tag("custom")
+                                Text("Экономный").tag("economy")
+                                Text("Баланс").tag("balance")
+                                Text("Антиблок").tag("antiblock")
+                            }
+                            Text("Профили управляют только порогом задержки, удержанием и Passive Guard. Баланс сохраняет Guard выключенным; Антиблок включает карантин и Dial Gate. Заданные проверочные URL, приоритет базовых/белых узлов, DNS и таймаут подключения не меняются.")
+                                .font(.footnote).foregroundStyle(.secondary)
+                        }
                         Section("Устойчивость URLTest") {
                             Toggle("Адаптивный порог задержки", isOn: adaptiveEnabledBinding)
                             if currentSettings.adaptiveTolerancePercent > 0 {
@@ -88,6 +98,15 @@ public struct LXRuntimeSettingsView: View {
                         }
                     }
 
+                    Section("Gemini") {
+                        Toggle("Gemini Chains", isOn: geminiChainsBinding)
+                            .disabled(!LXGeminiBuilder.hasSource(profileContent))
+                        statusRow("Источник конечных узлов", value:
+                            LXGeminiBuilder.hasSource(profileContent) ? "Gemini+" : "Gemini+ не найден")
+                        Text("Прямые Gemini-узлы собираются приложением из Gemini+. При включении добавляются цепочки: текущий узел Стратегии → Gemini-узел. Первый переход выбирается ядром динамически, без фиксации сервера. Исходная подписка не меняется.")
+                            .font(.footnote).foregroundStyle(.secondary)
+                    }
+
                     if !summary.dnsGroups.isEmpty {
                         Section("DNS-группы") {
                             ForEach(summary.dnsGroups) { group in
@@ -117,7 +136,7 @@ public struct LXRuntimeSettingsView: View {
                         statusRow("Multi-hop Chain", value: "\(summary.chainCount) цепочек")
                         statusRow("XHTTP", value: "\(summary.xhttpCount) узлов")
                         statusRow("VLESS Encryption", value: "\(summary.encryptedVlessCount) узлов")
-                        Text("Цепочки, XHTTP и VLESS Encryption нельзя включить общим тумблером: нужна соответствующая конфигурация узлов и поддержка серверов. Существующие цепочки выбираются в разделе «Группы».")
+                        Text("Gemini Chains создаёт цепочки из Gemini+ внутри приложения. Остальные Chain, XHTTP и VLESS Encryption требуют поддержки исходной конфигурации и серверов.")
                             .font(.footnote).foregroundStyle(.secondary)
                         statusRow("Clash API / CommandClient", value: "Функции ядра")
                         Text("API и события определяются сборкой ядра, а не переключателем в профиле.")
@@ -180,24 +199,38 @@ public struct LXRuntimeSettingsView: View {
         }
     }
 
+    private var resiliencePresetBinding: Binding<String> {
+        Binding(
+            get: { currentSettings.resiliencePreset },
+            set: { selected in mutate { $0.applyResiliencePreset(selected) } }
+        )
+    }
+
+    private var geminiChainsBinding: Binding<Bool> {
+        Binding(
+            get: { currentSettings.geminiChainsEnabled },
+            set: { enabled in mutate { $0.geminiChainsEnabled = enabled } }
+        )
+    }
+
     private var adaptiveEnabledBinding: Binding<Bool> {
         Binding(get: { currentSettings.adaptiveTolerancePercent > 0 },
-                set: { enabled in mutate { $0.adaptiveTolerancePercent = enabled ? 30 : 0 } })
+                set: { enabled in mutate { $0.adaptiveTolerancePercent = enabled ? 30 : 0; $0.resiliencePreset = "custom" } })
     }
 
     private var adaptivePercentBinding: Binding<Int> {
         Binding(get: { currentSettings.adaptiveTolerancePercent },
-                set: { value in mutate { $0.adaptiveTolerancePercent = value } })
+                set: { value in mutate { $0.adaptiveTolerancePercent = value; $0.resiliencePreset = "custom" } })
     }
 
     private var holdEnabledBinding: Binding<Bool> {
         Binding(get: { currentSettings.minHoldSeconds > 0 },
-                set: { enabled in mutate { $0.minHoldSeconds = enabled ? 30 : 0 } })
+                set: { enabled in mutate { $0.minHoldSeconds = enabled ? 30 : 0; $0.resiliencePreset = "custom" } })
     }
 
     private var holdSecondsBinding: Binding<Int> {
         Binding(get: { currentSettings.minHoldSeconds },
-                set: { value in mutate { $0.minHoldSeconds = value } })
+                set: { value in mutate { $0.minHoldSeconds = value; $0.resiliencePreset = "custom" } })
     }
 
     private var probeURLsBinding: Binding<String> {
@@ -207,7 +240,7 @@ public struct LXRuntimeSettingsView: View {
 
     private var passiveGuardEnabledBinding: Binding<Bool> {
         Binding(get: { currentSettings.passiveGuardEnabled },
-                set: { enabled in mutate { $0.passiveGuardEnabled = enabled } })
+                set: { enabled in mutate { $0.passiveGuardEnabled = enabled; $0.resiliencePreset = "custom" } })
     }
 
     private var globalModeBinding: Binding<String> {
