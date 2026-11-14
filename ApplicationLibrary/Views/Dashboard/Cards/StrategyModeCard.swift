@@ -9,6 +9,7 @@ public struct StrategyModeCard: View {
     @EnvironmentObject private var commandClient: CommandClient
     @EnvironmentObject private var environments: ExtensionEnvironments
     @EnvironmentObject private var profile: ExtensionProfile
+    @Environment(\.scenePhase) private var scenePhase
     @StateObject private var strategyOutbound = OutboundResolverModel(rootTag: "Стратегия")
     @StateObject private var geminiOutbound = OutboundResolverModel(rootTag: "Gemini")
     @State private var alert: AlertState?
@@ -90,6 +91,12 @@ public struct StrategyModeCard: View {
                 }
                 .alert($alert)
                 .task { await loadResiliencePreset() }
+                .onChangeCompat(of: scenePhase) { phase in
+                    guard phase == .active else { return }
+                    // Pick up Control Center node changes even if a group push
+                    // was missed while the main app was inactive.
+                    commandClient.refreshGroups()
+                }
                 .onReceive(environments.selectedProfileUpdate) { _ in
                     Task { await loadResiliencePreset() }
                 }
