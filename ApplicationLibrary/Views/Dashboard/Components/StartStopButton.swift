@@ -104,7 +104,7 @@ public struct StartStopButton: View {
                             // Only report a genuine connecting -> disconnected
                             // transition, not an old status notification while
                             // loadFromPreferences() is still in progress.
-                            let failedDuringStartup = sawConnecting
+                            let failedDuringStartup = sawConnecting || profile.startRequestIssued
                             isStarting = false
                             sawConnecting = false
                             if failedDuringStartup {
