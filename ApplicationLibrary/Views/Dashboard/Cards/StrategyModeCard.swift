@@ -153,7 +153,7 @@ public struct StrategyModeCard: View {
                               lineWidth: selected ? 2 : 1)
         )
         .disabled(applyingResiliencePreset != nil || selected)
-        .accessibilityAddTraits(selected ? [.isSelected] : [])
+        .accessibilityLabel(selected ? "\(title), выбран" : title)
     }
 
     private func loadResiliencePreset() async {
@@ -167,7 +167,8 @@ public struct StrategyModeCard: View {
             let content = try await selectedProfile.readAsync()
             let supports = !(try LXProfileOverrides.inspect(content)).urlTests.isEmpty
             let store = try LXOverridesStore.decode(await SharedPreferences.lxOverridesJSON.get())
-            guard id == await SharedPreferences.selectedProfileID.get() else { return }
+            let currentID = await SharedPreferences.selectedProfileID.get()
+            guard id == currentID else { return }
             resilienceProfileID = id
             resilienceSupported = supports
             resiliencePreset = store.profiles[String(id)]?.resiliencePreset ??
@@ -199,7 +200,8 @@ public struct StrategyModeCard: View {
             store.profiles[String(id)] = settings
             let updated = try store.encode()
             _ = try LXProfileOverrides.apply(source, profileID: id, storedJSON: updated)
-            guard id == await SharedPreferences.selectedProfileID.get() else {
+            let currentID = await SharedPreferences.selectedProfileID.get()
+            guard id == currentID else {
                 throw NSError(domain: "LXDashboard", code: 2, userInfo: [
                     NSLocalizedDescriptionKey: "Профиль изменился во время применения."
                 ])
