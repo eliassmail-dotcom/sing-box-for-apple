@@ -323,13 +323,13 @@ public struct StrategyModeCard: View {
                     )
                     return
                 }
-                try CommandTarget.standaloneClient().selectOutbound(target, outboundTag: next)
+                try await selectNodeOffMainThread(groupTag: target, outboundTag: next)
             } else if targetGroup.type == "urltest" {
                 // LX recognizes the reserved command in SelectOutbound and
                 // rotates within the effective policy. Smart base > white
                 // priority and live connections are preserved by the core.
-                try CommandTarget.standaloneClient().selectOutbound(
-                    target, outboundTag: StrategyNodeChange.nextNodeCommand
+                try await selectNodeOffMainThread(
+                    groupTag: target, outboundTag: StrategyNodeChange.nextNodeCommand
                 )
             } else {
                 alert = AlertState(
@@ -340,6 +340,16 @@ public struct StrategyModeCard: View {
         } catch {
             alert = AlertState(action: "сменить узел", error: error)
         }
+    }
+
+    private func selectNodeOffMainThread(groupTag: String, outboundTag: String) async throws {
+        // The core may wait for an in-flight health-check before changing the
+        // selection. Do not block the SwiftUI main actor during that RPC.
+        try await Task.detached(priority: .userInitiated) {
+            try CommandTarget.standaloneClient().selectOutbound(
+                groupTag, outboundTag: outboundTag
+            )
+        }.value
     }
 
     private func apply(_ mode: StrategyModeSpec) async {
