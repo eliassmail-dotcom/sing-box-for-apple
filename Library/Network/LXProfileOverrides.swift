@@ -20,12 +20,14 @@ public struct LXProfileSettings: Codable, Equatable {
     public var adaptiveTolerancePercent: Int = 0
     public var minHoldSeconds: Int = 0
     public var probeURLs: String = ""
+    // Experimental: passive watchdog/quarantine; off until explicitly enabled.
+    public var passiveGuardEnabled: Bool = false
 
     public init() {}
 
     // Backward-compatible with previously saved LX settings that lack urlTestDefault.
     private enum CodingKeys: String, CodingKey {
-        case urlTestDefault, urlTests, dnsGroups, wgIdle, adaptiveTolerancePercent, minHoldSeconds, probeURLs
+        case urlTestDefault, urlTests, dnsGroups, wgIdle, adaptiveTolerancePercent, minHoldSeconds, probeURLs, passiveGuardEnabled
     }
 
     public init(from decoder: Decoder) throws {
@@ -37,13 +39,15 @@ public struct LXProfileSettings: Codable, Equatable {
         adaptiveTolerancePercent = try container.decodeIfPresent(Int.self, forKey: .adaptiveTolerancePercent) ?? 0
         minHoldSeconds = try container.decodeIfPresent(Int.self, forKey: .minHoldSeconds) ?? 0
         probeURLs = try container.decodeIfPresent(String.self, forKey: .probeURLs) ?? ""
+        passiveGuardEnabled = try container.decodeIfPresent(Bool.self, forKey: .passiveGuardEnabled) ?? false
     }
 
     public var isEmpty: Bool {
         urlTestDefault.mode == "profile" &&
         urlTests.isEmpty &&
         dnsGroups.values.allSatisfy { $0 == "profile" } && wgIdle == "profile" &&
-        adaptiveTolerancePercent == 0 && minHoldSeconds == 0 && probeURLs.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        adaptiveTolerancePercent == 0 && minHoldSeconds == 0 && !passiveGuardEnabled &&
+        probeURLs.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 }
 
@@ -261,6 +265,16 @@ public enum LXProfileOverrides {
                         groupChanged = true
                     }
                 }
+                // Passport of the feature follows the actual effective mode;
+                // round_robin has per-flow selection and rejects passive_guard.
+                if settings.passiveGuardEnabled && effectiveMode != "round_robin" {
+                    group["passive_guard"] = true
+                    groupChanged = true
+                }
+                if effectiveMode == "round_robin" && group["passive_guard"] != nil {
+                    group.removeValue(forKey: "passive_guard")
+                    groupChanged = true
+                }
                 if !healthURLs.isEmpty {
                     group.removeValue(forKey: "url")
                     group["urls"] = healthURLs
@@ -324,6 +338,9 @@ public enum LXProfileOverrides {
                 }
                 if settings.minHoldSeconds > 0 {
                     outbounds[index]["min_hold"] = "\(settings.minHoldSeconds)s"
+                }
+                if settings.passiveGuardEnabled {
+                    outbounds[index]["passive_guard"] = true
                 }
                 if !healthURLs.isEmpty {
                     outbounds[index].removeValue(forKey: "url")
