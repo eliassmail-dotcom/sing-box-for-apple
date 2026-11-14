@@ -19,6 +19,10 @@ enum WidgetAppConfiguration {
     static var widgetControlKind: String {
         "\(packageName).widget.ServiceToggle"
     }
+
+    static var widgetNextNodeKind: String {
+        "\(packageName).widget.NextNode"
+    }
 }
 
 extension NEVPNStatus {
@@ -80,6 +84,52 @@ enum WidgetTunnelControl {
             }
             manager.connection.stopVPNTunnel()
         }
+    }
+
+    /// Sends a command to the already-running PacketTunnel extension. Using
+    /// sendProviderMessage avoids importing Libbox into the widget target,
+    /// starting a second VPN session, or modifying subscription settings.
+    static func changeNode() async throws {
+        guard let manager = try await loadManager() else {
+            throw nodeError("VPN-конфигурация не найдена")
+        }
+        guard manager.connection.status == .connected,
+              let session = manager.connection as? NETunnelProviderSession else {
+            throw nodeError("Сначала подключите VPN")
+        }
+        let command = try JSONSerialization.data(withJSONObject: [
+            "lxControl": "changeNode",
+            "version": 1,
+        ])
+
+        let response: Data = try await withCheckedThrowingContinuation { continuation in
+            do {
+                try session.sendProviderMessage(command) { data in
+                    guard let data else {
+                        continuation.resume(throwing: nodeError("Туннель не ответил на команду"))
+                        return
+                    }
+                    continuation.resume(returning: data)
+                }
+            } catch {
+                continuation.resume(throwing: error)
+            }
+        }
+
+        guard let reply = try JSONSerialization.jsonObject(with: response) as? [String: Any] else {
+            throw nodeError("Получен некорректный ответ туннеля")
+        }
+        if reply["ok"] as? Bool == true {
+            return
+        }
+        let reason = reply["error"] as? String ?? "Не удалось сменить узел"
+        throw nodeError(reason)
+    }
+
+    private static func nodeError(_ message: String) -> NSError {
+        NSError(domain: "LXNextNodeControl", code: 1, userInfo: [
+            NSLocalizedDescriptionKey: message,
+        ])
     }
 
     private static func loadManager() async throws -> NETunnelProviderManager? {
