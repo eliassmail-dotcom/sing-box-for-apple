@@ -20,7 +20,7 @@ public extension Notification.Name {
 
 public enum SettingsPage: Hashable {
     case app
-    case core, packetTunnel, onDemandRules, profileOverride, lxFeatures, remoteControl, sponsors
+    case core, packetTunnel, onDemandRules, profileOverride, lxFeatures, groupVisibility, remoteControl, sponsors
 }
 
 public struct SettingView: View {
@@ -29,7 +29,7 @@ public struct SettingView: View {
             self
         }
 
-        case app, core, packetTunnel, onDemandRules, profileOverride, lxFeatures, remoteControl, sponsors
+        case app, core, packetTunnel, onDemandRules, profileOverride, lxFeatures, groupVisibility, remoteControl, sponsors
 
         #if os(macOS)
             var page: SettingsPage {
@@ -46,6 +46,8 @@ public struct SettingView: View {
                     return .profileOverride
                 case .lxFeatures:
                     return .lxFeatures
+                case .groupVisibility:
+                    return .groupVisibility
                 case .remoteControl:
                     return .remoteControl
                 case .sponsors:
@@ -72,6 +74,8 @@ public struct SettingView: View {
                 return String(localized: "Profile Override")
             case .lxFeatures:
                 return "Функции LX"
+            case .groupVisibility:
+                return "Видимость групп"
             case .remoteControl:
                 return String(localized: "Remote Control")
             case .sponsors:
@@ -93,6 +97,8 @@ public struct SettingView: View {
                 return "square.dashed.inset.filled"
             case .lxFeatures:
                 return "slider.horizontal.3"
+            case .groupVisibility:
+                return "list.bullet.indent"
             case .remoteControl:
                 return "antenna.radiowaves.left.and.right"
             case .sponsors:
@@ -116,6 +122,8 @@ public struct SettingView: View {
                     ProfileOverrideView()
                 case .lxFeatures:
                     LXRuntimeSettingsView()
+                case .groupVisibility:
+                    GroupVisibilitySettingsView()
                 case .remoteControl:
                     RemoteControlView()
                 case .sponsors:
@@ -161,6 +169,8 @@ public struct SettingView: View {
                     ProfileOverrideView()
                 case .lxFeatures:
                     LXRuntimeSettingsView()
+                case .groupVisibility:
+                    GroupVisibilitySettingsView()
                 case .remoteControl:
                     RemoteControlView()
                 case .sponsors:
@@ -187,6 +197,7 @@ public struct SettingView: View {
                 Tabs.onDemandRules.navigationLink
                 Tabs.profileOverride.navigationLink
                 Tabs.lxFeatures.navigationLink
+                Tabs.groupVisibility.navigationLink
                 #if !os(tvOS)
                     remoteControlLink
                 #endif
