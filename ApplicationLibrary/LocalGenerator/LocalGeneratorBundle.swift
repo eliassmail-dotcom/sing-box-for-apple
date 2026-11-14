@@ -20,8 +20,8 @@ public enum LocalGeneratorBundle {
         let cmf = wrapped[0]
         let flg = wrapped[1]
         let header = (UInt16(cmf) << 8) | UInt16(flg)
-        guard cmf & 0x0f == 8, cmf >> 4 <= 7,
-              header % 31 == 0, flg & 0x20 == 0 else {
+        guard (cmf & 0x0f) == 8, (cmf >> 4) <= 7,
+              header % 31 == 0, (flg & 0x20) == 0 else {
             throw LocalGeneratorPayloadError.invalidZlibStream
         }
 
