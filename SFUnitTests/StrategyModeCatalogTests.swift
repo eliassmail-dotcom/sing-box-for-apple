@@ -1,4 +1,5 @@
 import XCTest
+import Library
 @testable import ApplicationLibrary
 
 // gru: unit tests for the mode ↔ selector-tag correspondence (Dashboard TZ
@@ -125,6 +126,34 @@ final class StrategyModeCatalogTests: XCTestCase {
         XCTAssertNil(StrategyNodeChange.nextHealthyManualTag(
             current: "dead", candidates: [("a", 0), ("dead", 0)]
         ))
+    }
+
+    func testControlCenterUsesSameHealthyManualCycleAsDashboard() {
+        let candidates: [(tag: String, delayMs: UInt16)] = [
+            ("a", 90), ("dead", 0), ("a", 90), ("b", 110), ("c", 150)
+        ]
+        // Duplicate leaf tags must never count as two different nodes.
+        XCTAssertEqual(
+            LXNextNodeSelection.nextHealthyTag(current: "a", candidates: candidates),
+            "b"
+        )
+        XCTAssertEqual(
+            LXNextNodeSelection.nextHealthyTag(current: "b", candidates: candidates),
+            "c"
+        )
+        XCTAssertEqual(
+            LXNextNodeSelection.nextHealthyTag(current: "c", candidates: candidates),
+            "a"
+        )
+        XCTAssertNil(
+            LXNextNodeSelection.nextHealthyTag(
+                current: "only", candidates: [("only", 40), ("down", 0)]
+            )
+        )
+        XCTAssertEqual(
+            LXNextNodeSelection.commandTag, StrategyNodeChange.nextNodeCommand
+        )
+        XCTAssertEqual(LXNextNodeSelection.strategyGroupTag, "Стратегия")
     }
 
 }
