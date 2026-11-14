@@ -253,4 +253,29 @@ final class LXProfileOverridesTests: XCTestCase {
         }
     }
 
+    func testGeneratedSmartFallbackReceivesAdaptiveHealthOverrides() throws {
+        let source = """
+        {"outbounds":[
+          {"type":"selector","tag":"Стратегия","outbounds":["Авто · Базовая","Авто · Белые"]},
+          {"type":"urltest","tag":"Авто · Базовая","outbounds":["a"],"mode":"failover"},
+          {"type":"urltest","tag":"Авто · Белые","outbounds":["b"],"mode":"failover"},
+          {"type":"vless","tag":"a"}, {"type":"vless","tag":"b"}
+        ],"route":{"final":"Стратегия"}}
+        """
+        var store = LXOverridesStore()
+        var settings = LXProfileSettings()
+        settings.adaptiveTolerancePercent = 30
+        settings.minHoldSeconds = 30
+        settings.probeURLs = "https://example.org/health,https://example.net/health"
+        store.profiles["42"] = settings
+        let root = try parsed(LXProfileOverrides.apply(source, profileID: 42, storedJSON: store.encode()))
+        let outbounds = try XCTUnwrap(root["outbounds"] as? [[String: Any]])
+        let smart = try XCTUnwrap(outbounds.first(where: { ($0["tag"] as? String) == LXProfileOverrides.preferredFallbackTag }))
+        XCTAssertEqual(smart["mode"] as? String, "least_test")
+        XCTAssertEqual(smart["tolerance_percent"] as? Int, 30)
+        XCTAssertEqual(smart["min_hold"] as? String, "30s")
+        XCTAssertEqual(smart["urls"] as? [String], ["https://example.org/health", "https://example.net/health"])
+        XCTAssertEqual(outbounds.first(where: { ($0["tag"] as? String) == "Авто · Базовая" })?["mode"] as? String, "failover")
+    }
+
 }
