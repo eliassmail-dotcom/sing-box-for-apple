@@ -5,14 +5,61 @@ import Foundation
 /// an ephemeral, network-disabled WebKit environment.
 public enum LocalGeneratorBundle {
     public static func javascript() throws -> String {
-        guard let decoded = Data(base64Encoded: encoded.filter { !$0.isWhitespace }) else {
+        guard let wrapped = Data(base64Encoded: encoded.filter { !$0.isWhitespace }) else {
             throw LocalGeneratorPayloadError.invalidEncoding
         }
-        let plain = try (decoded as NSData).decompressed(using: .zlib)
-        guard let script = String(data: plain as Data, encoding: .utf8) else {
+        // This bundle is an RFC 1950 zlib stream (CMF/FLG + raw DEFLATE +
+        // Adler-32). Apple's NSData .zlib decoder expects the RFC 1951 raw
+        // DEFLATE payload, not the full zlib wrapper. Feeding it the wrapper
+        // fails on the simulator with an opaque state-transition error.
+        // Validate the wrapper and verify its checksum instead of silently
+        // accepting truncated or corrupted JavaScript.
+        guard wrapped.count >= 6 else {
+            throw LocalGeneratorPayloadError.invalidZlibStream
+        }
+        let cmf = wrapped[0]
+        let flg = wrapped[1]
+        let header = (UInt16(cmf) << 8) | UInt16(flg)
+        guard cmf & 0x0f == 8, cmf >> 4 <= 7,
+              header % 31 == 0, flg & 0x20 == 0 else {
+            throw LocalGeneratorPayloadError.invalidZlibStream
+        }
+
+        let rawDEFLATE = wrapped.subdata(in: 2..<(wrapped.count - 4))
+        let plain: Data
+        do {
+            plain = try (rawDEFLATE as NSData).decompressed(using: .zlib) as Data
+        } catch {
+            throw LocalGeneratorPayloadError.decompressionFailed
+        }
+        guard !plain.isEmpty, plain.count <= 8 * 1024 * 1024 else {
+            throw LocalGeneratorPayloadError.invalidZlibStream
+        }
+
+        let expectedAdler32 = wrapped.suffix(4).reduce(UInt32(0)) {
+            ($0 << 8) | UInt32($1)
+        }
+        guard checksum(plain) == expectedAdler32 else {
+            throw LocalGeneratorPayloadError.checksumMismatch
+        }
+        guard let script = String(data: plain, encoding: .utf8),
+              script.contains("__localYcGenerator") else {
             throw LocalGeneratorPayloadError.invalidEncoding
         }
         return script
+    }
+
+    private static func checksum(_ data: Data) -> UInt32 {
+        let modulus: UInt32 = 65_521
+        var a: UInt32 = 1
+        var b: UInt32 = 0
+        for byte in data {
+            a += UInt32(byte)
+            if a >= modulus { a -= modulus }
+            b += a
+            if b >= modulus { b -= modulus }
+        }
+        return (b << 16) | a
     }
 
     private static let encoded = """
@@ -100,4 +147,7 @@ public enum LocalGeneratorBundle {
 
 public enum LocalGeneratorPayloadError: Error {
     case invalidEncoding
+    case invalidZlibStream
+    case decompressionFailed
+    case checksumMismatch
 }
