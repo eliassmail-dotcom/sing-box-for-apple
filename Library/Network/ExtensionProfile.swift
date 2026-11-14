@@ -284,7 +284,7 @@ public class ExtensionProfile: ObservableObject {
             guard Self.isTransientStartError(error) else { throw error }
             let initialError = error as NSError
             logger.warning(
-                "transient VPN start error, refreshing session once: domain=\\(initialError.domain) code=\\(initialError.code)"
+                "transient VPN start error, refreshing session once: domain=\(initialError.domain) code=\(initialError.code)"
             )
             // One bounded retry for Apple's transient first-start session race.
             // Never retry if another request has already started the tunnel.
