@@ -138,12 +138,22 @@ public struct SelectedOutboundResolver: Hashable {
             }
         }
 
-        // Detour chain: the selected outbound rides through its detour target.
-        // Resolve the transport side to concrete nodes (packet order: entries
-        // first, the selected exit last). Transport hops with their own detour
-        // are surfaced as an unresolved hop instead of recursing.
+        // LX native chain uses explicit ordered outbounds, not "detour".
+        // Each hop can be a live group: resolve Strategy at display time,
+        // so a Strategy failover updates Gemini without reloading the profile.
         var chainHops: [String] = []
-        if let selectedTag, let detour = nodes[selectedTag]?.detour {
+        if let selectedTag, let selectedNode = nodes[selectedTag],
+           selectedNode.type == "chain" {
+            for member in selectedNode.members {
+                if let hops = resolveTransport(member, live: live), !hops.isEmpty {
+                    chainHops.append(contentsOf: hops)
+                } else {
+                    reason = reason ?? .unresolvedChainHop(member)
+                    chainHops.append(member)
+                }
+            }
+        } else if let selectedTag, let detour = nodes[selectedTag]?.detour {
+            // Legacy detour chain: transport entry followed by the exit node.
             if !detour.isEmpty, let hops = resolveTransport(detour, live: live), !hops.isEmpty {
                 chainHops = hops + [selectedTag]
             } else {
