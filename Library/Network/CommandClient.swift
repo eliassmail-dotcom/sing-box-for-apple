@@ -266,7 +266,7 @@ public class CommandClient: ObservableObject {
             } catch {
                 // The existing group subscription continues to retry; a one-
                 // shot refresh failure must not bring down the Dashboard.
-                logger.debug("LX refreshGroups: \\(error.localizedDescription)")
+                logger.debug("LX refreshGroups: \(error.localizedDescription)")
             }
         }
     }
