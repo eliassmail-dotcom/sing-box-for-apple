@@ -27,6 +27,17 @@ final class LocalGeneratorEngineTests: XCTestCase {
         XCTAssertThrowsError(try LocalGeneratorEngine.parseVariables("TEST=1\nTEST=2"))
     }
 
+    func testBundledGeneratorZlibPayloadIsValidAndRunnable() throws {
+        // Isolate the compressed bundle from WKWebView lifecycle. Older
+        // versions passed the RFC 1950 zlib header to a raw DEFLATE decoder,
+        // so the JS loader failed before the generator could execute.
+        let script = try LocalGeneratorBundle.javascript()
+        XCTAssertGreaterThan(script.utf8.count, 4_096)
+        XCTAssertTrue(script.contains("__localYcGenerator"))
+        // A second decode must produce identical source, not mutable state.
+        XCTAssertEqual(script, try LocalGeneratorBundle.javascript())
+    }
+
     func testBundledGeneratorBuildsRealJSONOfflineWithoutYandex() async throws {
         let engine = LocalGeneratorEngine()
         let generated = try await engine.generate(
