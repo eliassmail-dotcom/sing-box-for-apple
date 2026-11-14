@@ -41,6 +41,17 @@
                ReferencedContainer = "container:sing-box.xcodeproj">
             </BuildableReference>
          </TestableReference>
+         <TestableReference
+            skipped = "NO"
+            parallelizable = "YES">
+            <BuildableReference
+               BuildableIdentifier = "primary"
+               BlueprintIdentifier = "3AB12C032F10000100A0001"
+               BuildableName = "SFUnitTests.xctest"
+               BlueprintName = "SFUnitTests"
+               ReferencedContainer = "container:sing-box.xcodeproj">
+            </BuildableReference>
+         </TestableReference>
       </Testables>
    </TestAction>
    <LaunchAction
