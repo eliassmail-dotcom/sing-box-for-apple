@@ -1,5 +1,9 @@
 import Foundation
 
+public extension Notification.Name {
+    static let lxResilienceSettingsChanged = Notification.Name("lxResilienceSettingsChanged")
+}
+
 // Configurable per-profile LX overrides. Remote subscription files are never modified.
 public struct LXURLTestOverride: Codable, Equatable {
     public var mode: String = "profile"
