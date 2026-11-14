@@ -139,6 +139,8 @@ open class ExtensionProvider: NEPacketTunnelProvider {
     }
 
     override open func startTunnel(options startOptions: [String: NSObject]?) async throws {
+        let attempt = (startOptions?["lxStartupAttemptID"] as? String) ?? "on-demand"
+        LXStartupDiagnostics.record("extension.enter", attempt: attempt)
         let basePath: String
         let workingPath: String
         let tempPath: String
@@ -172,6 +174,7 @@ open class ExtensionProvider: NEPacketTunnelProvider {
             }
         #endif
 
+        LXStartupDiagnostics.record("extension.resolveOptions", attempt: attempt)
         let effectiveOptions = try resolveStartOptions(startOptions)
         try applyStartOptions(effectiveOptions)
         if effectiveOptions["configContent"] == nil {
@@ -182,6 +185,7 @@ open class ExtensionProvider: NEPacketTunnelProvider {
         } catch {
             throw ExtensionStartupError("(packet-tunnel) error: persist start options: \(error.localizedDescription)")
         }
+        LXStartupDiagnostics.record("extension.optionsPersisted", attempt: attempt)
         let options = LibboxSetupOptions()
         options.basePath = basePath
         options.workingPath = workingPath
@@ -213,22 +217,27 @@ open class ExtensionProvider: NEPacketTunnelProvider {
         #endif
         options.powerReportEnabled = (effectiveOptions["powerReportEnabled"] as? NSNumber)?.boolValue ?? false
 
+        LXStartupDiagnostics.record("extension.libboxSetup", attempt: attempt)
         var setupError: NSError?
         LibboxSetup(options, &setupError)
         if let setupError {
+            LXStartupDiagnostics.record("extension.libboxSetupFailed", attempt: attempt)
             throw ExtensionStartupError("(packet-tunnel) error: setup service: \(setupError.localizedDescription)")
         }
         LibboxPromoteOOMDraft()
         LibboxDiscardPowerReportDraft()
 
+        LXStartupDiagnostics.record("extension.newCommandServer", attempt: attempt)
         var error: NSError?
         commandServer = LibboxNewCommandServer(platformInterface, platformInterface, &error)
         if let error {
+            LXStartupDiagnostics.record("extension.newCommandServerFailed", attempt: attempt)
             throw ExtensionStartupError("(packet-tunnel): create command server error: \(error.localizedDescription)")
         }
         do {
             try commandServer!.start()
         } catch {
+            LXStartupDiagnostics.record("extension.commandServerStartFailed", attempt: attempt)
             throw ExtensionStartupError("(packet-tunnel): start command server error: \(error.localizedDescription)")
         }
 
@@ -240,9 +249,11 @@ open class ExtensionProvider: NEPacketTunnelProvider {
             }
         #endif
 
+        LXStartupDiagnostics.record("extension.startService", attempt: attempt)
         do {
             try await startService()
         } catch {
+            LXStartupDiagnostics.record("extension.startServiceFailed", attempt: attempt)
             #if os(macOS)
                 if Variant.useSystemExtension {
                     xpcService.markServiceNotReady(error)
@@ -250,6 +261,7 @@ open class ExtensionProvider: NEPacketTunnelProvider {
             #endif
             throw error
         }
+        LXStartupDiagnostics.record("extension.serviceRunning", attempt: attempt)
         writeMessage("(packet-tunnel): Here I stand")
         #if os(iOS)
             if let commandServer {
