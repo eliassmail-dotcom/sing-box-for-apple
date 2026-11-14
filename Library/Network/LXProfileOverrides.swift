@@ -16,12 +16,14 @@ public struct LXProfileSettings: Codable, Equatable {
     public var urlTests: [String: LXURLTestOverride] = [:]
     public var dnsGroups: [String: String] = [:]
     public var wgIdle: String = "profile"
+    // When enabled, adds a new strategy: Base group is preferred, Whites only as backup.
+    public var whiteFallbackEnabled = false
 
     public init() {}
 
     // Backward-compatible with previously saved LX settings that lack urlTestDefault.
     private enum CodingKeys: String, CodingKey {
-        case urlTestDefault, urlTests, dnsGroups, wgIdle
+        case urlTestDefault, urlTests, dnsGroups, wgIdle, whiteFallbackEnabled
     }
 
     public init(from decoder: Decoder) throws {
@@ -30,12 +32,14 @@ public struct LXProfileSettings: Codable, Equatable {
         urlTests = try container.decodeIfPresent([String: LXURLTestOverride].self, forKey: .urlTests) ?? [:]
         dnsGroups = try container.decodeIfPresent([String: String].self, forKey: .dnsGroups) ?? [:]
         wgIdle = try container.decodeIfPresent(String.self, forKey: .wgIdle) ?? "profile"
+        whiteFallbackEnabled = try container.decodeIfPresent(Bool.self, forKey: .whiteFallbackEnabled) ?? false
     }
 
     public var isEmpty: Bool {
         urlTestDefault.mode == "profile" &&
         urlTests.isEmpty &&
-        dnsGroups.values.allSatisfy { $0 == "profile" } && wgIdle == "profile"
+        dnsGroups.values.allSatisfy { $0 == "profile" } && wgIdle == "profile" &&
+        !whiteFallbackEnabled
     }
 }
 
@@ -120,6 +124,67 @@ public enum LXProfileOverrides {
         )
     }
 
+    public static let preferredFallbackTag = "Авто · База → Белые"
+    private static let baseTags = ["Авто · Базовая", "Авто"]
+    private static let whiteTags = ["Авто · Белые", "Авто · Только белые"]
+
+    // This feature requires an LX kernel implementing priority_outbounds.
+    // Only existing URLTest groups may be combined; the source subscription stays untouched.
+    public static func supportsWhiteFallback(_ source: String) -> Bool {
+        guard let root = try? document(source),
+              let outbounds = root["outbounds"] as? [[String: Any]] else { return false }
+        let urltestTags = Set(outbounds.compactMap { item -> String? in
+            guard (item["type"] as? String) == "urltest" else { return nil }
+            return item["tag"] as? String
+        })
+        return baseTags.contains(where: urltestTags.contains) &&
+               whiteTags.contains(where: urltestTags.contains) &&
+               outbounds.contains(where: { ($0["tag"] as? String) == "Стратегия" &&
+                   ($0["type"] as? String) == "selector" })
+    }
+
+    private static func addWhiteFallback(to root: inout [String: Any]) throws {
+        guard var outbounds = root["outbounds"] as? [[String: Any]] else {
+            throw OverrideError.invalidOption("список outbounds отсутствует")
+        }
+        let urltestTags = Set(outbounds.compactMap { item -> String? in
+            guard (item["type"] as? String) == "urltest" else { return nil }
+            return item["tag"] as? String
+        })
+        guard let base = baseTags.first(where: urltestTags.contains),
+              let white = whiteTags.first(where: urltestTags.contains),
+              let rootIndex = outbounds.firstIndex(where: {
+                  ($0["tag"] as? String) == "Стратегия" &&
+                  ($0["type"] as? String) == "selector"
+              }) else {
+            throw OverrideError.invalidOption("для резервирования требуются группы Базовая, Белые и селектор Стратегия")
+        }
+        guard !outbounds.contains(where: { ($0["tag"] as? String) == preferredFallbackTag }) else {
+            throw OverrideError.invalidOption("тег резервной стратегии уже занят")
+        }
+        guard var rootTags = outbounds[rootIndex]["outbounds"] as? [String] else {
+            throw OverrideError.invalidOption("Стратегия не содержит список outbounds")
+        }
+        // Keep original selection and route rules intact. The user opts into the new
+        // strategy from the Dashboard when the new group is visible.
+        rootTags.append(preferredFallbackTag)
+        outbounds[rootIndex]["outbounds"] = rootTags
+        let baseConfig = outbounds.first(where: { ($0["tag"] as? String) == base }) ?? [:]
+        var fallback: [String: Any] = [
+            "type": "urltest",
+            "tag": preferredFallbackTag,
+            "outbounds": [base, white],
+            "mode": "least_test",
+            "priority_outbounds": [base],
+            "interrupt_exist_connections": false,
+        ]
+        for field in ["url", "interval", "idle_timeout"] {
+            if let value = baseConfig[field] { fallback[field] = value }
+        }
+        outbounds.append(fallback)
+        root["outbounds"] = outbounds
+    }
+
     public static func apply(_ source: String, profileID: Int64, storedJSON: String) throws -> String {
         let store = try LXOverridesStore.decode(storedJSON)
         guard let settings = store.profiles[String(profileID)], !settings.isEmpty else { return source }
@@ -195,6 +260,11 @@ public enum LXProfileOverrides {
                 if lx.isEmpty { root.removeValue(forKey: "lx") } else { root["lx"] = lx }
                 changed = true
             }
+        }
+
+        if settings.whiteFallbackEnabled {
+            try addWhiteFallback(to: &root)
+            changed = true
         }
 
         guard changed else { return source }

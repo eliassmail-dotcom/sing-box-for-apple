@@ -150,6 +150,46 @@ final class LXProfileOverridesTests: XCTestCase {
         XCTAssertNoThrow(try LXOverridesStore.decode(store.encode()))
     }
 
+
+    func testWhiteFallbackInjectionAndBackwardCompatibility() throws {
+        let source = """
+        {"outbounds":[
+          {"type":"selector","tag":"Стратегия","outbounds":["Авто · Базовая","Авто · Белые"],"default":"Авто · Базовая"},
+          {"type":"urltest","tag":"Авто · Базовая","outbounds":["a"],"mode":"failover","interval":"5s"},
+          {"type":"urltest","tag":"Авто · Белые","outbounds":["w"],"mode":"failover"},
+          {"type":"vless","tag":"a"}, {"type":"vless","tag":"w"}
+        ],"route":{"final":"Стратегия"}}
+        """
+        XCTAssertTrue(LXProfileOverrides.supportsWhiteFallback(source))
+        XCTAssertEqual(try LXProfileOverrides.apply(source, profileID: 42, storedJSON: ""), source)
+        var store = LXOverridesStore()
+        var settings = LXProfileSettings()
+        settings.whiteFallbackEnabled = true
+        store.profiles["42"] = settings
+        let transformed = try LXProfileOverrides.apply(source, profileID: 42, storedJSON: store.encode())
+        let root = try parsed(transformed)
+        let outbounds = try XCTUnwrap(root["outbounds"] as? [[String: Any]])
+        let reserve = try XCTUnwrap(outbounds.first(where: { ($0["tag"] as? String) == LXProfileOverrides.preferredFallbackTag }))
+        XCTAssertEqual(reserve["priority_outbounds"] as? [String], ["Авто · Базовая"])
+        XCTAssertEqual(reserve["outbounds"] as? [String], ["Авто · Базовая", "Авто · Белые"])
+        XCTAssertEqual(reserve["interval"] as? String, "5s")
+        XCTAssertEqual(reserve["interrupt_exist_connections"] as? Bool, false)
+        let selector = try XCTUnwrap(outbounds.first(where: { ($0["tag"] as? String) == "Стратегия" }))
+        XCTAssertEqual((selector["outbounds"] as? [String])?.last, LXProfileOverrides.preferredFallbackTag)
+        XCTAssertEqual(selector["default"] as? String, "Авто · Базовая")
+        XCTAssertEqual((root["route"] as? [String: Any])?["final"] as? String, "Стратегия")
+        XCTAssertEqual(try LXProfileOverrides.apply(source, profileID: 12, storedJSON: store.encode()), source)
+        XCTAssertFalse(try LXOverridesStore.decode(#"{"profiles":{"42":{"urlTests":{},"dnsGroups":{},"wgIdle":"profile"}}}"#).profiles["42"]!.whiteFallbackEnabled)
+    }
+
+    func testWhiteFallbackRequiresBothGroupsAndRootSelector() throws {
+        var settings = LXProfileSettings()
+        settings.whiteFallbackEnabled = true
+        var store = LXOverridesStore()
+        store.profiles["42"] = settings
+        XCTAssertFalse(LXProfileOverrides.supportsWhiteFallback(config))
+        XCTAssertThrowsError(try LXProfileOverrides.apply(config, profileID: 42, storedJSON: store.encode()))
+    }
     func testInspectorAndInvalidOptions() throws {
         let summary = try LXProfileOverrides.inspect(config)
         XCTAssertEqual(summary.urlTests.map(\.tag), ["Auto", "Gemini"])

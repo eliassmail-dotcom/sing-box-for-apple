@@ -48,6 +48,11 @@ public enum StrategyModeCatalog {
             strategyCandidates: ["Ручной выбор"],
             geminiCandidates: ["Gemini • Выбор"]
         ),
+        StrategyModeSpec(
+            title: "Авто • Резерв",
+            strategyCandidates: ["Авто · База → Белые"],
+            geminiCandidates: ["Gemini • Super • A", "Gemini • Авто"]
+        ),
     ]
 
     /// The outbound the mode would actually select inside «Стратегия» for the

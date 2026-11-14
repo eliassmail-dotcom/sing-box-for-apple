@@ -70,6 +70,17 @@ public struct LXRuntimeSettingsView: View {
                         }
                     }
 
+                    Section("Резервная стратегия") {
+                        Toggle("Белые — только при отказе базовых", isOn: whiteFallbackBinding)
+                            .disabled(!LXProfileOverrides.supportsWhiteFallback(profileContent))
+                        Text("Добавляет режим «Авто • Резерв»: пока отвечает хотя бы один узел из Базовой, белые не используются. Если все базовые перестали отвечать, включается группа Белые. При восстановлении базовых — возврат. Стратегию нужно выбрать на главном экране.")
+                            .font(.footnote).foregroundStyle(.secondary)
+                        if !LXProfileOverrides.supportsWhiteFallback(profileContent) {
+                            Text("Недоступно: в данном профиле нет групп Базовая и Белые вместе с селектором Стратегия.")
+                                .font(.footnote).foregroundStyle(.orange)
+                        }
+                    }
+
                     if !summary.dnsGroups.isEmpty {
                         Section("DNS-группы") {
                             ForEach(summary.dnsGroups) { group in
@@ -247,6 +258,11 @@ public struct LXRuntimeSettingsView: View {
                 }
             }
         )
+    }
+
+    private var whiteFallbackBinding: Binding<Bool> {
+        Binding(get: { currentSettings.whiteFallbackEnabled },
+                set: { value in mutate { $0.whiteFallbackEnabled = value } })
     }
 
     private var wgIdleBinding: Binding<String> {
