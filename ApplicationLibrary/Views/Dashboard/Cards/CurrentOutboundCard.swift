@@ -1,46 +1,58 @@
 import Library
+import Libbox
 import SwiftUI
 
-//gru: dashboard widgets showing the currently selected outbound of a group,
-// styled like the item rows on the Groups screen (tag, type, url-test delay).
+// gru: dashboard widgets showing the actually selected outbound of a root
+// group, resolved down to the final node (Dashboard TZ 14.11.2026). The route
+// line shows the full traversal; chains show entry → exit hops. Latency is
+// the final node's own URL-test delay only.
 public struct CurrentOutboundCard: View {
     @EnvironmentObject private var commandClient: CommandClient
+    @StateObject private var model: OutboundResolverModel
 
-    private let groupTag: String
     private let title: LocalizedStringKey
+    private let icon: String
 
-    public init(groupTag: String, title: LocalizedStringKey) {
-        self.groupTag = groupTag
+    public init(groupTag: String, title: LocalizedStringKey, icon: String = "antenna.radiowaves.left.and.right") {
         self.title = title
+        self.icon = icon
+        _model = StateObject(wrappedValue: OutboundResolverModel(rootTag: groupTag))
     }
 
     public var body: some View {
-        if let item = currentItem {
+        if let result = model.result, let tag = result.selectedTag {
             DashboardCardView(title: "") {
                 VStack(alignment: .leading, spacing: 12) {
-                    DashboardCardHeader(icon: "antenna.radiowaves.left.and.right", title: title)
+                    DashboardCardHeader(icon: icon, title: title)
                     VStack(alignment: .leading, spacing: 4) {
                         HStack {
-                            Text(item.tag)
+                            Text(tag)
                                 .font(.subheadline.weight(.semibold))
                                 .foregroundStyle(.foreground)
                                 .lineLimit(1)
                                 .truncationMode(.tail)
                             Spacer(minLength: 4)
-                            Image(systemName: "checkmark.circle.fill")
-                                .font(.caption)
-                                .foregroundStyle(Color.accentColor)
+                            if result.status == .resolved {
+                                Image(systemName: "checkmark.circle.fill")
+                                    .font(.caption)
+                                    .foregroundStyle(Color.accentColor)
+                            } else {
+                                Image(systemName: "exclamationmark.triangle.fill")
+                                    .font(.caption)
+                                    .foregroundStyle(.orange)
+                            }
                         }
+                        Text(routeText(result))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(2)
+                            .truncationMode(.middle)
                         HStack {
-                            Text(item.displayType)
+                            Text(displayType(result))
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                             Spacer(minLength: 8)
-                            if item.urlTestDelay > 0 {
-                                Text(item.delayString)
-                                    .font(.caption.monospacedDigit().weight(.semibold))
-                                    .foregroundColor(item.delayColor)
-                            }
+                            latencyText(result)
                         }
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -55,13 +67,46 @@ public struct CurrentOutboundCard: View {
                     )
                 }
             }
+            .onAppear {
+                model.bind(to: commandClient)
+            }
         }
     }
 
-    private var currentItem: OutboundGroupItem? {
-        guard let group = commandClient.groups?.first(where: { $0.tag == groupTag }) else {
-            return nil
+    private func routeText(_ result: ResolvedOutbound) -> String {
+        var route = result.groupPath
+        if result.chainHops.isEmpty {
+            if let tag = result.selectedTag {
+                route.append(tag)
+            }
+        } else {
+            route += result.chainHops
         }
-        return group.items.first { $0.tag == group.selected }
+        return route.joined(separator: " → ")
+    }
+
+    private func displayType(_ result: ResolvedOutbound) -> String {
+        guard let type = result.selectedType, !type.isEmpty else { return "—" }
+        return LibboxProxyDisplayType(type)
+    }
+
+    @ViewBuilder
+    private func latencyText(_ result: ResolvedOutbound) -> some View {
+        if let latency = result.latencyMs, latency > 0 {
+            Text("\(latency)ms")
+                .font(.caption.monospacedDigit().weight(.semibold))
+                .foregroundColor(delayColor(Int(latency)))
+        } else {
+            Text("—")
+                .font(.caption.monospacedDigit().weight(.semibold))
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private func delayColor(_ delay: Int) -> Color {
+        if delay <= 0 { return .secondary }
+        if delay < 200 { return .green }
+        if delay < 500 { return .orange }
+        return .red
     }
 }

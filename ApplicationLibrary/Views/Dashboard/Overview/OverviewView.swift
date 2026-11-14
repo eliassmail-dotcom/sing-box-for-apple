@@ -37,11 +37,48 @@ public struct OverviewView: View {
                 ScrollView {
                     cardGrid
                         .padding()
+                        .padding(.bottom, missingBottomInset)
                 }
+                .background(DashboardBottomInsetProbe(missingInset: $missingBottomInset))
             }
         }
         .alert($coordinator.alert)
         .disabled(!Variant.screenshotMode && (!profile.status.isSwitchable || coordinator.reasserting))
+    }
+
+    // gru: layout fix (Dashboard TZ, stage 5). The floating status pill /
+    // FAB is normally reserved via safeAreaInset from MainView. On some iOS
+    // versions (26 floating tab bar) the bottom inset is not propagated into
+    // the scroll view, and the pill covers the last card. Probe the actual
+    // bottom safe area and reserve the accessory footprint on the content
+    // itself when it is missing.
+    @State private var missingBottomInset: CGFloat = 0
+
+    private struct DashboardBottomInsetProbe: View {
+        @Binding var missingInset: CGFloat
+
+        private struct BottomInsetKey: PreferenceKey {
+            static var defaultValue: CGFloat = 0
+
+            static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+                value = nextValue()
+            }
+        }
+
+        var body: some View {
+            GeometryReader { proxy in
+                Color.clear
+                    .preference(key: BottomInsetKey.self, value: proxy.safeAreaInsets.bottom)
+            }
+            .onPreferenceChange(BottomInsetKey.self) { safeBottom in
+                // The status pill (44 + 8 + 12 paddings) floats above the tab
+                // bar. When the outer safeAreaInset is propagated, the scroll
+                // view's bottom safe area already exceeds the pill + tab bar
+                // footprint (~120pt on home-indicator iPhones). Below that,
+                // reserve the pill footprint on the content itself.
+                missingInset = safeBottom >= 120 ? 0 : 64
+            }
+        }
     }
 
     @ViewBuilder
@@ -105,10 +142,10 @@ public struct OverviewView: View {
             StrategyModeCard()
                 .environmentObject(environments.commandClient)
         case .strategyNode:
-            CurrentOutboundCard(groupTag: "Стратегия", title: "Узел • Стратегия")
+            CurrentOutboundCard(groupTag: "Стратегия", title: "Узел • Стратегия", icon: "antenna.radiowaves.left.and.right")
                 .environmentObject(environments.commandClient)
         case .geminiNode:
-            CurrentOutboundCard(groupTag: "Gemini", title: "Узел • Gemini")
+            CurrentOutboundCard(groupTag: "Gemini", title: "Узел • Gemini", icon: "sparkles")
                 .environmentObject(environments.commandClient)
         case .profile:
             ProfileCard(
