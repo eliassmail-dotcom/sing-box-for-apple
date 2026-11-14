@@ -381,6 +381,7 @@ public struct LXRuntimeSettingsView: View {
                 }
             }
             saved = draft
+            NotificationCenter.default.post(name: .lxResilienceSettingsChanged, object: nil)
         } catch {
             alert = AlertState(action: "apply LX settings", error: error)
         }
