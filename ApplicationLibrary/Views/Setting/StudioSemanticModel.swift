@@ -89,7 +89,10 @@ struct StudioSemanticModel {
             let server = rule["server"] as? String
             let race = rule["race"] as? Bool ?? false
             let speculative = rule["speculative"] as? Bool ?? false
-            let response = rule["match_response"] != nil
+            let response: Bool
+            if let flag = rule["match_response"] as? Bool { response = flag }
+            else if let tag = rule["match_response"] as? String { response = !tag.isEmpty }
+            else { response = false }
             let key = "\(action)|\(server ?? "")|\(race)|\(speculative)|\(response)"
             if buckets[key] == nil {
                 order.append(key)
