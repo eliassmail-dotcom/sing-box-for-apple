@@ -164,7 +164,9 @@ public struct RemoteDashboardView: View {
         switch card {
         case .status, .connections, .uploadTraffic, .downloadTraffic, .clashMode, .strategyMode:
             return true
-        case .httpProxy, .profile:
+        case .httpProxy, .resilience, .profile:
+            // Resilience settings are persisted per local profile, so they
+            // must not appear in a remote Dashboard without a local profile.
             return false
         }
     }
@@ -184,7 +186,7 @@ public struct RemoteDashboardView: View {
             ClashModeCard()
         case .strategyMode:
             StrategyModeCard()
-        case .httpProxy, .profile:
+        case .httpProxy, .resilience, .profile:
             EmptyView()
         }
     }
