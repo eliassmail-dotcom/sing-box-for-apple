@@ -162,7 +162,7 @@ public struct RemoteDashboardView: View {
 
     private func shouldShowCard(_ card: DashboardCard) -> Bool {
         switch card {
-        case .status, .connections, .uploadTraffic, .downloadTraffic, .clashMode, .strategyMode:
+        case .status, .connections, .uploadTraffic, .downloadTraffic, .clashMode, .currentRoutes, .strategyMode:
             return true
         case .httpProxy, .resilience, .profile:
             // Resilience settings are persisted per local profile, so they
@@ -184,6 +184,8 @@ public struct RemoteDashboardView: View {
             DownloadTrafficCard()
         case .clashMode:
             ClashModeCard()
+        case .currentRoutes:
+            CurrentRoutesCard()
         case .strategyMode:
             StrategyModeCard()
         case .httpProxy, .resilience, .profile:
