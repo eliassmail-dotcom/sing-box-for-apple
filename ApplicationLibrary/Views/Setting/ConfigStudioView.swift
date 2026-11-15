@@ -431,12 +431,16 @@ enum StudioDocumentFormatter {
         return String(describing: value)
     }
 
-    static func sanitized(_ value: Any, key: String = "") -> Any {
+    static func isSensitiveKey(_ key: String) -> Bool {
         let normalized = key.lowercased().replacingOccurrences(of: "-", with: "_")
         let protected = ["password", "passwd", "token", "secret", "private_key", "uuid", "credential",
                          "authorization", "cookie", "client_secret", "api_key", "short_id"]
-        if protected.contains(where: { normalized.contains($0) }) ||
-            normalized == "key" || normalized.hasSuffix("_key") {
+        return protected.contains(where: { normalized.contains($0) }) ||
+            normalized == "key" || normalized.hasSuffix("_key")
+    }
+
+    static func sanitized(_ value: Any, key: String = "") -> Any {
+        if isSensitiveKey(key) {
             return "••••••"
         }
         if let dictionary = value as? [String: Any] {
