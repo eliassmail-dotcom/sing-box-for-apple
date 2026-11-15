@@ -98,6 +98,39 @@ public struct ResolvedOutbound: Hashable {
     }
 }
 
+/// Display-only projection of verbose outbound tags for the compact
+/// Dashboard route tile. Never use this name to select or route an outbound.
+public enum RouteNodePresentation {
+    public static func compactName(_ tag: String?) -> String? {
+        guard let tag else { return nil }
+        let raw = tag.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !raw.isEmpty else { return nil }
+
+        // A flag is a Character containing exactly two regional indicators.
+        // Extract the displayed country even when tags have pool prefixes,
+        // e.g. "C • 🇨🇭 Швейцария (Gemini)".
+        let characters = Array(raw)
+        guard let flagIndex = characters.firstIndex(where: { character in
+            let scalars = Array(character.unicodeScalars)
+            return scalars.count == 2 &&
+                scalars.allSatisfy { (0x1F1E6...0x1F1FF).contains($0.value) }
+        }) else {
+            // Unrecognized tags retain their original name rather than
+            // being silently mapped to the wrong country.
+            return raw
+        }
+
+        let flag = String(characters[flagIndex])
+        let suffix = String(characters.dropFirst(flagIndex + 1))
+        let country = suffix
+            .components(separatedBy: CharacterSet(charactersIn: "([（|•·—–/#"))
+            .first?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+
+        return country.isEmpty ? flag : "\(flag) \(country)"
+    }
+}
+
 public struct SelectedOutboundResolver: Hashable {
     public let nodes: [String: OutboundConfigNode]
 
