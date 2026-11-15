@@ -65,6 +65,21 @@ public final class DashboardCardConfiguration: ObservableObject {
         if (saved.contains("strategyNode") || saved.contains("geminiNode")) && !cards.contains(.strategyMode) {
             cards.append(.strategyMode)
         }
+        // One-time migration for existing installations: make the new
+        // Resilience widget visible next to Strategy without re-enabling it
+        // after a user explicitly hides it in Dashboard Items. Persisting the
+        // new card's order is the migration marker; order is loaded second.
+        let previousOrder = await SharedPreferences.dashboardCardOrder.get()
+        if cards.contains(.strategyMode) &&
+            !cards.contains(.currentRoutes) &&
+            !previousOrder.contains(DashboardCard.currentRoutes.rawValue) {
+            cards.append(.currentRoutes)
+        }
+        if cards.contains(.strategyMode) &&
+            !cards.contains(.resilience) &&
+            !previousOrder.contains(DashboardCard.resilience.rawValue) {
+            cards.append(.resilience)
+        }
         if !cards.contains(.profile) {
             cards.append(.profile)
         }
@@ -77,9 +92,26 @@ public final class DashboardCardConfiguration: ObservableObject {
         guard !saved.isEmpty else { return DashboardCard.defaultOrder }
 
         var order = saved.compactMap { migrateCardName($0) }.compactMap { DashboardCard(rawValue: $0) }
+        // One-time layout migration: put live routes first and keep profile
+        // configuration below the operational Dashboard.
+        if !order.contains(.currentRoutes) {
+            order.insert(.currentRoutes, at: 0)
+            if let profileIndex = order.firstIndex(of: .profile) {
+                order.remove(at: profileIndex)
+                order.append(.profile)
+            }
+        }
         let existingSet = Set(order)
         let newCards = DashboardCard.allCases.filter { !existingSet.contains($0) }
-        order.append(contentsOf: newCards)
+        if newCards.contains(.resilience),
+           let strategyIndex = order.firstIndex(of: .strategyMode) {
+            // Keep the new independent widget adjacent to the Strategy card,
+            // also when an existing user has a customized Dashboard order.
+            order.insert(.resilience, at: strategyIndex + 1)
+            order.append(contentsOf: newCards.filter { $0 != .resilience })
+        } else {
+            order.append(contentsOf: newCards)
+        }
         await SharedPreferences.dashboardCardOrder.set(order.map(\.rawValue))
         return order
     }

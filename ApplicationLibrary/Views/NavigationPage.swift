@@ -59,19 +59,19 @@ public extension NavigationPage {
     var title: String {
         switch self {
         case .dashboard:
-            return String(localized: "Dashboard")
+            return String(localized: "Главная")
         #if !os(tvOS)
             case .groups:
-                return String(localized: "Groups")
+                return String(localized: "Группы")
             case .connections:
-                return String(localized: "Connections")
+                return String(localized: "Подключения")
         #endif
         case .logs:
-            return String(localized: "Logs")
+            return String(localized: "Логи")
         case .tools:
-            return String(localized: "Tools")
+            return String(localized: "Инструменты")
         case .settings:
-            return String(localized: "Settings")
+            return String(localized: "Настройки")
         }
     }
 

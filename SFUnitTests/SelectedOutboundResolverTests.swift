@@ -40,6 +40,8 @@ final class SelectedOutboundResolverTests: XCTestCase {
         XCTAssertEqual(result.status, .resolved)
         XCTAssertEqual(result.groupPath, ["Стратегия", "Пулы", "Пул B"])
         XCTAssertEqual(result.selectedTag, "🇩🇪 Германия")
+        XCTAssertEqual(result.displayNodeTag, "🇩🇪 Германия")
+        XCTAssertFalse(result.isChained)
         XCTAssertEqual(result.selectedType, "vless")
         XCTAssertEqual(result.chainHops, [])
         XCTAssertEqual(result.latencyMs, 127)
@@ -79,8 +81,51 @@ final class SelectedOutboundResolverTests: XCTestCase {
         XCTAssertEqual(result.selectedTag, "C • 🇦🇹 Австрия (Gemini)")
         // Packet order: the transport entry first, the chained exit last.
         XCTAssertEqual(result.chainHops, ["🇩🇪 Германия", "C • 🇦🇹 Австрия (Gemini)"])
+        XCTAssertEqual(result.displayNodeTag, "C • 🇦🇹 Австрия (Gemini)")
+        XCTAssertTrue(result.isChained)
         // Latency of the exit node only; never the transport group's value.
         XCTAssertNil(result.latencyMs)
+    }
+
+    func testNativeGeminiChainTracksDynamicStrategySelection() {
+        let resolver = SelectedOutboundResolver(nodes: [
+            OutboundConfigNode(tag: "Gemini", type: "selector",
+                               members: ["Gemini • Super • A"]),
+            OutboundConfigNode(tag: "Gemini • Super • A", type: "urltest",
+                               members: ["LX • Gemini • Chain • Swiss"]),
+            OutboundConfigNode(tag: "LX • Gemini • Chain • Swiss", type: "chain",
+                               members: ["Стратегия", "Swiss"]),
+            OutboundConfigNode(tag: "Стратегия", type: "selector",
+                               members: ["Авто · База → Белые"]),
+            OutboundConfigNode(tag: "Авто · База → Белые", type: "urltest",
+                               members: ["Авто · Базовая", "Авто · Белые"]),
+            OutboundConfigNode(tag: "Авто · Базовая", type: "urltest",
+                               members: ["France", "Netherlands"]),
+            OutboundConfigNode(tag: "Авто · Белые", type: "urltest",
+                               members: ["White"]),
+            OutboundConfigNode(tag: "Swiss", type: "vless"),
+            OutboundConfigNode(tag: "France", type: "vless"),
+            OutboundConfigNode(tag: "Netherlands", type: "vless"),
+            OutboundConfigNode(tag: "White", type: "vless"),
+        ])
+        func liveGroups(firstHop: String) -> [OutboundLiveGroup] {
+            [
+                live("Gemini", "Gemini • Super • A"),
+                live("Gemini • Super • A", "LX • Gemini • Chain • Swiss", type: "urltest"),
+                live("Стратегия", "Авто · База → Белые"),
+                live("Авто · База → Белые", "Авто · Базовая", type: "urltest"),
+                live("Авто · Базовая", firstHop, type: "urltest"),
+                live("Авто · Белые", "White", type: "urltest"),
+            ]
+        }
+        let before = resolver.resolve(rootTag: "Gemini", live: liveGroups(firstHop: "France"))
+        XCTAssertEqual(before.status, .resolved)
+        XCTAssertEqual(before.chainHops, ["France", "Swiss"])
+        XCTAssertEqual(before.displayNodeTag, "Swiss")
+        XCTAssertTrue(before.isChained)
+        let after = resolver.resolve(rootTag: "Gemini", live: liveGroups(firstHop: "Netherlands"))
+        XCTAssertEqual(after.status, .resolved)
+        XCTAssertEqual(after.chainHops, ["Netherlands", "Swiss"])
     }
 
     func testUnresolvableDetourIsFlaggedIncomplete() {
@@ -155,6 +200,20 @@ final class SelectedOutboundResolverTests: XCTestCase {
         ])
         let result = resolver.resolve(rootTag: "Пустая", live: [live("Пустая", "")])
         XCTAssertEqual(result.status, .incomplete(.noSelection("Пустая")))
+    }
+
+    func testCompactRouteNamesKeepOnlyCountryAndFlag() {
+        XCTAssertEqual(RouteNodePresentation.compactName("🇸🇪 Швеция (без рекламы)"), "🇸🇪 Швеция")
+        XCTAssertEqual(RouteNodePresentation.compactName("🇨🇭 Швейцария (Gemini)"), "🇨🇭 Швейцария")
+        XCTAssertEqual(RouteNodePresentation.compactName("C • 🇦🇹 Австрия (Gemini)"), "🇦🇹 Австрия")
+        XCTAssertEqual(RouteNodePresentation.compactName("🇳🇱 Нидерланды"), "🇳🇱 Нидерланды")
+    }
+
+    func testCompactRouteNamesPreserveUnknownNodes() {
+        XCTAssertEqual(RouteNodePresentation.compactName("Swiss"), "Swiss")
+        XCTAssertEqual(RouteNodePresentation.compactName("VLESS Node X"), "VLESS Node X")
+        XCTAssertNil(RouteNodePresentation.compactName(nil))
+        XCTAssertNil(RouteNodePresentation.compactName("  "))
     }
 
     func testParsesRunningConfigJSON() throws {

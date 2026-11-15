@@ -10,16 +10,16 @@ public struct StatusCard: View {
     public var body: some View {
         DashboardCardView(title: "") {
             VStack(alignment: .leading, spacing: 8) {
-                DashboardCardHeader(icon: "info.circle.fill", title: "Status")
+                DashboardCardHeader(icon: "info.circle.fill", title: "Состояние")
                 if Variant.screenshotMode {
-                    DashboardCardLine(String(localized: "Memory"), "6.4 MB")
-                    DashboardCardLine(String(localized: "Goroutines"), "89")
+                    DashboardCardLine(String(localized: "Память"), "6.4 MB")
+                    DashboardCardLine(String(localized: "Горутины"), "89")
                 } else if let message = commandClient.status {
-                    DashboardCardLine(String(localized: "Memory"), LibboxFormatMemoryBytes(message.memory))
-                    DashboardCardLine(String(localized: "Goroutines"), "\(message.goroutines)")
+                    DashboardCardLine(String(localized: "Память"), LibboxFormatMemoryBytes(message.memory))
+                    DashboardCardLine(String(localized: "Горутины"), "\(message.goroutines)")
                 } else {
-                    DashboardCardLine(String(localized: "Memory"), "...")
-                    DashboardCardLine(String(localized: "Goroutines"), "...")
+                    DashboardCardLine(String(localized: "Память"), "...")
+                    DashboardCardLine(String(localized: "Горутины"), "...")
                 }
             }
         }

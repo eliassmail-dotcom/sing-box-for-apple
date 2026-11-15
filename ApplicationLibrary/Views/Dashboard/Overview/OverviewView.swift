@@ -50,7 +50,7 @@ public struct OverviewView: View {
     // FAB is normally reserved via safeAreaInset from MainView. On some iOS
     // versions (26 floating tab bar) the bottom inset is not propagated into
     // the scroll view, and the pill covers the last card. Probe the actual
-    // bottom safe area and reserve the accessory footprint on the content
+    // bottom safe area and reserve the accessory footprint and clearance on the content
     // itself when it is missing.
     @State private var missingBottomInset: CGFloat = 0
 
@@ -76,7 +76,7 @@ public struct OverviewView: View {
                 // view's bottom safe area already exceeds the pill + tab bar
                 // footprint (~120pt on home-indicator iPhones). Below that,
                 // reserve the pill footprint on the content itself.
-                missingInset = safeBottom >= 120 ? 0 : 64
+                missingInset = safeBottom >= 120 ? 0 : 88
             }
         }
     }
@@ -86,7 +86,7 @@ public struct OverviewView: View {
         let visibleCards = configuration.orderedEnabledCards.filter(shouldShowCard)
         let groupedCards = DashboardCard.groupIntoRows(visibleCards)
 
-        VStack(spacing: 16) {
+        VStack(spacing: 12) {
             ForEach(Array(groupedCards.enumerated()), id: \.offset) { _, group in
                 if group.count == 2 {
                     HStack(spacing: 16) {
@@ -104,7 +104,7 @@ public struct OverviewView: View {
 
     private func shouldShowCard(_ card: DashboardCard) -> Bool {
         switch card {
-        case .status, .connections, .uploadTraffic, .downloadTraffic, .clashMode, .strategyMode:
+        case .status, .connections, .uploadTraffic, .downloadTraffic, .clashMode, .currentRoutes, .strategyMode, .resilience:
             return Variant.screenshotMode || profile.status.isConnected
         case .httpProxy:
             return (Variant.screenshotMode || profile.status.isConnectedStrict) && systemProxyAvailable
@@ -138,9 +138,14 @@ public struct OverviewView: View {
         case .clashMode:
             ClashModeCard()
                 .environmentObject(environments.commandClient)
+        case .currentRoutes:
+            CurrentRoutesCard()
+                .environmentObject(environments.commandClient)
         case .strategyMode:
             StrategyModeCard()
                 .environmentObject(environments.commandClient)
+        case .resilience:
+            ResilienceCard()
         case .profile:
             ProfileCard(
                 profileList: $profileList,

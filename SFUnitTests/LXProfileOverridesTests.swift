@@ -166,8 +166,8 @@ final class LXProfileOverridesTests: XCTestCase {
         let root = try parsed(transformed)
         let outbounds = try XCTUnwrap(root["outbounds"] as? [[String: Any]])
         let reserve = try XCTUnwrap(outbounds.first(where: { ($0["tag"] as? String) == LXProfileOverrides.preferredFallbackTag }))
-        XCTAssertEqual(reserve["priority_outbounds"] as? [String], ["Авто · Базовая"])
-        XCTAssertEqual(reserve["outbounds"] as? [String], ["Авто · Базовая", "Авто · Белые"])
+        XCTAssertEqual(reserve["priority_outbounds"] as? [String], ["a"])
+        XCTAssertEqual(reserve["outbounds"] as? [String], ["a", "w"])
         XCTAssertEqual(reserve["interval"] as? String, "5s")
         XCTAssertEqual(reserve["interrupt_exist_connections"] as? Bool, false)
         let selector = try XCTUnwrap(outbounds.first(where: { ($0["tag"] as? String) == "Стратегия" }))
@@ -187,6 +187,75 @@ final class LXProfileOverridesTests: XCTestCase {
         XCTAssertEqual(onOutbounds.filter { ($0["tag"] as? String) == LXProfileOverrides.preferredFallbackTag }.count, 1)
         XCTAssertEqual(offOutbounds.filter { ($0["tag"] as? String) == LXProfileOverrides.preferredFallbackTag }.count, 1)
         XCTAssertEqual(try LXProfileOverrides.apply(source, profileID: 12, storedJSON: ""), transformed)
+    }
+
+    func testSmartFallbackFlattensNestedURLTestGroupsAndDeduplicatesTiers() throws {
+        let source = """
+        {"outbounds":[
+          {"type":"selector","tag":"Стратегия","outbounds":["Авто · Базовая","Авто · Белые"]},
+          {"type":"urltest","tag":"Авто · Базовая","outbounds":["base-a","Базовая подгруппа"],"url":"https://base.example/health","interval":"5s"},
+          {"type":"urltest","tag":"Базовая подгруппа","outbounds":["base-b","base-c"],"url":"https://nested.example/health"},
+          {"type":"urltest","tag":"Авто · Белые","outbounds":["white-a","base-a"],"url":"https://white.example/health"},
+          {"type":"vless","tag":"base-a"}, {"type":"vless","tag":"base-b"},
+          {"type":"vless","tag":"base-c"}, {"type":"vless","tag":"white-a"}
+        ],"route":{"final":"Стратегия"}}
+        """
+        XCTAssertTrue(LXProfileOverrides.supportsWhiteFallback(source))
+        let root = try parsed(LXProfileOverrides.apply(source, profileID: 42, storedJSON: ""))
+        let outbounds = try XCTUnwrap(root["outbounds"] as? [[String: Any]])
+        let smart = try XCTUnwrap(outbounds.first {
+            ($0["tag"] as? String) == LXProfileOverrides.preferredFallbackTag
+        })
+        XCTAssertEqual(smart["outbounds"] as? [String], ["base-a", "base-b", "base-c", "white-a"])
+        XCTAssertEqual(smart["priority_outbounds"] as? [String], ["base-a", "base-b", "base-c"])
+        XCTAssertEqual(smart["mode"] as? String, "least_test")
+        XCTAssertEqual(smart["interval"] as? String, "5s")
+        XCTAssertEqual(
+            smart["urls"] as? [String],
+            ["https://base.example/health", "https://nested.example/health", "https://white.example/health"]
+        )
+        // Source groups are retained, but Smart no longer nests them.
+        XCTAssertEqual(
+            outbounds.first(where: { ($0["tag"] as? String) == "Авто · Базовая" })?["outbounds"] as? [String],
+            ["base-a", "Базовая подгруппа"]
+        )
+        XCTAssertEqual(
+            outbounds.first(where: { ($0["tag"] as? String) == "Авто · Белые" })?["outbounds"] as? [String],
+            ["white-a", "base-a"]
+        )
+    }
+
+    func testSmartFallbackMigratesPreviousNestedGeneratedGroup() throws {
+        let source = """
+        {"outbounds":[
+          {"type":"selector","tag":"Стратегия","outbounds":["Авто · Базовая","Авто · Белые","Авто · База → Белые"]},
+          {"type":"urltest","tag":"Авто · Базовая","outbounds":["a"]},
+          {"type":"urltest","tag":"Авто · Белые","outbounds":["w"]},
+          {"type":"urltest","tag":"Авто · База → Белые","outbounds":["Авто · Базовая","Авто · Белые"],"mode":"least_test","priority_outbounds":["Авто · Базовая"]},
+          {"type":"vless","tag":"a"}, {"type":"vless","tag":"w"}
+        ],"route":{"final":"Стратегия"}}
+        """
+        var settings = LXProfileSettings()
+        settings.urlTestDefault.mode = "round_robin"
+        settings.urlTestDefault.pool = 2
+        var store = LXOverridesStore()
+        store.profiles["42"] = settings
+        let root = try parsed(LXProfileOverrides.apply(source, profileID: 42, storedJSON: store.encode()))
+        let outbounds = try XCTUnwrap(root["outbounds"] as? [[String: Any]])
+        let smartGroups = outbounds.filter {
+            ($0["tag"] as? String) == LXProfileOverrides.preferredFallbackTag
+        }
+        XCTAssertEqual(smartGroups.count, 1)
+        XCTAssertEqual(smartGroups.first?["outbounds"] as? [String], ["a", "w"])
+        XCTAssertEqual(smartGroups.first?["priority_outbounds"] as? [String], ["a"])
+        XCTAssertEqual(smartGroups.first?["mode"] as? String, "least_test")
+        XCTAssertNil(smartGroups.first?["balancer"])
+        XCTAssertEqual(outbounds.first(where: { ($0["tag"] as? String) == "Авто · Базовая" })?["mode"] as? String, "round_robin")
+        let selector = try XCTUnwrap(outbounds.first { ($0["tag"] as? String) == "Стратегия" })
+        XCTAssertEqual(
+            (selector["outbounds"] as? [String])?.filter { $0 == LXProfileOverrides.preferredFallbackTag }.count,
+            1
+        )
     }
 
     func testWhiteFallbackRequiresBothGroupsAndRootSelector() throws {
@@ -212,4 +281,155 @@ final class LXProfileOverridesTests: XCTestCase {
         XCTAssertThrowsError(try LXProfileOverrides.apply(config, profileID: 42, storedJSON: store.encode()))
         XCTAssertThrowsError(try LXProfileOverrides.apply("invalid json", profileID: 42, storedJSON: store.encode()))
     }
+    func testAdaptiveHealthOverridesOnlyLeastTestAndKeepSource() throws {
+        var store = LXOverridesStore()
+        var settings = LXProfileSettings()
+        var auto = LXURLTestOverride()
+        auto.mode = "least_test"
+        settings.urlTests["Auto"] = auto
+        settings.adaptiveTolerancePercent = 30
+        settings.minHoldSeconds = 30
+        settings.probeURLs = "https://example.org/generate_204, https://example.net/health"
+        store.profiles["42"] = settings
+        let root = try parsed(LXProfileOverrides.apply(config, profileID: 42, storedJSON: store.encode()))
+        let groups = try XCTUnwrap(root["outbounds"] as? [[String: Any]])
+        XCTAssertEqual(groups[0]["mode"] as? String, "least_test")
+        XCTAssertEqual(groups[0]["tolerance_percent"] as? Int, 30)
+        XCTAssertEqual(groups[0]["min_hold"] as? String, "30s")
+        XCTAssertEqual(groups[0]["urls"] as? [String], ["https://example.org/generate_204", "https://example.net/health"])
+        XCTAssertNil(groups[0]["url"])
+        XCTAssertNil(groups[1]["tolerance_percent"])
+        XCTAssertNil(groups[1]["min_hold"])
+        XCTAssertEqual(groups[1]["mode"] as? String, "failover")
+        XCTAssertEqual(groups[1]["urls"] as? [String], ["https://example.org/generate_204", "https://example.net/health"])
+        XCTAssertEqual(try LXProfileOverrides.apply(config, profileID: 41, storedJSON: store.encode()), config)
+    }
+
+    func testAdaptiveHealthInvalidURLAndBackwardCompatibility() throws {
+        let oldJSON = #"{"profiles":{"42":{"urlTests":{},"dnsGroups":{},"wgIdle":"profile"}}}"#
+        let oldStore = try LXOverridesStore.decode(oldJSON)
+        XCTAssertEqual(oldStore.profiles["42"]?.adaptiveTolerancePercent, 0)
+        XCTAssertEqual(oldStore.profiles["42"]?.minHoldSeconds, 0)
+        XCTAssertEqual(oldStore.profiles["42"]?.probeURLs, "")
+        for urls in ["https://example.org,https://example.org",
+                     "ftp://example.org",
+                     "http://a,http://b,http://c,http://d"] {
+            var settings = LXProfileSettings()
+            settings.probeURLs = urls
+            var store = LXOverridesStore()
+            store.profiles["42"] = settings
+            XCTAssertThrowsError(try LXProfileOverrides.apply(config, profileID: 42, storedJSON: store.encode()))
+        }
+    }
+
+    func testGeneratedSmartFallbackReceivesAdaptiveHealthOverrides() throws {
+        let source = """
+        {"outbounds":[
+          {"type":"selector","tag":"Стратегия","outbounds":["Авто · Базовая","Авто · Белые"]},
+          {"type":"urltest","tag":"Авто · Базовая","outbounds":["a"],"mode":"failover"},
+          {"type":"urltest","tag":"Авто · Белые","outbounds":["b"],"mode":"failover"},
+          {"type":"vless","tag":"a"}, {"type":"vless","tag":"b"}
+        ],"route":{"final":"Стратегия"}}
+        """
+        var store = LXOverridesStore()
+        var settings = LXProfileSettings()
+        settings.adaptiveTolerancePercent = 30
+        settings.minHoldSeconds = 30
+        settings.probeURLs = "https://example.org/health,https://example.net/health"
+        store.profiles["42"] = settings
+        let root = try parsed(LXProfileOverrides.apply(source, profileID: 42, storedJSON: store.encode()))
+        let outbounds = try XCTUnwrap(root["outbounds"] as? [[String: Any]])
+        let smart = try XCTUnwrap(outbounds.first(where: { ($0["tag"] as? String) == LXProfileOverrides.preferredFallbackTag }))
+        XCTAssertEqual(smart["mode"] as? String, "least_test")
+        XCTAssertEqual(smart["outbounds"] as? [String], ["a", "b"])
+        XCTAssertEqual(smart["priority_outbounds"] as? [String], ["a"])
+        XCTAssertEqual(smart["tolerance_percent"] as? Int, 30)
+        XCTAssertEqual(smart["min_hold"] as? String, "30s")
+        XCTAssertEqual(smart["urls"] as? [String], ["https://example.org/health", "https://example.net/health"])
+        XCTAssertEqual(outbounds.first(where: { ($0["tag"] as? String) == "Авто · Базовая" })?["mode"] as? String, "failover")
+    }
+
+    func testPassiveGuardOptInSkipsRoundRobinAndPersistsPerProfile() throws {
+        let oldJSON = #"{"profiles":{"42":{"urlTests":{},"dnsGroups":{},"wgIdle":"profile"}}}"#
+        XCTAssertEqual(try LXOverridesStore.decode(oldJSON).profiles["42"]?.passiveGuardEnabled, false)
+        XCTAssertEqual(try LXProfileOverrides.apply(config, profileID: 42, storedJSON: ""), config)
+
+        var store = LXOverridesStore()
+        var settings = LXProfileSettings()
+        settings.passiveGuardEnabled = true
+        store.profiles["42"] = settings
+        let applied = try parsed(LXProfileOverrides.apply(config, profileID: 42, storedJSON: store.encode()))
+        let groups = try XCTUnwrap(applied["outbounds"] as? [[String: Any]])
+        XCTAssertNil(groups[0]["passive_guard"]) // round_robin rejects guard
+        XCTAssertEqual(groups[1]["passive_guard"] as? Bool, true) // failover
+        XCTAssertEqual(try LXProfileOverrides.apply(config, profileID: 41, storedJSON: store.encode()), config)
+    }
+
+    func testGeneratedSmartFallbackReceivesPassiveGuardWhenEnabled() throws {
+        let source = """
+        {"outbounds":[
+            {"type":"selector","tag":"Стратегия","outbounds":["Авто · Базовая","Авто · Белые"]},
+            {"type":"urltest","tag":"Авто · Базовая","outbounds":["a"],"mode":"least_test"},
+            {"type":"urltest","tag":"Авто · Белые","outbounds":["b"],"mode":"failover"},
+            {"type":"vless","tag":"a"}, {"type":"vless","tag":"b"}
+        ],"route":{"final":"Стратегия"}}
+        """
+        var store = LXOverridesStore()
+        var settings = LXProfileSettings()
+        settings.passiveGuardEnabled = true
+        store.profiles["42"] = settings
+        let applied = try parsed(LXProfileOverrides.apply(source, profileID: 42, storedJSON: store.encode()))
+        let groups = try XCTUnwrap(applied["outbounds"] as? [[String: Any]])
+        for tag in ["Авто · Базовая", "Авто · Белые", LXProfileOverrides.preferredFallbackTag] {
+            XCTAssertEqual(
+                groups.first(where: { ($0["tag"] as? String) == tag })?["passive_guard"] as? Bool,
+                true
+            )
+        }
+    }
+
+
+    func testDashboardResiliencePresetPreservesOtherProfileOverrides() throws {
+        var store = LXOverridesStore()
+        var current = LXProfileSettings()
+        current.geminiChainsEnabled = true
+        current.probeURLs = "https://example.org/health"
+        current.urlTestDefault.mode = "failover"
+        var customGroup = LXURLTestOverride()
+        customGroup.mode = "least_test"
+        current.urlTests["Gemini"] = customGroup
+        current.dnsGroups["dns"] = "stable"
+        store.profiles["42"] = current
+
+        var otherProfile = LXProfileSettings()
+        otherProfile.applyResiliencePreset("antiblock")
+        store.profiles["77"] = otherProfile
+
+        current.applyResiliencePreset("balance")
+        store.profiles["42"] = current
+        let saved = try LXOverridesStore.decode(store.encode())
+
+        XCTAssertEqual(saved.profiles["42"]?.resiliencePreset, "balance")
+        XCTAssertEqual(saved.profiles["42"]?.adaptiveTolerancePercent, 20)
+        XCTAssertEqual(saved.profiles["42"]?.minHoldSeconds, 30)
+        XCTAssertEqual(saved.profiles["42"]?.passiveGuardEnabled, false)
+        XCTAssertEqual(saved.profiles["42"]?.geminiChainsEnabled, true)
+        XCTAssertEqual(saved.profiles["42"]?.probeURLs, "https://example.org/health")
+        XCTAssertEqual(saved.profiles["42"]?.urlTestDefault.mode, "failover")
+        XCTAssertEqual(saved.profiles["42"]?.urlTests["Gemini"]?.mode, "least_test")
+        XCTAssertEqual(saved.profiles["42"]?.dnsGroups["dns"], "stable")
+        XCTAssertEqual(saved.profiles["77"], otherProfile)
+
+        current.applyResiliencePreset("economy") // Stable label, legacy storage ID.
+        XCTAssertEqual(current.adaptiveTolerancePercent, 0)
+        XCTAssertEqual(current.minHoldSeconds, 60)
+        XCTAssertEqual(current.passiveGuardEnabled, false)
+
+        current.applyResiliencePreset("antiblock")
+        XCTAssertEqual(current.adaptiveTolerancePercent, 35)
+        XCTAssertEqual(current.minHoldSeconds, 10)
+        XCTAssertEqual(current.passiveGuardEnabled, true)
+    }
+
+
 }

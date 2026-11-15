@@ -65,3 +65,52 @@ public struct OutboundGroupItem: Codable, Hashable {
         "\(urlTestDelay)ms"
     }
 }
+
+
+/// Shared selection rules for the Dashboard and the Control Center command.
+/// Keep these rules in Library so the packet tunnel and iOS UI agree.
+public enum LXNextNodeSelection {
+    // Must match group.LXNextNodeTag in the sing-box-lx Go core.
+    public static let commandTag = "__lx_next_node__"
+    public static let strategyGroupTag = "Стратегия"
+
+    /// Resolve the actual selected node through nested selectors and URLTest
+    /// groups. The outer Strategy tag is intentionally not a node identifier.
+    /// Used to verify that a Control Center request really changed the route.
+    public static func activeLeafTag(in groups: [OutboundGroup]) -> String? {
+        let byTag = Dictionary(groups.map { ($0.tag, $0) },
+                               uniquingKeysWith: { first, _ in first })
+        guard let strategy = byTag[strategyGroupTag], strategy.type == "selector" else {
+            return nil
+        }
+        var next = strategy.selected
+        var visited: Set<String> = [strategyGroupTag]
+        for _ in 0..<12 {
+            guard !next.isEmpty, visited.insert(next).inserted else { return nil }
+            guard let nested = byTag[next] else { return next }
+            guard nested.type == "selector" || nested.type == "urltest" else {
+                return next
+            }
+            next = nested.selected
+        }
+        return nil
+    }
+
+    public static func nextHealthyTag(
+        current: String,
+        candidates: [(tag: String, delayMs: UInt16)]
+    ) -> String? {
+        var seen = Set<String>()
+        let healthy = candidates.compactMap { candidate -> String? in
+            guard candidate.delayMs > 0, !seen.contains(candidate.tag) else { return nil }
+            seen.insert(candidate.tag)
+            return candidate.tag
+        }
+        guard !healthy.isEmpty else { return nil }
+        if let index = healthy.firstIndex(of: current) {
+            let next = healthy[(index + 1) % healthy.count]
+            return next == current ? nil : next
+        }
+        return healthy.first
+    }
+}

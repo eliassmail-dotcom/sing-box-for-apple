@@ -17,8 +17,8 @@ public struct ClashModeCard: View {
     public var body: some View {
         if shouldShowPicker {
             DashboardCardView(title: "") {
-                VStack(alignment: .leading, spacing: 12) {
-                    DashboardCardHeader(icon: "circle.grid.2x2.fill", title: "Mode")
+                VStack(alignment: .leading, spacing: 10) {
+                    DashboardCardHeader(icon: "circle.grid.2x2.fill", title: "Маршрутизация Google")
                     #if os(tvOS)
                         modeMenu
                     #else

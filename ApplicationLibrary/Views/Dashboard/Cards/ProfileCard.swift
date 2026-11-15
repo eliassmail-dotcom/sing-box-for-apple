@@ -31,7 +31,7 @@ public struct ProfileCard: View {
 
     public var body: some View {
         DashboardCardView(title: "") {
-            VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: 12) {
                 headerView
                 profileSelectorView
             }
@@ -145,7 +145,7 @@ public struct ProfileCard: View {
 
     private var headerView: some View {
         HStack {
-            DashboardCardHeader(icon: "doc.text.fill", title: "Profile")
+            DashboardCardHeader(icon: "doc.text.fill", title: "Конфигурация")
 
             Spacer()
 
@@ -165,7 +165,7 @@ public struct ProfileCard: View {
     }
 
     private var profileSelectorView: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 10) {
             if profileList.isEmpty {
                 Text("Empty profiles")
                     .foregroundStyle(.secondary)

@@ -1,5 +1,9 @@
 import Foundation
 
+public extension Notification.Name {
+    static let lxResilienceSettingsChanged = Notification.Name("lxResilienceSettingsChanged")
+}
+
 // Configurable per-profile LX overrides. Remote subscription files are never modified.
 public struct LXURLTestOverride: Codable, Equatable {
     public var mode: String = "profile"
@@ -9,6 +13,12 @@ public struct LXURLTestOverride: Codable, Equatable {
     public init() {}
 }
 
+/// Presets do not alter node pools, routes, DNS, selector interruption or the
+/// source health URLs. They tune only the existing LX reliability controls.
+public enum LXResiliencePreset: String, CaseIterable {
+    case custom, economy, balance, antiblock
+}
+
 public struct LXProfileSettings: Codable, Equatable {
     // Common mode for every URLTest group inside this profile.
     // Per-group entries take precedence, including an explicit "profile" opt-out.
@@ -16,12 +26,43 @@ public struct LXProfileSettings: Codable, Equatable {
     public var urlTests: [String: LXURLTestOverride] = [:]
     public var dnsGroups: [String: String] = [:]
     public var wgIdle: String = "profile"
+    // Global reliability controls. Zero/empty means inherit the source profile.
+    public var adaptiveTolerancePercent: Int = 0
+    public var minHoldSeconds: Int = 0
+    public var probeURLs: String = ""
+    // Experimental: passive watchdog/quarantine; off until explicitly enabled.
+    public var passiveGuardEnabled: Bool = false
+    /// Off by default: source Gemini+ still provides ordinary Gemini nodes.
+    public var geminiChainsEnabled: Bool = false
+    /// Existing saved settings are treated as Custom, never silently migrated.
+    public var resiliencePreset: String = LXResiliencePreset.custom.rawValue
+
+    public mutating func applyResiliencePreset(_ name: String) {
+        resiliencePreset = name
+        switch LXResiliencePreset(rawValue: name) ?? .custom {
+        case .custom:
+            break
+        case .economy:
+            adaptiveTolerancePercent = 0
+            minHoldSeconds = 60
+            passiveGuardEnabled = false
+        case .balance:
+            adaptiveTolerancePercent = 20
+            minHoldSeconds = 30
+            passiveGuardEnabled = false
+        case .antiblock:
+            adaptiveTolerancePercent = 35
+            minHoldSeconds = 10
+            passiveGuardEnabled = true
+        }
+        // Preserve probeURLs, URLTest mode, DNS, priorities and interrupt flag.
+    }
 
     public init() {}
 
     // Backward-compatible with previously saved LX settings that lack urlTestDefault.
     private enum CodingKeys: String, CodingKey {
-        case urlTestDefault, urlTests, dnsGroups, wgIdle
+        case urlTestDefault, urlTests, dnsGroups, wgIdle, adaptiveTolerancePercent, minHoldSeconds, probeURLs, passiveGuardEnabled, geminiChainsEnabled, resiliencePreset
     }
 
     public init(from decoder: Decoder) throws {
@@ -30,12 +71,21 @@ public struct LXProfileSettings: Codable, Equatable {
         urlTests = try container.decodeIfPresent([String: LXURLTestOverride].self, forKey: .urlTests) ?? [:]
         dnsGroups = try container.decodeIfPresent([String: String].self, forKey: .dnsGroups) ?? [:]
         wgIdle = try container.decodeIfPresent(String.self, forKey: .wgIdle) ?? "profile"
+        adaptiveTolerancePercent = try container.decodeIfPresent(Int.self, forKey: .adaptiveTolerancePercent) ?? 0
+        minHoldSeconds = try container.decodeIfPresent(Int.self, forKey: .minHoldSeconds) ?? 0
+        probeURLs = try container.decodeIfPresent(String.self, forKey: .probeURLs) ?? ""
+        passiveGuardEnabled = try container.decodeIfPresent(Bool.self, forKey: .passiveGuardEnabled) ?? false
+        geminiChainsEnabled = try container.decodeIfPresent(Bool.self, forKey: .geminiChainsEnabled) ?? false
+        resiliencePreset = try container.decodeIfPresent(String.self, forKey: .resiliencePreset) ?? LXResiliencePreset.custom.rawValue
     }
 
     public var isEmpty: Bool {
         urlTestDefault.mode == "profile" &&
         urlTests.isEmpty &&
-        dnsGroups.values.allSatisfy { $0 == "profile" } && wgIdle == "profile"
+        dnsGroups.values.allSatisfy { $0 == "profile" } && wgIdle == "profile" &&
+        adaptiveTolerancePercent == 0 && minHoldSeconds == 0 && !passiveGuardEnabled &&
+        !geminiChainsEnabled && resiliencePreset == LXResiliencePreset.custom.rawValue &&
+        probeURLs.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 }
 
@@ -125,9 +175,89 @@ public enum LXProfileOverrides {
     private static let whiteTags = ["Авто · Белые", "Авто · Только белые"]
 
     // This feature requires an LX kernel implementing priority_outbounds.
-    // Every compatible profile gets a dormant fallback group automatically.
-    // It is used ONLY when the user selects the mode from the Dashboard.
-    // The source subscription and the user's previous selector choice stay intact.
+    // Smart is built as ONE flat URLTest pool: direct members from the Base tier
+    // followed by White-only members. The Base leaf tags are the preferred tier.
+    //
+    // Do not nest the two source URLTest groups here. A parent priority group that
+    // wraps URLTest children can see only each child's currently selected leaf;
+    // that is not an aggregate health view of the child's full pool. In particular,
+    // a stale selected leaf can make Smart fall back to White while other Base nodes
+    // have successful probes. Flattening gives the Smart group direct health history
+    // for every candidate and lets the core enforce Base -> White -> Base recovery.
+    //
+    // The source subscription and its original groups remain unchanged. The generated
+    // Smart group is only selected when the user chooses it from the Dashboard.
+    private static func flattenedURLTestMembers(
+        _ rootTag: String,
+        in outbounds: [[String: Any]]
+    ) throws -> (tags: [String], probeURLs: [String]) {
+        var byTag: [String: [String: Any]] = [:]
+        for item in outbounds {
+            if let tag = item["tag"] as? String {
+                byTag[tag] = item
+            }
+        }
+
+        var result: [String] = []
+        var included = Set<String>()
+        var expandedGroups = Set<String>()
+        var activeGroups = Set<String>()
+        var probeURLs: [String] = []
+
+        func visit(_ tag: String) throws {
+            guard let item = byTag[tag] else {
+                throw OverrideError.invalidOption("группа \(rootTag) ссылается на отсутствующий outbound \(tag)")
+            }
+            if (item["type"] as? String) == "urltest" {
+                guard !activeGroups.contains(tag) else {
+                    throw OverrideError.invalidOption("цикл вложенных URLTest-групп: \(tag)")
+                }
+                guard !expandedGroups.contains(tag) else { return }
+                activeGroups.insert(tag)
+                let urls = item["urls"] as? [String] ?? (item["url"] as? String).map { [$0] } ?? []
+                for url in urls where !probeURLs.contains(url) && probeURLs.count < 3 {
+                    probeURLs.append(url)
+                }
+                guard let members = item["outbounds"] as? [String], !members.isEmpty else {
+                    throw OverrideError.invalidOption("URLTest-группа \(tag) не содержит узлов")
+                }
+                for member in members {
+                    try visit(member)
+                }
+                activeGroups.remove(tag)
+                expandedGroups.insert(tag)
+                return
+            }
+            // Keep selectors atomic: their current manual selection remains
+            // authoritative. Chains and protocol outbounds are also leaf candidates.
+            if included.insert(tag).inserted {
+                result.append(tag)
+            }
+        }
+
+        try visit(rootTag)
+        return (result, probeURLs)
+    }
+
+    private static func smartMembers(
+        base: String,
+        white: String,
+        in outbounds: [[String: Any]]
+    ) throws -> (all: [String], preferred: [String], probeURLs: [String]) {
+        let preferred = try flattenedURLTestMembers(base, in: outbounds)
+        let whiteMembers = try flattenedURLTestMembers(white, in: outbounds)
+        let preferredSet = Set(preferred.tags)
+        let fallbackOnly = whiteMembers.tags.filter { !preferredSet.contains($0) }
+        guard !preferred.tags.isEmpty, !fallbackOnly.isEmpty else {
+            throw OverrideError.invalidOption("группы Базовая и Белые не содержат отдельных узлов для резервирования")
+        }
+        let probeURLs = Array((preferred.probeURLs + whiteMembers.probeURLs).reduce(into: [String]()) {
+            if !$0.contains($1) && $0.count < 3 { $0.append($1) }
+        })
+        return (preferred.tags + fallbackOnly, preferred.tags, probeURLs)
+    }
+
+    // Every compatible profile gets a dormant Smart group automatically.
     public static func supportsWhiteFallback(_ source: String) -> Bool {
         guard let root = try? document(source),
               let outbounds = root["outbounds"] as? [[String: Any]] else { return false }
@@ -135,10 +265,11 @@ public enum LXProfileOverrides {
             guard (item["type"] as? String) == "urltest" else { return nil }
             return item["tag"] as? String
         })
-        return baseTags.contains(where: urltestTags.contains) &&
-               whiteTags.contains(where: urltestTags.contains) &&
-               outbounds.contains(where: { ($0["tag"] as? String) == "Стратегия" &&
-                   ($0["type"] as? String) == "selector" })
+        guard let base = baseTags.first(where: urltestTags.contains),
+              let white = whiteTags.first(where: urltestTags.contains),
+              outbounds.contains(where: { ($0["tag"] as? String) == "Стратегия" &&
+                  ($0["type"] as? String) == "selector" }) else { return false }
+        return (try? smartMembers(base: base, white: white, in: outbounds)) != nil
     }
 
     private static func addWhiteFallback(to root: inout [String: Any]) throws {
@@ -150,41 +281,67 @@ public enum LXProfileOverrides {
             return item["tag"] as? String
         })
         guard let base = baseTags.first(where: urltestTags.contains),
-              let white = whiteTags.first(where: urltestTags.contains),
-              let rootIndex = outbounds.firstIndex(where: {
-                  ($0["tag"] as? String) == "Стратегия" &&
-                  ($0["type"] as? String) == "selector"
-              }) else {
-            throw OverrideError.invalidOption("для резервирования требуются группы Базовая, Белые и селектор Стратегия")
+              let white = whiteTags.first(where: urltestTags.contains) else {
+            throw OverrideError.invalidOption("для резервирования требуются группы Базовая и Белые")
         }
-        // Profiles which already contain the generated group must not get duplicates.
-        if let existing = outbounds.first(where: { ($0["tag"] as? String) == preferredFallbackTag }) {
-            guard (existing["type"] as? String) == "urltest",
-                  (existing["outbounds"] as? [String]) == [base, white],
-                  (existing["priority_outbounds"] as? [String]) == [base] else {
+        let members = try smartMembers(base: base, white: white, in: outbounds)
+        let expectedMembers = members.all
+        let expectedPreferred = members.preferred
+
+        // Rebuild the previous nested implementation in-place. This is a known
+        // generated shape from earlier app versions, not a user-authored group.
+        // Always rebuild it AFTER the ordinary URLTest override pass, so a global
+        // round_robin/failover preference can never make this priority group invalid.
+        if let existingIndex = outbounds.firstIndex(where: { ($0["tag"] as? String) == preferredFallbackTag }) {
+            let existing = outbounds[existingIndex]
+            let oldGeneratedShape =
+                (existing["type"] as? String) == "urltest" &&
+                (existing["outbounds"] as? [String]) == [base, white] &&
+                (existing["priority_outbounds"] as? [String]) == [base]
+            let newGeneratedShape =
+                (existing["type"] as? String) == "urltest" &&
+                (existing["outbounds"] as? [String]) == expectedMembers &&
+                (existing["priority_outbounds"] as? [String]) == expectedPreferred
+            guard oldGeneratedShape || newGeneratedShape else {
                 throw OverrideError.invalidOption("существующая резервная группа имеет несовместимую конфигурацию")
             }
-            return
+            outbounds.remove(at: existingIndex)
         }
-        guard var rootTags = outbounds[rootIndex]["outbounds"] as? [String] else {
+
+        guard let rootIndex = outbounds.firstIndex(where: {
+            ($0["tag"] as? String) == "Стратегия" &&
+            ($0["type"] as? String) == "selector"
+        }), var rootTags = outbounds[rootIndex]["outbounds"] as? [String] else {
             throw OverrideError.invalidOption("Стратегия не содержит список outbounds")
         }
-        // Keep original selection and route rules intact. The user opts into the new
-        // strategy from the Dashboard when the new group is visible.
-        rootTags.append(preferredFallbackTag)
+        if !rootTags.contains(preferredFallbackTag) {
+            rootTags.append(preferredFallbackTag)
+        }
         outbounds[rootIndex]["outbounds"] = rootTags
+
         let baseConfig = outbounds.first(where: { ($0["tag"] as? String) == base }) ?? [:]
         var fallback: [String: Any] = [
             "type": "urltest",
             "tag": preferredFallbackTag,
-            "outbounds": [base, white],
+            "outbounds": expectedMembers,
             "mode": "least_test",
-            "priority_outbounds": [base],
+            "priority_outbounds": expectedPreferred,
             "interrupt_exist_connections": false,
         ]
-        for field in ["url", "interval", "idle_timeout"] {
+
+        // Use the Base group's timing and thresholds. Probe URLs from both tiers
+        // are merged (up to the core's three-endpoint limit) so neither tier is
+        // judged by an endpoint that existed only in the other tier.
+        for field in ["interval", "idle_timeout", "tolerance", "tolerance_percent", "min_hold", "passive_guard"] {
             if let value = baseConfig[field] { fallback[field] = value }
         }
+        let probeURLs = members.probeURLs
+        if probeURLs.count == 1 {
+            fallback["url"] = probeURLs[0]
+        } else if !probeURLs.isEmpty {
+            fallback["urls"] = probeURLs
+        }
+
         outbounds.append(fallback)
         root["outbounds"] = outbounds
     }
@@ -195,38 +352,90 @@ public enum LXProfileOverrides {
         // No user overrides and no compatible base/white groups: byte-identical.
         // The fallback group's presence no longer depends on a separate toggle.
         let injectFallback = supportsWhiteFallback(source)
-        guard !settings.isEmpty || injectFallback else { return source }
+        let injectGemini = LXGeminiBuilder.hasSource(source)
+        guard !settings.isEmpty || injectFallback || injectGemini else { return source }
 
         var root = try document(source)
         var changed = false
+        // Build on-device BEFORE applying URLTest health overrides so the
+        // locally created Gemini groups inherit the same resilience settings.
+        if try LXGeminiBuilder.apply(to: &root, chainsEnabled: settings.geminiChainsEnabled) {
+            changed = true
+        }
+
+        guard LXResiliencePreset(rawValue: settings.resiliencePreset) != nil,
+              (0...100).contains(settings.adaptiveTolerancePercent),
+              (0...600).contains(settings.minHoldSeconds) else {
+            throw OverrideError.invalidOption("порог адаптации / время удержания")
+        }
+        let healthURLs = settings.probeURLs.split(whereSeparator: { $0 == "," || $0 == "\n" })
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        if healthURLs.count > 3 || Set(healthURLs).count != healthURLs.count ||
+            healthURLs.contains(where: { value in
+                guard let url = URLComponents(string: value) else { return true }
+                return !["https", "http"].contains(url.scheme ?? "") || (url.host ?? "").isEmpty
+            }) {
+            throw OverrideError.invalidOption("проверочные URL: 1–3 разных HTTP(S)-адреса")
+        }
 
         if var outbounds = root["outbounds"] as? [[String: Any]] {
             for index in outbounds.indices {
                 guard (outbounds[index]["type"] as? String) == "urltest",
                       let tag = outbounds[index]["tag"] as? String else { continue }
                 let setting = settings.urlTests[tag] ?? settings.urlTestDefault
-                // Explicit group "profile" prevents the common default from overriding this tag.
-                guard setting.mode != "profile" else { continue }
-                guard ["least_test", "failover", "round_robin"].contains(setting.mode) else {
-                    throw OverrideError.invalidOption("urltest \(tag): mode")
-                }
                 var group = outbounds[index]
-                group["mode"] = setting.mode
-                if setting.mode == "round_robin" {
-                    guard (1...32).contains(setting.pool), (0...2000).contains(setting.poolTolerance) else {
-                        throw OverrideError.invalidOption("urltest \(tag): pool / pool_tolerance")
+                var groupChanged = false
+                if setting.mode != "profile" {
+                    guard ["least_test", "failover", "round_robin"].contains(setting.mode) else {
+                        throw OverrideError.invalidOption("urltest \(tag): mode")
                     }
-                    group["balancer"] = [
-                        "pool": setting.pool,
-                        "pool_tolerance": setting.poolTolerance,
-                        "sticky_hash": setting.sticky ? ["process", "domain"] : ["none"],
-                    ] as [String: Any]
-                } else {
-                    group.removeValue(forKey: "balancer")
-                    if setting.mode == "failover" { group.removeValue(forKey: "tolerance") }
+                    group["mode"] = setting.mode
+                    if setting.mode == "round_robin" {
+                        guard (1...32).contains(setting.pool), (0...2000).contains(setting.poolTolerance) else {
+                            throw OverrideError.invalidOption("urltest \(tag): pool / pool_tolerance")
+                        }
+                        group["balancer"] = [
+                            "pool": setting.pool,
+                            "pool_tolerance": setting.poolTolerance,
+                            "sticky_hash": setting.sticky ? ["process", "domain"] : ["none"],
+                        ] as [String: Any]
+                    } else {
+                        group.removeValue(forKey: "balancer")
+                        if setting.mode == "failover" { group.removeValue(forKey: "tolerance") }
+                    }
+                    groupChanged = true
                 }
-                outbounds[index] = group
-                changed = true
+                let effectiveMode = group["mode"] as? String ?? "least_test"
+                if effectiveMode == "least_test" {
+                    if settings.adaptiveTolerancePercent > 0 {
+                        group["tolerance_percent"] = settings.adaptiveTolerancePercent
+                        groupChanged = true
+                    }
+                    if settings.minHoldSeconds > 0 {
+                        group["min_hold"] = "\(settings.minHoldSeconds)s"
+                        groupChanged = true
+                    }
+                }
+                // Passport of the feature follows the actual effective mode;
+                // round_robin has per-flow selection and rejects passive_guard.
+                if settings.passiveGuardEnabled && effectiveMode != "round_robin" {
+                    group["passive_guard"] = true
+                    groupChanged = true
+                }
+                if effectiveMode == "round_robin" && group["passive_guard"] != nil {
+                    group.removeValue(forKey: "passive_guard")
+                    groupChanged = true
+                }
+                if !healthURLs.isEmpty {
+                    group.removeValue(forKey: "url")
+                    group["urls"] = healthURLs
+                    groupChanged = true
+                }
+                if groupChanged {
+                    outbounds[index] = group
+                    changed = true
+                }
             }
             root["outbounds"] = outbounds
         }
@@ -272,6 +481,25 @@ public enum LXProfileOverrides {
 
         if injectFallback {
             try addWhiteFallback(to: &root)
+            // The generated smart fallback group is appended after the normal
+            // URLTest override pass. Apply the same reliability controls to it.
+            if var outbounds = root["outbounds"] as? [[String: Any]],
+               let index = outbounds.firstIndex(where: { ($0["tag"] as? String) == preferredFallbackTag }) {
+                if settings.adaptiveTolerancePercent > 0 {
+                    outbounds[index]["tolerance_percent"] = settings.adaptiveTolerancePercent
+                }
+                if settings.minHoldSeconds > 0 {
+                    outbounds[index]["min_hold"] = "\(settings.minHoldSeconds)s"
+                }
+                if settings.passiveGuardEnabled {
+                    outbounds[index]["passive_guard"] = true
+                }
+                if !healthURLs.isEmpty {
+                    outbounds[index].removeValue(forKey: "url")
+                    outbounds[index]["urls"] = healthURLs
+                }
+                root["outbounds"] = outbounds
+            }
             changed = true
         }
 

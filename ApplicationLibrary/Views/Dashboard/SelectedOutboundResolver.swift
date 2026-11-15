@@ -85,6 +85,50 @@ public struct ResolvedOutbound: Hashable {
     public let latencyMs: UInt16?
     public let latencyMeasuredAt: Date?
     public let status: Status
+
+    /// Final user-facing node: for a chain this is the exit node, not the
+    /// chain outbound tag or its first transport hop.
+    public var displayNodeTag: String? {
+        chainHops.last ?? selectedTag
+    }
+
+    /// True for native LX chains and legacy detour-based chains.
+    public var isChained: Bool {
+        selectedType == "chain" || chainHops.count > 1
+    }
+}
+
+/// Display-only projection of verbose outbound tags for the compact
+/// Dashboard route tile. Never use this name to select or route an outbound.
+public enum RouteNodePresentation {
+    public static func compactName(_ tag: String?) -> String? {
+        guard let tag else { return nil }
+        let raw = tag.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !raw.isEmpty else { return nil }
+
+        // A flag is a Character containing exactly two regional indicators.
+        // Extract the displayed country even when tags have pool prefixes,
+        // e.g. "C • 🇨🇭 Швейцария (Gemini)".
+        let characters = Array(raw)
+        guard let flagIndex = characters.firstIndex(where: { character in
+            let scalars = Array(character.unicodeScalars)
+            return scalars.count == 2 &&
+                scalars.allSatisfy { (0x1F1E6...0x1F1FF).contains($0.value) }
+        }) else {
+            // Unrecognized tags retain their original name rather than
+            // being silently mapped to the wrong country.
+            return raw
+        }
+
+        let flag = String(characters[flagIndex])
+        let suffix = String(characters.dropFirst(flagIndex + 1))
+        let country = suffix
+            .components(separatedBy: CharacterSet(charactersIn: "([（|•·—–/#"))
+            .first?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+
+        return country.isEmpty ? flag : "\(flag) \(country)"
+    }
 }
 
 public struct SelectedOutboundResolver: Hashable {
@@ -138,12 +182,22 @@ public struct SelectedOutboundResolver: Hashable {
             }
         }
 
-        // Detour chain: the selected outbound rides through its detour target.
-        // Resolve the transport side to concrete nodes (packet order: entries
-        // first, the selected exit last). Transport hops with their own detour
-        // are surfaced as an unresolved hop instead of recursing.
+        // LX native chain uses explicit ordered outbounds, not "detour".
+        // Each hop can be a live group: resolve Strategy at display time,
+        // so a Strategy failover updates Gemini without reloading the profile.
         var chainHops: [String] = []
-        if let selectedTag, let detour = nodes[selectedTag]?.detour {
+        if let selectedTag, let selectedNode = nodes[selectedTag],
+           selectedNode.type == "chain" {
+            for member in selectedNode.members {
+                if let hops = resolveTransport(member, live: live), !hops.isEmpty {
+                    chainHops.append(contentsOf: hops)
+                } else {
+                    reason = reason ?? .unresolvedChainHop(member)
+                    chainHops.append(member)
+                }
+            }
+        } else if let selectedTag, let detour = nodes[selectedTag]?.detour {
+            // Legacy detour chain: transport entry followed by the exit node.
             if !detour.isEmpty, let hops = resolveTransport(detour, live: live), !hops.isEmpty {
                 chainHops = hops + [selectedTag]
             } else {
