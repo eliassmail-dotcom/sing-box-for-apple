@@ -38,6 +38,16 @@ struct StudioSemanticHomeView: View {
             Text("КОНФИГУРАЦИЯ ПО СМЫСЛУ")
                 .font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
                 .padding(.top, 5)
+            entry(title: "Узлы", description: "Серверы и параметры подключения",
+                  icon: "server.rack",
+                  count: document.array("outbounds").filter {
+                      !["selector", "urltest", "chain", "direct", "block", "dns"].contains($0["type"] as? String ?? "")
+                  }.count) {
+                StudioNativeDetailView(title: "Узлы", path: "outbounds",
+                    value: document.array("outbounds").filter {
+                        !["selector", "urltest", "chain", "direct", "block", "dns"].contains($0["type"] as? String ?? "")
+                    })
+            }
             entry(title: "Группы узлов", description: "Состав, вложенные группы и фильтры",
                   icon: "rectangle.3.group", count: info.groups.count) {
                 StudioGroupListView(model: info)
