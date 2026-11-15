@@ -199,6 +199,13 @@ public struct SettingView: View {
     public var body: some View {
         FormView {
             Section {
+                #if os(iOS)
+                    FormNavigationLink {
+                        ConfigStudioView()
+                    } label: {
+                        Label("Config Studio · просмотр", systemImage: "square.stack.3d.up")
+                    }
+                #endif
                 Tabs.app.navigationLink
                 Tabs.core.navigationLink
                 #if !os(tvOS)
