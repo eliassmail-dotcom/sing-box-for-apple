@@ -132,7 +132,7 @@ public struct ConfigStudioView: View {
         let ruleSets = route["rule_set"] as? [Any] ?? []
         return VStack(spacing: 10) {
             HStack(spacing: 10) {
-                metric("Узлы", count: outbounds.filter { !["selector", "urltest", "chain"].contains($0["type"] as? String ?? "") }.count, icon: "server.rack")
+                metric("Узлы", count: outbounds.filter { !["selector", "urltest", "chain", "direct", "block", "dns"].contains($0["type"] as? String ?? "") }.count, icon: "server.rack")
                 metric("Группы", count: groups.count, icon: "rectangle.3.group")
                 metric("Туннели", count: endpoints.count, icon: "shield.lefthalf.filled")
             }
