@@ -175,9 +175,81 @@ public enum LXProfileOverrides {
     private static let whiteTags = ["Авто · Белые", "Авто · Только белые"]
 
     // This feature requires an LX kernel implementing priority_outbounds.
-    // Every compatible profile gets a dormant fallback group automatically.
-    // It is used ONLY when the user selects the mode from the Dashboard.
-    // The source subscription and the user's previous selector choice stay intact.
+    // Smart is built as ONE flat URLTest pool: direct members from the Base tier
+    // followed by White-only members. The Base leaf tags are the preferred tier.
+    //
+    // Do not nest the two source URLTest groups here. A parent priority group that
+    // wraps URLTest children can see only each child's currently selected leaf;
+    // that is not an aggregate health view of the child's full pool. In particular,
+    // a stale selected leaf can make Smart fall back to White while other Base nodes
+    // have successful probes. Flattening gives the Smart group direct health history
+    // for every candidate and lets the core enforce Base -> White -> Base recovery.
+    //
+    // The source subscription and its original groups remain unchanged. The generated
+    // Smart group is only selected when the user chooses it from the Dashboard.
+    private static func flattenedURLTestMembers(
+        _ rootTag: String,
+        in outbounds: [[String: Any]]
+    ) throws -> [String] {
+        var byTag: [String: [String: Any]] = [:]
+        for item in outbounds {
+            if let tag = item["tag"] as? String {
+                byTag[tag] = item
+            }
+        }
+
+        var result: [String] = []
+        var included = Set<String>()
+        var expandedGroups = Set<String>()
+        var activeGroups = Set<String>()
+
+        func visit(_ tag: String) throws {
+            guard let item = byTag[tag] else {
+                throw OverrideError.invalidOption("группа \(rootTag) ссылается на отсутствующий outbound \(tag)")
+            }
+            if (item["type"] as? String) == "urltest" {
+                guard !activeGroups.contains(tag) else {
+                    throw OverrideError.invalidOption("цикл вложенных URLTest-групп: \(tag)")
+                }
+                guard !expandedGroups.contains(tag) else { return }
+                activeGroups.insert(tag)
+                guard let members = item["outbounds"] as? [String], !members.isEmpty else {
+                    throw OverrideError.invalidOption("URLTest-группа \(tag) не содержит узлов")
+                }
+                for member in members {
+                    try visit(member)
+                }
+                activeGroups.remove(tag)
+                expandedGroups.insert(tag)
+                return
+            }
+            // Keep selectors atomic: their current manual selection remains
+            // authoritative. Chains and protocol outbounds are also leaf candidates.
+            if included.insert(tag).inserted {
+                result.append(tag)
+            }
+        }
+
+        try visit(rootTag)
+        return result
+    }
+
+    private static func smartMembers(
+        base: String,
+        white: String,
+        in outbounds: [[String: Any]]
+    ) throws -> (all: [String], preferred: [String]) {
+        let preferred = try flattenedURLTestMembers(base, in: outbounds)
+        let whiteMembers = try flattenedURLTestMembers(white, in: outbounds)
+        let preferredSet = Set(preferred)
+        let fallbackOnly = whiteMembers.filter { !preferredSet.contains($0) }
+        guard !preferred.isEmpty, !fallbackOnly.isEmpty else {
+            throw OverrideError.invalidOption("группы Базовая и Белые не содержат отдельных узлов для резервирования")
+        }
+        return (preferred + fallbackOnly, preferred)
+    }
+
+    // Every compatible profile gets a dormant Smart group automatically.
     public static func supportsWhiteFallback(_ source: String) -> Bool {
         guard let root = try? document(source),
               let outbounds = root["outbounds"] as? [[String: Any]] else { return false }
@@ -185,10 +257,11 @@ public enum LXProfileOverrides {
             guard (item["type"] as? String) == "urltest" else { return nil }
             return item["tag"] as? String
         })
-        return baseTags.contains(where: urltestTags.contains) &&
-               whiteTags.contains(where: urltestTags.contains) &&
-               outbounds.contains(where: { ($0["tag"] as? String) == "Стратегия" &&
-                   ($0["type"] as? String) == "selector" })
+        guard let base = baseTags.first(where: urltestTags.contains),
+              let white = whiteTags.first(where: urltestTags.contains),
+              outbounds.contains(where: { ($0["tag"] as? String) == "Стратегия" &&
+                  ($0["type"] as? String) == "selector" }) else { return false }
+        return (try? smartMembers(base: base, white: white, in: outbounds)) != nil
     }
 
     private static func addWhiteFallback(to root: inout [String: Any]) throws {
@@ -207,34 +280,77 @@ public enum LXProfileOverrides {
               }) else {
             throw OverrideError.invalidOption("для резервирования требуются группы Базовая, Белые и селектор Стратегия")
         }
-        // Profiles which already contain the generated group must not get duplicates.
-        if let existing = outbounds.first(where: { ($0["tag"] as? String) == preferredFallbackTag }) {
-            guard (existing["type"] as? String) == "urltest",
-                  (existing["outbounds"] as? [String]) == [base, white],
-                  (existing["priority_outbounds"] as? [String]) == [base] else {
+        let members = try smartMembers(base: base, white: white, in: outbounds)
+        let expectedMembers = members.all
+        let expectedPreferred = members.preferred
+
+        // Rebuild the previous nested implementation in-place. This is a known
+        // generated shape from earlier app versions, not a user-authored group.
+        if let existingIndex = outbounds.firstIndex(where: { ($0["tag"] as? String) == preferredFallbackTag }) {
+            let existing = outbounds[existingIndex]
+            let oldGeneratedShape =
+                (existing["type"] as? String) == "urltest" &&
+                (existing["outbounds"] as? [String]) == [base, white] &&
+                (existing["priority_outbounds"] as? [String]) == [base]
+            let newGeneratedShape =
+                (existing["type"] as? String) == "urltest" &&
+                (existing["outbounds"] as? [String]) == expectedMembers &&
+                (existing["priority_outbounds"] as? [String]) == expectedPreferred
+            guard oldGeneratedShape || newGeneratedShape else {
                 throw OverrideError.invalidOption("существующая резервная группа имеет несовместимую конфигурацию")
             }
-            return
+            if oldGeneratedShape {
+                outbounds.remove(at: existingIndex)
+            } else {
+                // Keep the already-correct group; still ensure the selector references it.
+                if var rootTags = outbounds[rootIndex]["outbounds"] as? [String],
+                   !rootTags.contains(preferredFallbackTag) {
+                    rootTags.append(preferredFallbackTag)
+                    outbounds[rootIndex]["outbounds"] = rootTags
+                }
+                root["outbounds"] = outbounds
+                return
+            }
         }
+
         guard var rootTags = outbounds[rootIndex]["outbounds"] as? [String] else {
             throw OverrideError.invalidOption("Стратегия не содержит список outbounds")
         }
-        // Keep original selection and route rules intact. The user opts into the new
-        // strategy from the Dashboard when the new group is visible.
-        rootTags.append(preferredFallbackTag)
+        if !rootTags.contains(preferredFallbackTag) {
+            rootTags.append(preferredFallbackTag)
+        }
         outbounds[rootIndex]["outbounds"] = rootTags
+
         let baseConfig = outbounds.first(where: { ($0["tag"] as? String) == base }) ?? [:]
+        let whiteConfig = outbounds.first(where: { ($0["tag"] as? String) == white }) ?? [:]
         var fallback: [String: Any] = [
             "type": "urltest",
             "tag": preferredFallbackTag,
-            "outbounds": [base, white],
+            "outbounds": expectedMembers,
             "mode": "least_test",
-            "priority_outbounds": [base],
+            "priority_outbounds": expectedPreferred,
             "interrupt_exist_connections": false,
         ]
-        for field in ["url", "interval", "idle_timeout"] {
+
+        // Use the Base group's timing and thresholds. Probe URLs from both tiers
+        // are merged (up to the core's three-endpoint limit) so neither tier is
+        // judged by an endpoint that existed only in the other tier.
+        for field in ["interval", "idle_timeout", "tolerance", "tolerance_percent", "min_hold", "passive_guard"] {
             if let value = baseConfig[field] { fallback[field] = value }
         }
+        var probeURLs: [String] = []
+        for config in [baseConfig, whiteConfig] {
+            let urls = config["urls"] as? [String] ?? (config["url"] as? String).map { [$0] } ?? []
+            for url in urls where !probeURLs.contains(url) && probeURLs.count < 3 {
+                probeURLs.append(url)
+            }
+        }
+        if probeURLs.count == 1 {
+            fallback["url"] = probeURLs[0]
+        } else if !probeURLs.isEmpty {
+            fallback["urls"] = probeURLs
+        }
+
         outbounds.append(fallback)
         root["outbounds"] = outbounds
     }
