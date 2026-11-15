@@ -186,6 +186,11 @@ public class ExtensionProfile: ObservableObject {
             return
         }
         guard let manager else { return }
+        guard FilePath.hasSharedContainer else {
+            throw NSError(domain: "SigningCompatibility", code: 1, userInfo: [
+                NSLocalizedDescriptionKey: "VPN requires a shared App Group. Re-sign the app and Packet Tunnel extension with matching App Group entitlements.",
+            ])
+        }
         try await fetchProfile()
         manager.isEnabled = true
         let alwaysOn = await SharedPreferences.alwaysOn.get()
@@ -325,10 +330,14 @@ public class ExtensionProfile: ObservableObject {
 
     public static func load() async throws -> ExtensionProfile? {
         let managers = try await NETunnelProviderManager.loadAllFromPreferences()
-        if managers.isEmpty {
-            return nil
-        }
-        let profile = ExtensionProfile(managers[0])
+        // Never bind this client to a stale or unrelated VPN after re-signing.
+        let expectedIDs = Set(AppConfiguration.packetTunnelBundleIDs)
+        guard let owned = managers.first(where: {
+            guard let proto = $0.protocolConfiguration as? NETunnelProviderProtocol,
+                  let provider = proto.providerBundleIdentifier else { return false }
+            return expectedIDs.contains(provider)
+        }) else { return nil }
+        let profile = ExtensionProfile(owned)
         if profile.status == .disconnected {
             schedulePromoteOOMDraft()
         }
@@ -336,6 +345,11 @@ public class ExtensionProfile: ObservableObject {
     }
 
     public static func install() async throws {
+        guard FilePath.hasSharedContainer else {
+            throw NSError(domain: "SigningCompatibility", code: 1, userInfo: [
+                NSLocalizedDescriptionKey: "Cannot install VPN: the main app and Packet Tunnel extension have no usable shared App Group. Check your signing profile.",
+            ])
+        }
         let manager = NETunnelProviderManager()
         manager.localizedDescription = Variant.applicationName
         let tunnelProtocol = NETunnelProviderProtocol()
