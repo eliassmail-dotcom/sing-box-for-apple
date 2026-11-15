@@ -69,13 +69,10 @@ public struct LocalGeneratorView: View {
                 Text("Настройки задаются переключателями, списками и меню. Изменения не затрагивают текущий VPN.")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
-                DisclosureGroup("Дополнительно · нестандартные переменные") {
-                    Text("Только для параметров, которым пока нет отдельного элемента интерфейса. Формат KEY=VALUE.")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                    TextEditor(text: $variables)
-                        .font(.system(.footnote, design: .monospaced))
-                        .frame(minHeight: 110, maxHeight: 240)
+                NavigationLink {
+                    StudioGeneratorExtrasView(variables: $variables)
+                } label: {
+                    Label("Дополнительные параметры", systemImage: "list.bullet.rectangle")
                 }
             }
 
@@ -179,13 +176,21 @@ public struct LocalGeneratorView: View {
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: UserDefaults.didChangeNotification)) { _ in
-            // Sync device-local GUI controls back into the isolated generator.
-            // Never alter a selected Profile or its running NetworkExtension.
-            variables = StudioGeneratorVariables.lines()
+            // Update the curated local settings without losing any extra
+            // variables that were entered on the advanced form.
+            mergeDeviceVariables()
         }
         .onChange(of: platform) { newValue in
             if newValue == "windows" { logLevel = "info" }
         }
+    }
+
+    private func mergeDeviceVariables() {
+        var current = (try? LocalGeneratorEngine.parseVariables(variables)) ?? [:]
+        let owned = Set(StudioGeneratorVariables.categories.flatMap { $0.fields.map(\.key) })
+        for key in owned { current.removeValue(forKey: key) }
+        current.merge(StudioGeneratorVariables.load(), uniquingKeysWith: { _, new in new })
+        variables = current.keys.sorted().map { "\($0)=\(current[$0] ?? "")" }.joined(separator: "\n")
     }
 
     /// Prevent saving a stale JSON after the user modifies any input field.
