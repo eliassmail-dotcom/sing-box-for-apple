@@ -274,7 +274,7 @@ private enum StudioLayer: Hashable {
 }
 
 /// Lossless snapshot; all unknown keys survive in raw JSON and in sections.
-private struct StudioDocument {
+struct StudioDocument {
     let raw: String
     let root: [String: Any]
 
@@ -355,7 +355,7 @@ private struct StudioDocument {
     }
 }
 
-private struct StudioCategory: Identifiable {
+struct StudioCategory: Identifiable {
     let path: String
     let title: String
     let subtitle: String
@@ -379,28 +379,28 @@ private struct StudioCategory: Identifiable {
             return object.keys.sorted().map { key in
                 let value = object[key]!
                 return StudioItem(id: "\(path).\(key)", title: key,
-                                  subtitle: StudioDocumentFormatter.summary(value), raw: value)
+                                  subtitle: StudioDocumentFormatter.summary(value, key: key), raw: value)
             }
         }
         return [StudioItem(id: path, title: title, subtitle: "", raw: raw)]
     }
 }
 
-private struct StudioItem: Identifiable {
+struct StudioItem: Identifiable {
     let id: String
     let title: String
     let subtitle: String
     let raw: Any
 }
 
-private enum StudioDocumentFormatter {
-    static func summary(_ value: Any) -> String {
+enum StudioDocumentFormatter {
+    static func summary(_ value: Any, key: String = "") -> String {
         if let array = value as? [Any] { return "\(array.count) элементов" }
         if let object = value as? [String: Any] {
             return (object["type"] as? String) ?? (object["action"] as? String) ?? "\(object.count) полей"
         }
         if let text = value as? String {
-            let safe = sanitized(text) as? String ?? "•••"
+            let safe = sanitized(text, key: key) as? String ?? "•••"
             return safe.count > 70 ? String(safe.prefix(70)) + "…" : safe
         }
         return String(describing: value)
@@ -519,7 +519,7 @@ private struct StudioJSONView: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity, alignment: .leading)
-            ScrollView(.horizontal) {
+            ScrollView([.vertical, .horizontal]) {
                 Text(safeContent)
                     .font(.system(size: 11, design: .monospaced))
                     .textSelection(.enabled)
