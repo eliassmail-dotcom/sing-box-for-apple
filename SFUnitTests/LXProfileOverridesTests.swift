@@ -166,8 +166,8 @@ final class LXProfileOverridesTests: XCTestCase {
         let root = try parsed(transformed)
         let outbounds = try XCTUnwrap(root["outbounds"] as? [[String: Any]])
         let reserve = try XCTUnwrap(outbounds.first(where: { ($0["tag"] as? String) == LXProfileOverrides.preferredFallbackTag }))
-        XCTAssertEqual(reserve["priority_outbounds"] as? [String], ["Авто · Базовая"])
-        XCTAssertEqual(reserve["outbounds"] as? [String], ["Авто · Базовая", "Авто · Белые"])
+        XCTAssertEqual(reserve["priority_outbounds"] as? [String], ["a"])
+        XCTAssertEqual(reserve["outbounds"] as? [String], ["a", "w"])
         XCTAssertEqual(reserve["interval"] as? String, "5s")
         XCTAssertEqual(reserve["interrupt_exist_connections"] as? Bool, false)
         let selector = try XCTUnwrap(outbounds.first(where: { ($0["tag"] as? String) == "Стратегия" }))
@@ -187,6 +187,67 @@ final class LXProfileOverridesTests: XCTestCase {
         XCTAssertEqual(onOutbounds.filter { ($0["tag"] as? String) == LXProfileOverrides.preferredFallbackTag }.count, 1)
         XCTAssertEqual(offOutbounds.filter { ($0["tag"] as? String) == LXProfileOverrides.preferredFallbackTag }.count, 1)
         XCTAssertEqual(try LXProfileOverrides.apply(source, profileID: 12, storedJSON: ""), transformed)
+    }
+
+    func testSmartFallbackFlattensNestedURLTestGroupsAndDeduplicatesTiers() throws {
+        let source = """
+        {"outbounds":[
+          {"type":"selector","tag":"Стратегия","outbounds":["Авто · Базовая","Авто · Белые"]},
+          {"type":"urltest","tag":"Авто · Базовая","outbounds":["base-a","Базовая подгруппа"],"url":"https://base.example/health","interval":"5s"},
+          {"type":"urltest","tag":"Базовая подгруппа","outbounds":["base-b","base-c"]},
+          {"type":"urltest","tag":"Авто · Белые","outbounds":["white-a","base-a"],"url":"https://white.example/health"},
+          {"type":"vless","tag":"base-a"}, {"type":"vless","tag":"base-b"},
+          {"type":"vless","tag":"base-c"}, {"type":"vless","tag":"white-a"}
+        ],"route":{"final":"Стратегия"}}
+        """
+        XCTAssertTrue(LXProfileOverrides.supportsWhiteFallback(source))
+        let root = try parsed(LXProfileOverrides.apply(source, profileID: 42, storedJSON: ""))
+        let outbounds = try XCTUnwrap(root["outbounds"] as? [[String: Any]])
+        let smart = try XCTUnwrap(outbounds.first {
+            ($0["tag"] as? String) == LXProfileOverrides.preferredFallbackTag
+        })
+        XCTAssertEqual(smart["outbounds"] as? [String], ["base-a", "base-b", "base-c", "white-a"])
+        XCTAssertEqual(smart["priority_outbounds"] as? [String], ["base-a", "base-b", "base-c"])
+        XCTAssertEqual(smart["mode"] as? String, "least_test")
+        XCTAssertEqual(smart["interval"] as? String, "5s")
+        XCTAssertEqual(
+            smart["urls"] as? [String],
+            ["https://base.example/health", "https://white.example/health"]
+        )
+        // Source groups are retained, but Smart no longer nests them.
+        XCTAssertEqual(
+            outbounds.first(where: { ($0["tag"] as? String) == "Авто · Базовая" })?["outbounds"] as? [String],
+            ["base-a", "Базовая подгруппа"]
+        )
+        XCTAssertEqual(
+            outbounds.first(where: { ($0["tag"] as? String) == "Авто · Белые" })?["outbounds"] as? [String],
+            ["white-a", "base-a"]
+        )
+    }
+
+    func testSmartFallbackMigratesPreviousNestedGeneratedGroup() throws {
+        let source = """
+        {"outbounds":[
+          {"type":"selector","tag":"Стратегия","outbounds":["Авто · Базовая","Авто · Белые","Авто · База → Белые"]},
+          {"type":"urltest","tag":"Авто · Базовая","outbounds":["a"]},
+          {"type":"urltest","tag":"Авто · Белые","outbounds":["w"]},
+          {"type":"urltest","tag":"Авто · База → Белые","outbounds":["Авто · Базовая","Авто · Белые"],"mode":"least_test","priority_outbounds":["Авто · Базовая"]},
+          {"type":"vless","tag":"a"}, {"type":"vless","tag":"w"}
+        ],"route":{"final":"Стратегия"}}
+        """
+        let root = try parsed(LXProfileOverrides.apply(source, profileID: 42, storedJSON: ""))
+        let outbounds = try XCTUnwrap(root["outbounds"] as? [[String: Any]])
+        let smartGroups = outbounds.filter {
+            ($0["tag"] as? String) == LXProfileOverrides.preferredFallbackTag
+        }
+        XCTAssertEqual(smartGroups.count, 1)
+        XCTAssertEqual(smartGroups.first?["outbounds"] as? [String], ["a", "w"])
+        XCTAssertEqual(smartGroups.first?["priority_outbounds"] as? [String], ["a"])
+        let selector = try XCTUnwrap(outbounds.first { ($0["tag"] as? String) == "Стратегия" })
+        XCTAssertEqual(
+            (selector["outbounds"] as? [String])?.filter { $0 == LXProfileOverrides.preferredFallbackTag }.count,
+            1
+        )
     }
 
     func testWhiteFallbackRequiresBothGroupsAndRootSelector() throws {
@@ -272,6 +333,8 @@ final class LXProfileOverridesTests: XCTestCase {
         let outbounds = try XCTUnwrap(root["outbounds"] as? [[String: Any]])
         let smart = try XCTUnwrap(outbounds.first(where: { ($0["tag"] as? String) == LXProfileOverrides.preferredFallbackTag }))
         XCTAssertEqual(smart["mode"] as? String, "least_test")
+        XCTAssertEqual(smart["outbounds"] as? [String], ["a", "b"])
+        XCTAssertEqual(smart["priority_outbounds"] as? [String], ["a"])
         XCTAssertEqual(smart["tolerance_percent"] as? Int, 30)
         XCTAssertEqual(smart["min_hold"] as? String, "30s")
         XCTAssertEqual(smart["urls"] as? [String], ["https://example.org/health", "https://example.net/health"])
