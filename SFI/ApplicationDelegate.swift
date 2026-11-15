@@ -113,8 +113,29 @@ class ApplicationDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCe
 
     @available(iOS 16.0, *)
     private nonisolated func registerFileProviderDomain() {
-        guard FilePath.hasSharedContainer else {
-            NSLog("File Provider registration skipped: no shared signed App Group")
+        guard FilePath.hasSharedContainer,
+              let group = AppConfiguration.resolvedAppGroupID,
+              let plugins = Bundle.main.builtInPlugInsURL,
+              let paths = try? FileManager.default.contentsOfDirectory(at: plugins, includingPropertiesForKeys: nil) else {
+            NSLog("File Provider registration skipped: no signed shared App Group")
+            return
+        }
+        // Info.plist is immutable after re-signing. Register only if the File Provider
+        // is signed for the same group AND its document-group plist value matches.
+        let canShare = paths.contains { path in
+            guard path.pathExtension == "appex",
+                  let bundle = Bundle(url: path),
+                  let extensionInfo = bundle.infoDictionary?["NSExtension"] as? [String: Any],
+                  extensionInfo["NSExtensionPointIdentifier"] as? String == "com.apple.fileprovider-nonui",
+                  extensionInfo["NSExtensionFileProviderDocumentGroup"] as? String == group else {
+                return false
+            }
+            return SignedEntitlements.stringArray(
+                "com.apple.security.application-groups", of: bundle
+            ).contains(group)
+        }
+        guard canShare else {
+            NSLog("File Provider registration skipped: document group differs from signed App Group")
             return
         }
         let domain = NSFileProviderDomain(

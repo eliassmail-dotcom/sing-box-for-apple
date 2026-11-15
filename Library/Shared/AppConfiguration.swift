@@ -8,10 +8,10 @@ public enum AppConfiguration {
         if let id = resolvedHostBundleID, !id.isEmpty {
             return id
         }
-        guard let value = Bundle.main.object(forInfoDictionaryKey: "BasePackageIdentifier") as? String else {
-            fatalError("Missing BasePackageIdentifier in Info.plist")
-        }
-        return value
+        // GBox may rewrite/remove custom Info.plist values.
+        return Bundle.main.object(forInfoDictionaryKey: "BasePackageIdentifier") as? String
+            ?? Bundle.main.bundleIdentifier
+            ?? "sing-box"
     }()
 
     public static let appGroupID: String = {
@@ -20,10 +20,8 @@ public enum AppConfiguration {
         if let id = resolvedAppGroupID {
             return id
         }
-        guard let value = Bundle.main.object(forInfoDictionaryKey: "AppGroupIdentifier") as? String else {
-            fatalError("Missing AppGroupIdentifier in Info.plist")
-        }
-        return value
+        // Empty means no entitled group; FilePath falls back safely to local storage.
+        return Bundle.main.object(forInfoDictionaryKey: "AppGroupIdentifier") as? String ?? ""
     }()
 
     /// Team ID is a signing entitlement, NEVER the prefix of an App Group.

@@ -59,7 +59,12 @@ public enum FilePath {
 
     #endif
 
-    public static var iCloudDirectory = FileManager.default.url(forUbiquityContainerIdentifier: nil)?.appendingPathComponent("Documents", isDirectory: true) ?? URL(string: "stub")!
+    public static var iCloudDirectory: URL {
+        // Never use an invalid placeholder URL when this signing profile has no iCloud entitlement.
+        FileManager.default.url(forUbiquityContainerIdentifier: nil)?
+            .appendingPathComponent("Documents", isDirectory: true)
+            ?? FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+    }
 }
 
 public extension URL {
