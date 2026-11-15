@@ -202,6 +202,20 @@ final class SelectedOutboundResolverTests: XCTestCase {
         XCTAssertEqual(result.status, .incomplete(.noSelection("Пустая")))
     }
 
+    func testCompactRouteNamesKeepOnlyCountryAndFlag() {
+        XCTAssertEqual(RouteNodePresentation.compactName("🇸🇪 Швеция (без рекламы)"), "🇸🇪 Швеция")
+        XCTAssertEqual(RouteNodePresentation.compactName("🇨🇭 Швейцария (Gemini)"), "🇨🇭 Швейцария")
+        XCTAssertEqual(RouteNodePresentation.compactName("C • 🇦🇹 Австрия (Gemini)"), "🇦🇹 Австрия")
+        XCTAssertEqual(RouteNodePresentation.compactName("🇳🇱 Нидерланды"), "🇳🇱 Нидерланды")
+    }
+
+    func testCompactRouteNamesPreserveUnknownNodes() {
+        XCTAssertEqual(RouteNodePresentation.compactName("Swiss"), "Swiss")
+        XCTAssertEqual(RouteNodePresentation.compactName("VLESS Node X"), "VLESS Node X")
+        XCTAssertNil(RouteNodePresentation.compactName(nil))
+        XCTAssertNil(RouteNodePresentation.compactName("  "))
+    }
+
     func testParsesRunningConfigJSON() throws {
         let json = """
         {
