@@ -16,11 +16,6 @@ public class ExtensionProfile: ObservableObject {
     private var connection: NEVPNConnection?
     private var observer: Any?
     private let isMock: Bool
-    // Prevent concurrent manual starts while the first request is still preparing.
-    private var startInProgress = false
-    public private(set) var lastStartAttemptID: String?
-    public private(set) var startRequestIssued = false
-    private var lastStartAttemptTime: Date?
 
     @Published public var status: NEVPNStatus
     @Published public var connectedDate: Date?
@@ -67,12 +62,6 @@ public class ExtensionProfile: ObservableObject {
                 self.connection = connection
                 self.status = connection.status
                 self.connectedDate = connection.connectedDate
-                if connection.status == .connected { self.startRequestIssued = false }
-                if let attempt = self.lastStartAttemptID,
-                   let startedAt = self.lastStartAttemptTime,
-                   Date().timeIntervalSince(startedAt) < 90 {
-                    LXStartupDiagnostics.record("app.status.\(connection.status.rawValue)", attempt: attempt)
-                }
                 if connection.status == .disconnected {
                     Self.schedulePromoteOOMDraft()
                 }
@@ -160,51 +149,19 @@ public class ExtensionProfile: ObservableObject {
         try await manager.saveToPreferences()
     }
 
-    // Do not rewrite Network Extension preferences if the effective settings are
-    // already persisted. A redundant save immediately before startVPNTunnel can
-    // invalidate the session snapshot during a cold start.
-    @discardableResult
-    private func applyProtocolConfiguration() async -> Bool {
+    private func applyProtocolConfiguration() async {
         #if !os(tvOS)
-            guard let protocolConfiguration = manager?.protocolConfiguration else { return false }
-            var changed = false
-            let includeAllNetworks = await SharedPreferences.includeAllNetworks.get()
-            if protocolConfiguration.includeAllNetworks != includeAllNetworks {
-                protocolConfiguration.includeAllNetworks = includeAllNetworks
-                changed = true
-            }
-            let excludeLocalNetworks = await SharedPreferences.excludeLocalNetworks.get()
-            if protocolConfiguration.excludeLocalNetworks != excludeLocalNetworks {
-                protocolConfiguration.excludeLocalNetworks = excludeLocalNetworks
-                changed = true
-            }
-            let enforceRoutes = await SharedPreferences.enforceRoutes.get()
-            if protocolConfiguration.enforceRoutes != enforceRoutes {
-                protocolConfiguration.enforceRoutes = enforceRoutes
-                changed = true
-            }
+            guard let protocolConfiguration = manager?.protocolConfiguration else { return }
+            protocolConfiguration.includeAllNetworks = await SharedPreferences.includeAllNetworks.get()
+            protocolConfiguration.excludeLocalNetworks = await SharedPreferences.excludeLocalNetworks.get()
+            protocolConfiguration.enforceRoutes = await SharedPreferences.enforceRoutes.get()
             if #available(iOS 16.4, macOS 13.3, *) {
-                let excludeAPNs = await SharedPreferences.excludeAPNs.get()
-                if protocolConfiguration.excludeAPNs != excludeAPNs {
-                    protocolConfiguration.excludeAPNs = excludeAPNs
-                    changed = true
-                }
-                let excludeCellularServices = await SharedPreferences.excludeCellularServices.get()
-                if protocolConfiguration.excludeCellularServices != excludeCellularServices {
-                    protocolConfiguration.excludeCellularServices = excludeCellularServices
-                    changed = true
-                }
+                protocolConfiguration.excludeAPNs = await SharedPreferences.excludeAPNs.get()
+                protocolConfiguration.excludeCellularServices = await SharedPreferences.excludeCellularServices.get()
             }
             if #available(iOS 17.4, macOS 14.4, *) {
-                let excludeDeviceCommunication = await SharedPreferences.excludeDeviceCommunication.get()
-                if protocolConfiguration.excludeDeviceCommunication != excludeDeviceCommunication {
-                    protocolConfiguration.excludeDeviceCommunication = excludeDeviceCommunication
-                    changed = true
-                }
+                protocolConfiguration.excludeDeviceCommunication = await SharedPreferences.excludeDeviceCommunication.get()
             }
-            return changed
-        #else
-            return false
         #endif
     }
 
@@ -220,20 +177,6 @@ public class ExtensionProfile: ObservableObject {
         try await connection.fetchLastDisconnectError()
     }
 
-    // Only retry a known transient error. Invalid/disabled configurations and
-    // ordinary routing failures should retain their original diagnostic.
-    private static func isTransientStartError(_ error: Error) -> Bool {
-        let nsError = error as NSError
-        if nsError.domain == NEVPNError.errorDomain {
-            return nsError.code == NEVPNError.configurationStale.rawValue ||
-                nsError.code == NEVPNError.configurationUnknown.rawValue ||
-                nsError.code == NEVPNError.configurationReadWriteFailed.rawValue
-        }
-        // iOS can report this generic packet-tunnel session error on a cold
-        // start before the just-installed extension is fully registered.
-        return nsError.domain == "NEVPNConnectionErrorDomainPlugin" && nsError.code == 7
-    }
-
     public func start() async throws {
         if isMock {
             status = .connecting
@@ -242,86 +185,25 @@ public class ExtensionProfile: ObservableObject {
             connectedDate = Date()
             return
         }
-        guard let manager, !startInProgress else { return }
-        startInProgress = true
-        defer { startInProgress = false }
-
-        let attempt = UUID().uuidString
-        lastStartAttemptID = attempt
-        startRequestIssued = false
-        lastStartAttemptTime = Date()
-        LXStartupDiagnostics.record("app.prepareProfile", attempt: attempt)
-        // Resolve the selected subscription BEFORE touching VPN preferences.
-        // This also prevents a long remote-profile read between save and start.
+        guard let manager else { return }
         try await fetchProfile()
-        var options = try await prepareStartOptions()
-        options["lxStartupAttemptID"] = NSString(string: attempt)
-        LXStartupDiagnostics.record("app.profileReady", attempt: attempt)
-
-        // Always read Apple's current manager snapshot before deciding if a
-        // preference write is necessary (also resolves configurationStale).
-        try await manager.loadFromPreferences()
-
-        var preferencesChanged = !manager.isEnabled
         manager.isEnabled = true
         let alwaysOn = await SharedPreferences.alwaysOn.get()
         let onDemandEnabled = await SharedPreferences.onDemandEnabled.get()
-        let desiredOnDemand = alwaysOn || onDemandEnabled
-        if manager.isOnDemandEnabled != desiredOnDemand {
-            manager.isOnDemandEnabled = desiredOnDemand
-            preferencesChanged = true
-        }
-        if desiredOnDemand {
-            // Rules can change in Settings independently of the enabled flag.
+        manager.isOnDemandEnabled = alwaysOn || onDemandEnabled
+        if manager.isOnDemandEnabled {
             await setOnDemandRules(useDefaultRules: alwaysOn)
-            preferencesChanged = true
         }
         if let proto = manager.protocolConfiguration as? NETunnelProviderProtocol {
             var config = proto.providerConfiguration ?? [:]
             if config.removeValue(forKey: "wasOnDemandEnabled") != nil {
                 proto.providerConfiguration = config
-                preferencesChanged = true
             }
         }
-        if await applyProtocolConfiguration() {
-            preferencesChanged = true
-        }
-
-        if preferencesChanged {
-            LXStartupDiagnostics.record("app.savePreferences", attempt: attempt)
-            try await manager.saveToPreferences()
-            try await manager.loadFromPreferences()
-        } else {
-            logger.debug("start VPN: using existing preferences without a redundant save")
-        }
-
-        LXStartupDiagnostics.record("app.requestTunnelStart", attempt: attempt)
-        startRequestIssued = true
-        do {
-            try manager.connection.startVPNTunnel(options: options)
-            LXStartupDiagnostics.record("app.startRequestAccepted", attempt: attempt)
-        } catch {
-            LXStartupDiagnostics.record("app.startRequestRejected", attempt: attempt)
-            guard Self.isTransientStartError(error) else { throw error }
-            let initialError = error as NSError
-            logger.warning(
-                "transient VPN start error, refreshing session once: domain=\(initialError.domain) code=\(initialError.code)"
-            )
-            // One bounded retry for Apple's transient first-start session race.
-            // Never retry if another request has already started the tunnel.
-            try await Task.sleep(nanoseconds: 450_000_000)
-            try await manager.loadFromPreferences()
-            switch manager.connection.status {
-            case .disconnected:
-                LXStartupDiagnostics.record("app.retryRequest", attempt: attempt)
-                try manager.connection.startVPNTunnel(options: options)
-                LXStartupDiagnostics.record("app.retryRequestAccepted", attempt: attempt)
-            case .connecting, .connected, .reasserting:
-                logger.debug("VPN is already starting/connected after preferences reload")
-            default:
-                throw error
-            }
-        }
+        await applyProtocolConfiguration()
+        try await manager.saveToPreferences()
+        let options = try await prepareStartOptions()
+        try manager.connection.startVPNTunnel(options: options)
     }
 
     public func reloadService() async throws {
@@ -455,9 +337,6 @@ public class ExtensionProfile: ObservableObject {
 
     public static func install() async throws {
         let manager = NETunnelProviderManager()
-        // Apple requires loading VPN preferences before the first save.
-        // A newly installed app has no saved configuration yet; that is OK.
-        try await manager.loadFromPreferences()
         manager.localizedDescription = Variant.applicationName
         let tunnelProtocol = NETunnelProviderProtocol()
         if Variant.useSystemExtension {
