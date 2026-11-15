@@ -5,14 +5,56 @@ class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
     let domain: NSFileProviderDomain
 
     private static let appGroupID: String = {
-        guard let value = Bundle.main.object(forInfoDictionaryKey: "AppGroupIdentifier") as? String else {
-            fatalError("Missing AppGroupIdentifier in Info.plist")
+        // Same priority as the main app: prefer the build-time group when still
+        // entitled under the current signature, then the intersection with the
+        // packet-tunnel extension's signed groups, then the single remaining
+        // usable group.
+        let ownGroups = SignedEntitlements.stringArray("com.apple.security.application-groups")
+        var candidates = ownGroups
+        if let peerGroups = peerBundleGroups(), !peerGroups.isEmpty {
+            candidates = Array(Set(candidates).intersection(Set(peerGroups)))
         }
-        return value
+        let usable = candidates
+            .filter { FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: $0) != nil }
+            .sorted()
+        if let preferred = Bundle.main.object(forInfoDictionaryKey: "AppGroupIdentifier") as? String,
+           !preferred.isEmpty, usable.contains(preferred) {
+            return preferred
+        }
+        if usable.count == 1 {
+            return usable[0]
+        }
+        return ""
     }()
 
+    /// Signed app groups of the packet-tunnel extension inside the host app.
+    private static func peerBundleGroups() -> [String]? {
+        var url = Bundle.main.bundleURL
+        var hostURL: URL?
+        while url.pathComponents.count > 1 {
+            url = url.deletingLastPathComponent()
+            if url.pathExtension == "app" {
+                hostURL = url
+                break
+            }
+        }
+        guard let hostURL, let plugins = Bundle(url: hostURL)?.builtInPlugInsURL,
+              let items = try? FileManager.default.contentsOfDirectory(at: plugins, includingPropertiesForKeys: nil) else {
+            return nil
+        }
+        for item in items where item.pathExtension == "appex" {
+            guard let info = Bundle(url: item)?.infoDictionary else { continue }
+            guard let ext = info["NSExtension"] as? [String: Any] else { continue }
+            guard ext["NSExtensionPointIdentifier"] as? String == "com.apple.networkextension.packet-tunnel" else { continue }
+            guard let bundle = Bundle(url: item) else { continue }
+            return SignedEntitlements.stringArray("com.apple.security.application-groups", of: bundle)
+        }
+        return nil
+    }
+
     private var workingDirectory: URL {
-        let groupURL = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: Self.appGroupID)!
+        let groupURL = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: Self.appGroupID)
+            ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
         return groupURL
             .appendingPathComponent("Library", isDirectory: true)
             .appendingPathComponent("Caches", isDirectory: true)
