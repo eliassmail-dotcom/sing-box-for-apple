@@ -11,17 +11,18 @@ public struct ResilienceCard: View {
     @State private var resiliencePreset = LXResiliencePreset.custom.rawValue
     @State private var resilienceProfileID: Int64 = -1
     @State private var resilienceSupported = false
+    @State private var resilienceLoading = true
+    @State private var resilienceUnavailableReason: String?
     @State private var applyingResiliencePreset: String?
 
     public init() {}
 
     public var body: some View {
-        Group {
-            if resilienceSupported {
-                DashboardCardView(title: "") {
-                    resilienceSelector
-                }
-            }
+        // The card must remain mounted even before its async profile probe
+        // completes. A conditional empty Group prevents the initial .task
+        // from reliably starting, leaving the enabled card invisible forever.
+        DashboardCardView(title: "") {
+            resilienceSelector
         }
         .task { await loadResiliencePreset() }
         .onReceive(environments.selectedProfileUpdate) { _ in
@@ -38,9 +39,9 @@ public struct ResilienceCard: View {
             HStack(spacing: 8) {
                 DashboardCardHeader(icon: "shield.lefthalf.filled", title: "Устойчивость")
                 Spacer(minLength: 4)
-                if applyingResiliencePreset != nil {
+                if resilienceLoading || applyingResiliencePreset != nil {
                     ProgressView().controlSize(.small)
-                } else if resiliencePreset == LXResiliencePreset.custom.rawValue {
+                } else if resilienceSupported && resiliencePreset == LXResiliencePreset.custom.rawValue {
                     Text("Мои настройки")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
@@ -51,9 +52,19 @@ public struct ResilienceCard: View {
                 resilienceButton("Баланс", preset: .balance)
                 resilienceButton("Антиблок", preset: .antiblock)
             }
-            Text("Смена профиля применяет настройки VPN и может прервать текущие соединения.")
-                .font(.caption2)
-                .foregroundStyle(.secondary)
+            if resilienceLoading {
+                Text("Проверяем поддержку настроек устойчивости…")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            } else if let resilienceUnavailableReason {
+                Text(resilienceUnavailableReason)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            } else {
+                Text("Смена профиля применяет настройки VPN и может прервать текущие соединения.")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
         }
     }
 
@@ -82,29 +93,39 @@ public struct ResilienceCard: View {
                 .strokeBorder(selected ? Color.accentColor : Color.urlTestNeutral,
                               lineWidth: selected ? 2 : 1)
         )
-        .disabled(applyingResiliencePreset != nil || selected)
+        .disabled(resilienceLoading || !resilienceSupported || applyingResiliencePreset != nil || selected)
         .accessibilityLabel(selected ? "\(title), выбран" : title)
     }
 
     private func loadResiliencePreset() async {
         guard applyingResiliencePreset == nil else { return }
+        resilienceLoading = true
+        defer { resilienceLoading = false }
         do {
             let id = await SharedPreferences.selectedProfileID.get()
             guard let selectedProfile = try await ProfileManager.get(id) else {
                 resilienceSupported = false
+                resilienceUnavailableReason = "Выбранный профиль не найден."
                 return
             }
             let content = try await selectedProfile.readAsync()
             let supports = !(try LXProfileOverrides.inspect(content)).urlTests.isEmpty
             let store = try LXOverridesStore.decode(await SharedPreferences.lxOverridesJSON.get())
             let currentID = await SharedPreferences.selectedProfileID.get()
-            guard id == currentID else { return }
+            guard id == currentID else {
+                resilienceSupported = false
+                resilienceUnavailableReason = "Профиль изменился. Открой Dashboard ещё раз."
+                return
+            }
             resilienceProfileID = id
             resilienceSupported = supports
+            resilienceUnavailableReason = supports ? nil :
+                "В исходном профиле нет URLTest-групп для настройки устойчивости."
             resiliencePreset = store.profiles[String(id)]?.resiliencePreset ??
                 LXResiliencePreset.custom.rawValue
         } catch {
             resilienceSupported = false
+            resilienceUnavailableReason = "Не удалось прочитать настройки: \(error.localizedDescription)"
         }
     }
 
