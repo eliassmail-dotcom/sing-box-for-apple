@@ -38,27 +38,29 @@ struct StudioSemanticModel {
                              excludePatterns: Self.stringList(item["exclude"]),
                              raw: item)
         }
-        let groupIndex = Dictionary(definitions.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+        let sources = definitions.map {
+            StudioNodeGroupComposer.Definition(id: $0.id,
+                                               members: $0.memberOrder,
+                                               include: $0.includePatterns,
+                                               exclude: $0.excludePatterns)
+        }
+        // Dynamic matching is over actual proxy/node names, never over
+        // technical selector groups or DIRECT/BLOCK. Explicit destinations
+        // remain available through the member list.
+        let filterable = outbounds.compactMap { item -> String? in
+            guard let tag = item["tag"] as? String else { return nil }
+            let type = item["type"] as? String ?? ""
+            return ["selector", "urltest", "direct", "block", "dns"].contains(type) ? nil : tag
+        }
         groups = definitions.map { group in
             var result = group
-            var emitted = Set<String>()
-            var missing = Set<String>()
-            var cyclic = Set<String>()
-            func expand(_ tag: String, path: Set<String>) {
-                if path.contains(tag) { cyclic.insert(tag); return }
-                if let nested = groupIndex[tag] {
-                    for member in nested.memberOrder {
-                        expand(member, path: path.union([tag]))
-                    }
-                } else if knownTags.contains(tag) {
-                    if emitted.insert(tag).inserted { result.resolvedNodes.append(tag) }
-                } else {
-                    missing.insert(tag)
-                }
-            }
-            expand(group.id, path: [])
-            result.unresolvedReferences = missing.sorted()
-            result.cycles = cyclic.sorted()
+            let resolved = StudioNodeGroupComposer.resolve(
+                group: group.id, definitions: sources,
+                knownTags: Array(knownTags), filterableNodes: filterable
+            )
+            result.resolvedNodes = resolved.nodes
+            result.unresolvedReferences = resolved.missing
+            result.cycles = resolved.cycles
             return result
         }
         strategies = definitions.map { group in
