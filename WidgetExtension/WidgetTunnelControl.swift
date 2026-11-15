@@ -3,17 +3,37 @@ import NetworkExtension
 
 enum WidgetAppConfiguration {
     static let packageName: String = {
-        guard let value = Bundle.main.object(forInfoDictionaryKey: "BasePackageIdentifier") as? String else {
-            fatalError("Missing BasePackageIdentifier in Info.plist")
+        // Prefer the actual host bundle identifier: re-signing tools rename bundle
+        // identifiers to match the signing profile; the widget lives inside the host
+        // app, so resolve the host the same way the main app does.
+        if let id = resolvedHostBundleID, !id.isEmpty {
+            return id
         }
-        return value
+        return Bundle.main.object(forInfoDictionaryKey: "BasePackageIdentifier") as? String ?? Bundle.main.bundleIdentifier ?? ""
     }()
 
     static let appGroupID: String = {
-        guard let value = Bundle.main.object(forInfoDictionaryKey: "AppGroupIdentifier") as? String else {
-            fatalError("Missing AppGroupIdentifier in Info.plist")
+        // Same priority as the main app: prefer the build-time group when still
+        // entitled under the current signature, then the intersection of the
+        // host app / packet-tunnel extension signed groups, then the single
+        // remaining usable group. The widget, the app and the tunnel must all
+        // resolve the same group.
+        let ownGroups = SignedEntitlements.stringArray("com.apple.security.application-groups")
+        var candidates = ownGroups
+        if let peerGroups = peerBundleGroups(), !peerGroups.isEmpty {
+            candidates = Array(Set(candidates).intersection(Set(peerGroups)))
         }
-        return value
+        let usable = candidates
+            .filter { FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: $0) != nil }
+            .sorted()
+        if let preferred = Bundle.main.object(forInfoDictionaryKey: "AppGroupIdentifier") as? String,
+           !preferred.isEmpty, usable.contains(preferred) {
+            return preferred
+        }
+        if usable.count == 1 {
+            return usable[0]
+        }
+        return ""
     }()
 
     static var widgetControlKind: String {
@@ -23,6 +43,67 @@ enum WidgetAppConfiguration {
     static var widgetNextNodeKind: String {
         "\(packageName).widget.NextNode"
     }
+
+    /// Locate the actual signed tunnel extension after re-signing.
+    static var packetTunnelBundleID: String? {
+        var url = Bundle.main.bundleURL
+        while url.pathComponents.count > 1 {
+            url = url.deletingLastPathComponent()
+            if url.pathExtension == "app" { break }
+        }
+        guard url.pathExtension == "app",
+              let plugins = Bundle(url: url)?.builtInPlugInsURL,
+              let items = try? FileManager.default.contentsOfDirectory(at: plugins, includingPropertiesForKeys: nil) else { return nil }
+        for item in items where item.pathExtension == "appex" {
+            guard let bundle = Bundle(url: item),
+                  let ext = bundle.infoDictionary?["NSExtension"] as? [String: Any],
+                  ext["NSExtensionPointIdentifier"] as? String == "com.apple.networkextension.packet-tunnel" else { continue }
+            return bundle.bundleIdentifier
+        }
+        return nil
+    }
+
+    /// Signed app groups of the packet-tunnel extension inside the host app
+    /// (the widget is an .appex inside PlugIns, so the host is reachable by
+    /// walking up the bundle tree).
+    private static func peerBundleGroups() -> [String]? {
+        var url = Bundle.main.bundleURL
+        var hostURL: URL?
+        while url.pathComponents.count > 1 {
+            url = url.deletingLastPathComponent()
+            if url.pathExtension == "app" {
+                hostURL = url
+                break
+            }
+        }
+        guard let hostURL, let plugins = Bundle(url: hostURL)?.builtInPlugInsURL,
+              let items = try? FileManager.default.contentsOfDirectory(at: plugins, includingPropertiesForKeys: nil) else {
+            return nil
+        }
+        for item in items where item.pathExtension == "appex" {
+            guard let info = Bundle(url: item)?.infoDictionary else { continue }
+            guard let ext = info["NSExtension"] as? [String: Any] else { continue }
+            guard ext["NSExtensionPointIdentifier"] as? String == "com.apple.networkextension.packet-tunnel" else { continue }
+            guard let bundle = Bundle(url: item) else { continue }
+            return SignedEntitlements.stringArray("com.apple.security.application-groups", of: bundle)
+        }
+        return nil
+    }
+
+    private static let resolvedHostBundleID: String? = {
+        let bundle = Bundle.main
+        if bundle.bundleURL.pathExtension == "appex" {
+            var url = bundle.bundleURL
+            while url.pathComponents.count > 1 {
+                url = url.deletingLastPathComponent()
+                if url.pathExtension == "app" {
+                    return Bundle(url: url)?.bundleIdentifier
+                }
+            }
+            return nil
+        }
+        return bundle.bundleIdentifier
+    }()
 }
 
 extension NEVPNStatus {
@@ -162,20 +243,12 @@ enum WidgetTunnelControl {
                   let provider = tunnel.providerBundleIdentifier else { return false }
             return expectedIDs.contains(provider)
         }
-        // Fallback for unusual IPA resigning: only use the stable serverAddress
-        // when exactly one candidate exists. Never guess between two sing-box
-        // installations or send our widget command to an unrelated VPN.
-        let candidates: [NETunnelProviderManager]
-        if !exact.isEmpty {
-            candidates = exact
-        } else {
-            let fallback = managers.filter { manager in
-                guard let tunnel = manager.protocolConfiguration as? NETunnelProviderProtocol,
-                      let provider = tunnel.providerBundleIdentifier else { return false }
-                return tunnel.serverAddress == "sing-box" &&
-                    (provider.hasSuffix(".extension") || provider.hasSuffix(".system"))
-            }
-            candidates = fallback.count == 1 ? fallback : []
+        // Never select unrelated or stale VPN profiles by a generic serverAddress.
+        // The embedded extension's real signed Bundle ID is authoritative.
+        let candidates = managers.filter { manager in
+            guard let tunnel = manager.protocolConfiguration as? NETunnelProviderProtocol,
+                  let provider = tunnel.providerBundleIdentifier else { return false }
+            return expectedIDs.contains(provider) || provider == WidgetAppConfiguration.packetTunnelBundleID
         }
         if connectedOnly {
             return candidates.first(where: { $0.connection.status == .connected })
