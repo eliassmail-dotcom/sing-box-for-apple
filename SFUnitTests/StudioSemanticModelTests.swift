@@ -118,6 +118,27 @@ final class StudioSemanticModelTests: XCTestCase {
         XCTAssertEqual(unknown.source, .unmapped)
     }
 
+    func testQuarantinedNodesAreLastResortAcrossAllTiers() {
+        typealias Tier = StudioSemanticModel.PriorityTier
+        typealias Sample = StudioTierEligibility.NodeSample
+        let tiers = [
+            Tier(id: "base", group: "Base", check: .urlTest, minimumHealthy: 1,
+                 quarantine: .deprioritize, returnAfterRecovery: true),
+            Tier(id: "white", group: "White", check: .urlTest, minimumHealthy: 1,
+                 quarantine: .exclude, returnAfterRecovery: true)
+        ]
+        let quarantinedBase = [Sample(tag: "bad", urlTestOK: true,
+                                       realDialOK: nil, quarantined: true)]
+        let availableWhite = [Sample(tag: "white", urlTestOK: true,
+                                     realDialOK: nil, quarantined: false)]
+        XCTAssertEqual(StudioTierEligibility.activeTier(tiers: tiers, samplesByGroup: [
+            "Base": quarantinedBase, "White": availableWhite
+        ]), "white")
+        XCTAssertEqual(StudioTierEligibility.activeTier(tiers: tiers, samplesByGroup: [
+            "Base": quarantinedBase, "White": []
+        ]), "base")
+    }
+
     func testNLevelHealthChecksAreIndependentOfURLTestAndQuarantine() {
         typealias Tier = StudioSemanticModel.PriorityTier
         typealias Sample = StudioTierEligibility.NodeSample
