@@ -65,6 +65,16 @@ public final class DashboardCardConfiguration: ObservableObject {
         if (saved.contains("strategyNode") || saved.contains("geminiNode")) && !cards.contains(.strategyMode) {
             cards.append(.strategyMode)
         }
+        // One-time migration for existing installations: make the new
+        // Resilience widget visible next to Strategy without re-enabling it
+        // after a user explicitly hides it in Dashboard Items. Persisting the
+        // new card's order is the migration marker; order is loaded second.
+        let previousOrder = await SharedPreferences.dashboardCardOrder.get()
+        if cards.contains(.strategyMode) &&
+            !cards.contains(.resilience) &&
+            !previousOrder.contains(DashboardCard.resilience.rawValue) {
+            cards.append(.resilience)
+        }
         if !cards.contains(.profile) {
             cards.append(.profile)
         }
