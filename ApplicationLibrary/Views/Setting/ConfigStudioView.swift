@@ -376,10 +376,28 @@ struct StudioCategory: Identifiable {
                 let dictionary = value as? [String: Any] ?? [:]
                 let name = dictionary["tag"] as? String ?? dictionary["name"] as? String
                 let type = dictionary["type"] as? String ?? dictionary["action"] as? String ?? ""
-                return StudioItem(id: "\(path)[\(offset)]",
-                                  title: name ?? (type.isEmpty ? "Запись \(offset + 1)" : "\(offset + 1). \(type)"),
-                                  subtitle: name == nil ? StudioDocumentFormatter.summary(value) : type,
-                                  raw: value)
+                let isRule = path == "route.rules" || path == "dns.rules"
+                let destination = dictionary["outbound"] as? String ?? dictionary["server"] as? String
+                let ruleTitle: String = {
+                    guard isRule else { return "" }
+                    if let destination {
+                        return "№\(offset + 1) · \(destination)"
+                    }
+                    return "Правило №\(offset + 1)"
+                }()
+                let conditionKeys = dictionary.keys.filter {
+                    !StudioHumanFields.destinationFields.contains($0) && $0 != "type" && $0 != "mode"
+                }.sorted()
+                let ruleDescription = conditionKeys.prefix(3).map {
+                    StudioHumanFields.label($0)
+                }.joined(separator: " · ")
+                return StudioItem(
+                    id: "\(path)[\(offset)]",
+                    title: name ?? (isRule ? ruleTitle : (type.isEmpty ? "Запись \(offset + 1)" : "№\(offset + 1) · \(StudioHumanFields.kind(type))")),
+                    subtitle: isRule ? (ruleDescription.isEmpty ? StudioHumanFields.action(type) : ruleDescription)
+                        : (name == nil ? StudioDocumentFormatter.summary(value) : StudioHumanFields.kind(type)),
+                    raw: value
+                )
             }
         }
         if let object = raw as? [String: Any] {
