@@ -64,12 +64,15 @@ struct StudioSemanticModel {
             return result
         }
         strategies = definitions.map { group in
-            Strategy(id: group.id,
-                     kind: group.type == "selector" ? .manual : .automatic,
-                     algorithm: group.raw["mode"] as? String,
-                     participantGroups: group.memberGroups,
-                     participantNodes: group.explicitNodes,
-                     verifiedPriorityLevels: [], raw: group.raw)
+            let primary = group.raw["priority_outbounds"] as? [String] ?? []
+            return Strategy(id: group.id,
+                            kind: group.type == "selector" ? .manual : .automatic,
+                            algorithm: group.raw["mode"] as? String,
+                            participantGroups: group.memberGroups,
+                            participantNodes: group.explicitNodes,
+                            priorityOutbounds: primary,
+                            fallbackOutbounds: group.memberOrder.filter { !primary.contains($0) },
+                            verifiedPriorityLevels: [], raw: group.raw)
         }
 
         let servers = dns["servers"] as? [[String: Any]] ?? []
@@ -196,11 +199,14 @@ struct StudioSemanticModel {
         let algorithm: String?
         let participantGroups: [String]
         let participantNodes: [String]
+        let priorityOutbounds: [String]
+        let fallbackOutbounds: [String]
         let verifiedPriorityLevels: [PriorityTier]
         let raw: [String: Any]
 
         var readableKind: String {
             if kind == .manual { return "Ручной выбор" }
+            if !priorityOutbounds.isEmpty { return "Авто · приоритет и резерв" }
             guard let algorithm else { return "Автоматический выбор · режим ядра" }
             return StudioHumanFields.mode(algorithm)
         }
