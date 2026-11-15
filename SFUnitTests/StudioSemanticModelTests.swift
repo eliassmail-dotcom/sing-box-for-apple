@@ -104,6 +104,25 @@ final class StudioSemanticModelTests: XCTestCase {
         XCTAssertTrue(race.matchesEvaluatedResponse)
     }
 
+    func testHundredsOfDNSRulesRemainTraceableAfterGrouping() throws {
+        var rules: [[String: Any]] = []
+        for i in 0..<222 {
+            rules.append(["domain_suffix": ["rule\(i).example.org"],
+                          "action": i % 11 == 0 ? "evaluate" : "route",
+                          "server": i.isMultiple(of: 2) ? "dnsdirect1" : "proxydns1"])
+        }
+        let object: [String: Any] = [
+            "route": ["final": "direct"],
+            "dns": ["final": "dnsdirect1", "rules": rules]
+        ]
+        let data = try JSONSerialization.data(withJSONObject: object)
+        let doc = try StudioDocument(content: String(decoding: data, as: UTF8.self))
+        let model = StudioSemanticModel(document: doc)
+        XCTAssertLessThan(model.dnsPolicies.count, 222)
+        XCTAssertEqual(model.dnsPolicies.flatMap(\.indices).sorted(), Array(0..<222))
+        XCTAssertEqual((doc.root["dns"] as? [String: Any])?["rules"] as? [[String: Any]] != nil, true)
+    }
+
     func testAddressGroupsLinkOnlyExactMatchingCriteria() throws {
         let model = try load()
         let youtube = try XCTUnwrap(model.addressPolicies.first { $0.title == "youtube.com" })
