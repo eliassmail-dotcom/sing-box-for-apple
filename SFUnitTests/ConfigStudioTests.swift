@@ -86,6 +86,9 @@ final class ConfigStudioTests: XCTestCase {
     func testNativeScalarDisplayRedactsSecretsAndSeparatesBooleanFromNumeric() {
         XCTAssertEqual(StudioHumanFields.display("abcdefgh", key: "password"), "••••••")
         XCTAssertEqual(StudioHumanFields.display("client-uuid", key: "uuid"), "••••••")
+        XCTAssertTrue(StudioDocumentFormatter.isSensitiveKey("private_key"))
+        XCTAssertTrue(StudioDocumentFormatter.isSensitiveKey("subscription_token"))
+        XCTAssertFalse(StudioDocumentFormatter.isSensitiveKey("domain_suffix"))
         XCTAssertEqual(StudioHumanFields.display(NSNumber(value: 175), key: "tolerance"), "175 мс")
         XCTAssertTrue(StudioHumanFields.isBoolean(NSNumber(value: true)))
         XCTAssertFalse(StudioHumanFields.isBoolean(NSNumber(value: 1)))
