@@ -46,12 +46,6 @@ public struct ConfigStudioView: View {
                     }
                     categories(document)
                     NavigationLink {
-                        StudioJSONView(title: "Весь JSON", content: document.raw)
-                    } label: {
-                        studioRow(icon: "curlybraces.square", title: "Полный JSON", subtitle: "Все поля, включая неизвестные · секреты скрыты", count: nil)
-                    }
-                    .buttonStyle(.plain)
-                    NavigationLink {
                         StudioLocalVariablesView()
                     } label: {
                         studioRow(icon: "slider.horizontal.3", title: "Параметры генератора", subtitle: "Локальные переменные для новых профилей", count: nil)
@@ -88,6 +82,19 @@ public struct ConfigStudioView: View {
                 }
                 .disabled(isLoading)
                 .accessibilityLabel("Обновить конфигурацию")
+            }
+            ToolbarItem(placement: .navigationBarTrailing) {
+                if let document {
+                    Menu {
+                        NavigationLink {
+                            StudioJSONView(title: "Технический JSON", content: document.raw)
+                        } label: {
+                            Label("Технический JSON", systemImage: "curlybraces")
+                        }
+                    } label: {
+                        Image(systemName: "ellipsis.circle")
+                    }
+                }
             }
         }
         .task { await reload() }
@@ -453,7 +460,7 @@ enum StudioDocumentFormatter {
     }
 }
 
-private struct StudioCategoryView: View {
+struct StudioCategoryView: View {
     let category: StudioCategory
     @State private var query = ""
 
@@ -473,7 +480,7 @@ private struct StudioCategoryView: View {
             Section("Элементы · \(category.items.count)") {
                 ForEach(filtered) { item in
                     NavigationLink {
-                        StudioJSONView(title: item.title, content: StudioDocumentFormatter.pretty(item.raw, key: item.title), isSanitized: true)
+                        StudioNativeDetailView(title: item.title, path: item.id, value: item.raw)
                     } label: {
                         VStack(alignment: .leading, spacing: 4) {
                             Text(item.title).font(.subheadline.weight(.medium))
@@ -488,19 +495,29 @@ private struct StudioCategoryView: View {
                     }
                 }
             }
-            Section {
-                NavigationLink("JSON раздела") {
-                    StudioJSONView(title: category.title, content: StudioDocumentFormatter.pretty(category.raw), isSanitized: true)
-                }
-            }
         }
         .navigationTitle(category.title)
         .navigationBarTitleDisplayMode(.inline)
         .searchable(text: $query, prompt: "Найти в разделе")
+        .toolbar {
+            ToolbarItem(placement: .navigationBarTrailing) {
+                Menu {
+                    NavigationLink {
+                        StudioJSONView(title: category.title,
+                                       content: StudioDocumentFormatter.pretty(category.raw),
+                                       isSanitized: true)
+                    } label: {
+                        Label("Технический JSON", systemImage: "curlybraces")
+                    }
+                } label: {
+                    Image(systemName: "ellipsis.circle")
+                }
+            }
+        }
     }
 }
 
-private struct StudioJSONView: View {
+struct StudioJSONView: View {
     let title: String
     let content: String
     var isSanitized = false
