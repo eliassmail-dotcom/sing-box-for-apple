@@ -10,7 +10,7 @@ final class StudioSemanticModelTests: XCTestCase {
         {"type": "vless", "tag": "node-a", "server":"server-a.invalid", "server_port": 443},
         {"type": "vless", "tag": "node-b", "server":"server-b.invalid", "server_port": 443},
         {"type": "selector", "tag": "США", "outbounds":["node-a"]},
-        {"type": "urltest", "tag": "Основные", "outbounds":["node-b","США"], "mode":"failover"},
+        {"type": "urltest", "tag": "Основные", "outbounds":["node-b","США"], "mode":"least_test", "priority_outbounds":["node-b"]},
         {"type": "selector", "tag": "Комбинированная", "outbounds":["node-a","Основные"],
          "include":["EU"], "exclude":["blocked"]},
         {"type": "selector", "tag": "Цикл", "outbounds":["Цикл"]}
@@ -82,8 +82,10 @@ final class StudioSemanticModelTests: XCTestCase {
     func testStrategiesAreNotTechnicalGroupsAndHaveNoFabricatedTiers() throws {
         let model = try load()
         let smart = try XCTUnwrap(model.strategies.first { $0.id == "Основные" })
-        XCTAssertEqual(smart.readableKind, "Резервирование")
+        XCTAssertEqual(smart.readableKind, "Авто · приоритет и резерв")
         XCTAssertTrue(smart.verifiedPriorityLevels.isEmpty)
+        XCTAssertEqual(smart.priorityOutbounds, ["node-b"])
+        XCTAssertEqual(smart.fallbackOutbounds, ["США"])
         XCTAssertEqual(smart.participantGroups, ["США"])
         let manual = try XCTUnwrap(model.strategies.first { $0.id == "США" })
         XCTAssertEqual(manual.readableKind, "Ручной выбор")
