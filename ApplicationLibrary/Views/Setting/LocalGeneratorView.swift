@@ -60,13 +60,23 @@ public struct LocalGeneratorView: View {
                     .frame(minHeight: 70, maxHeight: 130)
             }
 
-            Section("Переменные генератора · KEY=VALUE") {
-                TextEditor(text: $variables)
-                    .font(.system(.footnote, design: .monospaced))
-                    .frame(minHeight: 130, maxHeight: 250)
-                Text("Все параметры v1.4.48r2: EXCLUDE_NODES, WHITE_NODES, GEMINI_NODES, TEST_*, DNS_*, NET_*, SELECTOR_INTERRUPT и другие. Отсутствующие переменные получают исходные значения генератора. Токены доступа Яндекс-функции для локального формирования не требуются.")
+            Section("Параметры генератора") {
+                NavigationLink {
+                    StudioLocalVariablesView()
+                } label: {
+                    Label("Фильтры узлов, проверки и DNS", systemImage: "slider.horizontal.3")
+                }
+                Text("Настройки задаются переключателями, списками и меню. Изменения не затрагивают текущий VPN.")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
+                DisclosureGroup("Дополнительно · нестандартные переменные") {
+                    Text("Только для параметров, которым пока нет отдельного элемента интерфейса. Формат KEY=VALUE.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                    TextEditor(text: $variables)
+                        .font(.system(.footnote, design: .monospaced))
+                        .frame(minHeight: 110, maxHeight: 240)
+                }
             }
 
             Section("Вариант выходного JSON") {
@@ -118,7 +128,7 @@ public struct LocalGeneratorView: View {
                     Task { await generate() }
                 } label: {
                     HStack {
-                        Label("Сгенерировать JSON", systemImage: "curlybraces")
+                        Label("Подготовить профиль", systemImage: "slider.horizontal.3")
                         Spacer()
                         if isGenerating { ProgressView() }
                     }
@@ -128,9 +138,11 @@ public struct LocalGeneratorView: View {
                     Text("Источник: \(resultOrigin) · узлов VLESS: \(resultNodes)")
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                    TextEditor(text: .constant(resultJSON))
-                        .font(.system(.caption2, design: .monospaced))
-                        .frame(minHeight: 180, maxHeight: 320)
+                    NavigationLink {
+                        StudioGeneratedPreviewView(content: resultJSON)
+                    } label: {
+                        Label("Посмотреть состав профиля", systemImage: "rectangle.3.group")
+                    }
                     if #available(iOS 16.0, *), let exportURL {
                         ShareLink(item: exportURL) {
                             Label("Экспортировать JSON", systemImage: "square.and.arrow.up")
@@ -162,11 +174,14 @@ public struct LocalGeneratorView: View {
         .navigationBarTitleDisplayMode(.inline)
         .alert($alert)
         .onAppear {
-            // Client-owned nonsecret Yandex variables are a separate overlay
-            // for the local generator, not the active VPN profile.
             if variables.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 variables = StudioGeneratorVariables.lines()
             }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UserDefaults.didChangeNotification)) { _ in
+            // Sync device-local GUI controls back into the isolated generator.
+            // Never alter a selected Profile or its running NetworkExtension.
+            variables = StudioGeneratorVariables.lines()
         }
         .onChange(of: platform) { newValue in
             if newValue == "windows" { logLevel = "info" }
