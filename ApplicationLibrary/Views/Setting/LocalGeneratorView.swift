@@ -161,6 +161,13 @@ public struct LocalGeneratorView: View {
         .navigationTitle("Локальный генератор")
         .navigationBarTitleDisplayMode(.inline)
         .alert($alert)
+        .onAppear {
+            // Client-owned nonsecret Yandex variables are a separate overlay
+            // for the local generator, not the active VPN profile.
+            if variables.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                variables = StudioGeneratorVariables.lines()
+            }
+        }
         .onChange(of: platform) { newValue in
             if newValue == "windows" { logLevel = "info" }
         }
