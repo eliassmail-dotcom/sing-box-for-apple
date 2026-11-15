@@ -82,7 +82,7 @@ struct StudioSemanticHomeView: View {
         title: String, description: String, icon: String,
         count: Int?, @ViewBuilder destination: () -> Destination
     ) -> some View {
-        NavigationLink(destination: destination) {
+        NavigationLink { destination() } label: {
             HStack(spacing: 12) {
                 Image(systemName: icon)
                     .foregroundStyle(.tint)
@@ -150,8 +150,8 @@ private struct StudioGroupDetailsView: View {
     var body: some View {
         List {
             Section {
-                LabeledContent("Состав", value: group.composition)
-                LabeledContent("Узлов после раскрытия", value: "\(group.resolvedNodes.count)")
+                StudioLabelValue("Состав", value: group.composition)
+                StudioLabelValue("Узлов после раскрытия", value: "\(group.resolvedNodes.count)")
             }
             if !group.explicitNodes.isEmpty {
                 Section("Выбраны вручную") {
@@ -238,7 +238,7 @@ private struct StudioStrategyDetailsView: View {
     var body: some View {
         List {
             Section("Способ выбора") {
-                LabeledContent("Алгоритм", value: strategy.readableKind)
+                StudioLabelValue("Алгоритм", value: strategy.readableKind)
             }
             if !strategy.participantGroups.isEmpty {
                 Section("Используемые группы") {
@@ -261,9 +261,12 @@ private struct StudioStrategyDetailsView: View {
                 }
             }
             Section("Дополнительные параметры") {
-                StudioNativeDetailView(title: strategy.id, path: "strategy",
-                                       value: strategy.raw)
-                    .frame(minHeight: 220)
+                NavigationLink {
+                    StudioNativeDetailView(title: strategy.id, path: "strategy",
+                                           value: strategy.raw)
+                } label: {
+                    Label("Все параметры стратегии", systemImage: "slider.horizontal.3")
+                }
             }
         }
         .navigationTitle(strategy.id)
@@ -276,7 +279,7 @@ private struct StudioDNSOverviewView: View {
     var body: some View {
         List {
             Section("DNS по умолчанию") {
-                LabeledContent("Сервер", value: model.defaultDNS ?? "Не задан")
+                StudioLabelValue("Сервер", value: model.defaultDNS ?? "Не задан")
             }
             Section("DNS-серверы · \(model.dnsServers.count)") {
                 ForEach(model.dnsServers) { server in
@@ -326,8 +329,8 @@ private struct StudioDNSPolicyDetailsView: View {
     var body: some View {
         List {
             Section("Назначение") {
-                LabeledContent("Действие", value: StudioHumanFields.action(policy.action))
-                if let server = policy.server { LabeledContent("DNS-сервер", value: server) }
+                StudioLabelValue("Действие", value: StudioHumanFields.action(policy.action))
+                if let server = policy.server { StudioLabelValue("DNS-сервер", value: server) }
                 if policy.race { Label("Параллельная обработка ответов", systemImage: "arrow.triangle.branch") }
                 if policy.speculative { Label("Предварительное разрешение", systemImage: "bolt") }
                 if policy.matchesEvaluatedResponse { Label("Проверка ответа DNS", systemImage: "checkmark.shield") }
@@ -362,8 +365,8 @@ private struct StudioAddressPolicyListView: View {
     var body: some View {
         List {
             Section("Общие настройки") {
-                LabeledContent("Маршрут", value: model.defaultRoute ?? "Не указан")
-                LabeledContent("DNS", value: model.defaultDNS ?? "Не указан")
+                StudioLabelValue("Маршрут", value: model.defaultRoute ?? "Не указан")
+                StudioLabelValue("DNS", value: model.defaultDNS ?? "Не указан")
             }
             Section("Группы адресов и исключения") {
                 ForEach(filtered) { item in
@@ -403,15 +406,15 @@ private struct StudioAddressPolicyDetailsView: View {
                 }
             }
             Section("Маршрутизация") {
-                LabeledContent("Указанные назначения",
+                StudioLabelValue("Указанные назначения",
                                value: policy.destinations.isEmpty ? "Не найдены" : policy.destinations.joined(separator: ", "))
-                LabeledContent("Правила №",
+                StudioLabelValue("Правила №",
                                value: policy.routeRules.map { String($0 + 1) }.joined(separator: ", "))
             }
             Section("DNS") {
-                LabeledContent("Указанные серверы",
+                StudioLabelValue("Указанные серверы",
                                value: policy.dnsTargets.isEmpty ? "Нет точного совпадения условий" : policy.dnsTargets.joined(separator: ", "))
-                LabeledContent("DNS-правила №",
+                StudioLabelValue("DNS-правила №",
                                value: policy.dnsRules.map { String($0 + 1) }.joined(separator: ", "))
                 Text("В 1.1 эти связи показываются из JSON без изменения политики. Автоматическое переключение DNS вслед за новым маршрутом поддерживается в модели редактора.")
                     .font(.footnote).foregroundStyle(.secondary)
@@ -439,10 +442,10 @@ private struct StudioDefaultPolicyView: View {
     var body: some View {
         Form {
             Section("Фактическая конфигурация") {
-                LabeledContent("Маршрут по умолчанию", value: model.defaultRoute ?? "Не указан")
-                LabeledContent("DNS по умолчанию", value: model.defaultDNS ?? "Не указан")
+                StudioLabelValue("Маршрут по умолчанию", value: model.defaultRoute ?? "Не указан")
+                StudioLabelValue("DNS по умолчанию", value: model.defaultDNS ?? "Не указан")
                 if let client = model.defaultHTTPClient {
-                    LabeledContent("Служебная загрузка", value: client)
+                    StudioLabelValue("Служебная загрузка", value: client)
                 }
             }
             Section {
@@ -466,7 +469,7 @@ private struct StudioDefaultPolicyView: View {
                         }
                     }
                 }
-                LabeledContent("Будет использован DNS",
+                StudioLabelValue("Будет использован DNS",
                                value: association.dns ?? "Не определён")
                 if association.source == .unmapped {
                     Text("Для этого выхода DNS не сопоставлен. Пока используется общий DNS; это не подтверждение корректной связки.")
@@ -519,6 +522,24 @@ private struct StudioAdditionalSettingsView: View {
         }
         .navigationTitle("Дополнительно")
         .navigationBarTitleDisplayMode(.inline)
+    }
+}
+private struct StudioLabelValue: View {
+    let title: String
+    let value: String
+    init(_ title: String, value: String) {
+        self.title = title
+        self.value = value
+    }
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 10) {
+            Text(title).font(.subheadline)
+            Spacer(minLength: 10)
+            Text(value).font(.subheadline).foregroundStyle(.secondary)
+                .multilineTextAlignment(.trailing)
+                .textSelection(.enabled)
+        }
+        .padding(.vertical, 3)
     }
 }
 #endif
