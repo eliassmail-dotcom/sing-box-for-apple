@@ -7,9 +7,6 @@ import SwiftUI
 @MainActor
 public struct StrategyModeCard: View {
     @EnvironmentObject private var commandClient: CommandClient
-    @Environment(\.scenePhase) private var scenePhase
-    @StateObject private var strategyOutbound = OutboundResolverModel(rootTag: "Стратегия")
-    @StateObject private var geminiOutbound = OutboundResolverModel(rootTag: "Gemini")
     @State private var alert: AlertState?
     @State private var switchingMode: StrategyModeSpec?
 
@@ -19,7 +16,7 @@ public struct StrategyModeCard: View {
         Group {
             if let strategyGroup {
                 DashboardCardView(title: "") {
-                    VStack(alignment: .leading, spacing: 12) {
+                    VStack(alignment: .leading, spacing: 10) {
                         DashboardCardHeader(icon: "wand.and.stars", title: "Режим")
 
                         // Primary strategy first: full width and separate Base/White
@@ -55,36 +52,9 @@ public struct StrategyModeCard: View {
                                 .foregroundStyle(.orange)
                         }
 
-                        Divider()
-                        VStack(alignment: .leading, spacing: 12) {
-                            currentOutboundRow(
-                                title: "Основной маршрут",
-                                symbol: "network",
-                                result: strategyOutbound.result
-                            )
-                            if geminiGroup != nil {
-                                currentOutboundRow(
-                                    title: "Gemini",
-                                    symbol: "sparkles",
-                                    result: geminiOutbound.result
-                                )
-                            }
-                        }
                     }
                 }
-                .onAppear {
-                    // Bind independently of whether a node has resolved: otherwise
-                    // nil result hides the view and the subscription never starts.
-                    strategyOutbound.bind(to: commandClient)
-                    geminiOutbound.bind(to: commandClient)
-                }
                 .alert($alert)
-                .onChangeCompat(of: scenePhase) { phase in
-                    guard phase == .active else { return }
-                    // Pick up Control Center node changes even if a group push
-                    // was missed while the main app was inactive.
-                    commandClient.refreshGroups()
-                }
             }
         }
     }
@@ -137,9 +107,9 @@ public struct StrategyModeCard: View {
                     .font(.caption.monospacedDigit())
                     .accessibilityElement(children: .combine)
                 }
-                .frame(maxWidth: .infinity, minHeight: 38, alignment: .leading)
+                .frame(maxWidth: .infinity, minHeight: 36, alignment: .leading)
                 .padding(.horizontal, 12)
-                .padding(.vertical, 8)
+                .padding(.vertical, 6)
                 .contentShape(Rectangle())
             } else {
                 HStack(spacing: 6) {
@@ -160,9 +130,9 @@ public struct StrategyModeCard: View {
                         Text("—").font(.caption).foregroundStyle(.secondary)
                     }
                 }
-                .frame(maxWidth: .infinity, minHeight: 38, alignment: .leading)
+                .frame(maxWidth: .infinity, minHeight: 36, alignment: .leading)
                 .padding(.horizontal, 10)
-                .padding(.vertical, 8)
+                .padding(.vertical, 6)
                 .contentShape(Rectangle())
             }
         }
@@ -179,54 +149,6 @@ public struct StrategyModeCard: View {
                 .strokeBorder(isActive ? Color.accentColor : Color.urlTestNeutral, lineWidth: isActive ? 2 : 1)
         )
         .animation(.easeOut(duration: 0.12), value: isActive)
-    }
-
-    private func currentOutboundRow(title: String, symbol: String, result: ResolvedOutbound?) -> some View {
-        HStack(alignment: .top, spacing: 10) {
-            Image(systemName: symbol)
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-                .frame(width: 18)
-            VStack(alignment: .leading, spacing: 4) {
-                Text(title)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                HStack(alignment: .firstTextBaseline, spacing: 6) {
-                    Text(nodeDescription(result))
-                        .font(.subheadline.weight(.medium))
-                        .lineLimit(2)
-                        .truncationMode(.middle)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                    if let delay = result?.latencyMs, delay > 0 {
-                        Text("\(delay) мс")
-                            .font(.caption.monospacedDigit().weight(.semibold))
-                            .foregroundColor(delayColor(Int(delay)))
-                            .fixedSize()
-                    }
-                }
-                if let result, case .incomplete = result.status {
-                    Text("Маршрут определён не полностью")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                }
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .accessibilityElement(children: .combine)
-    }
-
-    private func nodeDescription(_ result: ResolvedOutbound?) -> String {
-        guard let result else { return "Определяем узел…" }
-        if result.chainHops.count > 1 {
-            return result.chainHops.joined(separator: " → ")
-        }
-        return result.selectedTag ?? "Нет данных о выбранном узле"
-    }
-
-    private func delayColor(_ delay: Int) -> Color {
-        if delay < 200 { return .urlTestGood }
-        if delay < 500 { return .orange }
-        return .red
     }
 
     private var strategyGroup: OutboundGroup? {

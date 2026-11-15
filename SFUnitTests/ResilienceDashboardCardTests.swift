@@ -5,6 +5,7 @@ import XCTest
 final class ResilienceDashboardCardTests: XCTestCase {
     func testResilienceIsIndependentCardImmediatelyAfterStrategyByDefault() {
         let cards = DashboardCard.defaultOrder
+        XCTAssertEqual(cards.first, .currentRoutes)
         guard let modeIndex = cards.firstIndex(of: .strategyMode) else {
             return XCTFail("Strategy card missing from Dashboard")
         }
@@ -14,6 +15,7 @@ final class ResilienceDashboardCardTests: XCTestCase {
     }
 
     func testResilienceIsNotPairedWithTrafficOrStatusWidgets() {
+        XCTAssertNil(DashboardCard.currentRoutes.pairGroup)
         XCTAssertNil(DashboardCard.resilience.pairGroup)
         XCTAssertTrue(DashboardCard.groupIntoRows([.strategyMode, .resilience]).allSatisfy {
             $0.count == 1

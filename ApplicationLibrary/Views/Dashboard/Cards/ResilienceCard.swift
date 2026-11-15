@@ -78,9 +78,9 @@ public struct ResilienceCard: View {
                 .foregroundStyle(.primary)
                 .lineLimit(1)
                 .minimumScaleFactor(0.75)
-                .frame(maxWidth: .infinity, minHeight: 38)
+                .frame(maxWidth: .infinity, minHeight: 36)
                 .padding(.horizontal, 7)
-                .padding(.vertical, 8)
+                .padding(.vertical, 6)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -93,7 +93,7 @@ public struct ResilienceCard: View {
                 .strokeBorder(selected ? Color.accentColor : Color.urlTestNeutral,
                               lineWidth: selected ? 2 : 1)
         )
-        .disabled(resilienceLoading || !resilienceSupported || applyingResiliencePreset != nil || selected)
+        .disabled(resilienceLoading || !resilienceSupported || applyingResiliencePreset != nil)
         .accessibilityLabel(selected ? "\(title), выбран" : title)
     }
 

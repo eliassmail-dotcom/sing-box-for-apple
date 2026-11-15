@@ -85,6 +85,17 @@ public struct ResolvedOutbound: Hashable {
     public let latencyMs: UInt16?
     public let latencyMeasuredAt: Date?
     public let status: Status
+
+    /// Final user-facing node: for a chain this is the exit node, not the
+    /// chain outbound tag or its first transport hop.
+    public var displayNodeTag: String? {
+        chainHops.last ?? selectedTag
+    }
+
+    /// True for native LX chains and legacy detour-based chains.
+    public var isChained: Bool {
+        selectedType == "chain" || chainHops.count > 1
+    }
 }
 
 public struct SelectedOutboundResolver: Hashable {

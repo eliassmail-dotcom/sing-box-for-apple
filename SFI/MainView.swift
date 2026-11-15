@@ -529,23 +529,22 @@ struct MainView: View {
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
-                .fixedSize()
         }
 
         private var statusText: Text {
             switch profile.status {
             case .disconnected:
-                return Text("Stopped")
+                return Text("Отключено")
             case .connecting:
-                return Text("Starting")
+                return Text("Подключение")
             case .connected:
-                return Text("Started")
+                return Text("Подключено")
             case .reasserting:
-                return Text("Reasserting")
+                return Text("Восстановление")
             case .disconnecting:
-                return Text("Stopping")
+                return Text("Отключение")
             default:
-                return Text("Unknown")
+                return Text("Неизвестно")
                     .foregroundColor(.red)
             }
         }

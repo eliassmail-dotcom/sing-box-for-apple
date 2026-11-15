@@ -40,6 +40,8 @@ final class SelectedOutboundResolverTests: XCTestCase {
         XCTAssertEqual(result.status, .resolved)
         XCTAssertEqual(result.groupPath, ["Стратегия", "Пулы", "Пул B"])
         XCTAssertEqual(result.selectedTag, "🇩🇪 Германия")
+        XCTAssertEqual(result.displayNodeTag, "🇩🇪 Германия")
+        XCTAssertFalse(result.isChained)
         XCTAssertEqual(result.selectedType, "vless")
         XCTAssertEqual(result.chainHops, [])
         XCTAssertEqual(result.latencyMs, 127)
@@ -79,6 +81,8 @@ final class SelectedOutboundResolverTests: XCTestCase {
         XCTAssertEqual(result.selectedTag, "C • 🇦🇹 Австрия (Gemini)")
         // Packet order: the transport entry first, the chained exit last.
         XCTAssertEqual(result.chainHops, ["🇩🇪 Германия", "C • 🇦🇹 Австрия (Gemini)"])
+        XCTAssertEqual(result.displayNodeTag, "C • 🇦🇹 Австрия (Gemini)")
+        XCTAssertTrue(result.isChained)
         // Latency of the exit node only; never the transport group's value.
         XCTAssertNil(result.latencyMs)
     }
@@ -117,6 +121,8 @@ final class SelectedOutboundResolverTests: XCTestCase {
         let before = resolver.resolve(rootTag: "Gemini", live: liveGroups(firstHop: "France"))
         XCTAssertEqual(before.status, .resolved)
         XCTAssertEqual(before.chainHops, ["France", "Swiss"])
+        XCTAssertEqual(before.displayNodeTag, "Swiss")
+        XCTAssertTrue(before.isChained)
         let after = resolver.resolve(rootTag: "Gemini", live: liveGroups(firstHop: "Netherlands"))
         XCTAssertEqual(after.status, .resolved)
         XCTAssertEqual(after.chainHops, ["Netherlands", "Swiss"])

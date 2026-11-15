@@ -8,6 +8,7 @@ public enum DashboardCard: String, CaseIterable, Identifiable, Codable, Hashable
     case downloadTraffic
     case httpProxy
     case clashMode
+    case currentRoutes
     case strategyMode
     case resilience
     case profile
@@ -19,23 +20,25 @@ public enum DashboardCard: String, CaseIterable, Identifiable, Codable, Hashable
     public var title: LocalizedStringKey {
         switch self {
         case .status:
-            return "Status"
+            return "Состояние"
         case .connections:
-            return "Connections"
+            return "Подключения"
         case .uploadTraffic:
-            return "Upload"
+            return "Отправлено"
         case .downloadTraffic:
-            return "Download"
+            return "Получено"
         case .httpProxy:
-            return "System HTTP Proxy"
+            return "Системный HTTP-прокси"
         case .clashMode:
-            return "Clash Mode"
+            return "Маршрутизация Google"
+        case .currentRoutes:
+            return "Текущие маршруты"
         case .strategyMode:
-            return "Стратегия"
+            return "Режимы подключения"
         case .resilience:
             return "Устойчивость"
         case .profile:
-            return "Profile"
+            return "Конфигурация"
         }
     }
 
@@ -53,6 +56,8 @@ public enum DashboardCard: String, CaseIterable, Identifiable, Codable, Hashable
             return "network"
         case .clashMode:
             return "circle.grid.2x2.fill"
+        case .currentRoutes:
+            return "network"
         case .strategyMode:
             return "wand.and.stars"
         case .resilience:
@@ -68,7 +73,7 @@ public enum DashboardCard: String, CaseIterable, Identifiable, Codable, Hashable
             return .traffic
         case .status, .connections:
             return .statistics
-        case .httpProxy, .clashMode, .strategyMode, .resilience, .profile:
+        case .httpProxy, .clashMode, .currentRoutes, .strategyMode, .resilience, .profile:
             return nil
         }
     }
@@ -94,7 +99,7 @@ public enum DashboardCard: String, CaseIterable, Identifiable, Codable, Hashable
     }
 
     public static var defaultOrder: [DashboardCard] {
-        [.uploadTraffic, .downloadTraffic, .status, .connections, .httpProxy, .clashMode, .strategyMode, .resilience, .profile]
+        [.currentRoutes, .strategyMode, .resilience, .clashMode, .uploadTraffic, .downloadTraffic, .status, .connections, .httpProxy, .profile]
     }
 }
 
