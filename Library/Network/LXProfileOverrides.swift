@@ -190,7 +190,7 @@ public enum LXProfileOverrides {
     private static func flattenedURLTestMembers(
         _ rootTag: String,
         in outbounds: [[String: Any]]
-    ) throws -> [String] {
+    ) throws -> (tags: [String], probeURLs: [String]) {
         var byTag: [String: [String: Any]] = [:]
         for item in outbounds {
             if let tag = item["tag"] as? String {
@@ -202,6 +202,7 @@ public enum LXProfileOverrides {
         var included = Set<String>()
         var expandedGroups = Set<String>()
         var activeGroups = Set<String>()
+        var probeURLs: [String] = []
 
         func visit(_ tag: String) throws {
             guard let item = byTag[tag] else {
@@ -213,6 +214,10 @@ public enum LXProfileOverrides {
                 }
                 guard !expandedGroups.contains(tag) else { return }
                 activeGroups.insert(tag)
+                let urls = item["urls"] as? [String] ?? (item["url"] as? String).map { [$0] } ?? []
+                for url in urls where !probeURLs.contains(url) && probeURLs.count < 3 {
+                    probeURLs.append(url)
+                }
                 guard let members = item["outbounds"] as? [String], !members.isEmpty else {
                     throw OverrideError.invalidOption("URLTest-группа \(tag) не содержит узлов")
                 }
@@ -231,22 +236,25 @@ public enum LXProfileOverrides {
         }
 
         try visit(rootTag)
-        return result
+        return (result, probeURLs)
     }
 
     private static func smartMembers(
         base: String,
         white: String,
         in outbounds: [[String: Any]]
-    ) throws -> (all: [String], preferred: [String]) {
+    ) throws -> (all: [String], preferred: [String], probeURLs: [String]) {
         let preferred = try flattenedURLTestMembers(base, in: outbounds)
         let whiteMembers = try flattenedURLTestMembers(white, in: outbounds)
-        let preferredSet = Set(preferred)
-        let fallbackOnly = whiteMembers.filter { !preferredSet.contains($0) }
-        guard !preferred.isEmpty, !fallbackOnly.isEmpty else {
+        let preferredSet = Set(preferred.tags)
+        let fallbackOnly = whiteMembers.tags.filter { !preferredSet.contains($0) }
+        guard !preferred.tags.isEmpty, !fallbackOnly.isEmpty else {
             throw OverrideError.invalidOption("группы Базовая и Белые не содержат отдельных узлов для резервирования")
         }
-        return (preferred + fallbackOnly, preferred)
+        let probeURLs = Array((preferred.probeURLs + whiteMembers.probeURLs).reduce(into: [String]()) {
+            if !$0.contains($1) && $0.count < 3 { $0.append($1) }
+        })
+        return (preferred.tags + fallbackOnly, preferred.tags, probeURLs)
     }
 
     // Every compatible profile gets a dormant Smart group automatically.
@@ -330,13 +338,7 @@ public enum LXProfileOverrides {
         for field in ["interval", "idle_timeout", "tolerance", "tolerance_percent", "min_hold", "passive_guard"] {
             if let value = baseConfig[field] { fallback[field] = value }
         }
-        var probeURLs: [String] = []
-        for config in [baseConfig, whiteConfig] {
-            let urls = config["urls"] as? [String] ?? (config["url"] as? String).map { [$0] } ?? []
-            for url in urls where !probeURLs.contains(url) && probeURLs.count < 3 {
-                probeURLs.append(url)
-            }
-        }
+        let probeURLs = members.probeURLs
         if probeURLs.count == 1 {
             fallback["url"] = probeURLs[0]
         } else if !probeURLs.isEmpty {
