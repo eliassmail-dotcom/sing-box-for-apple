@@ -89,7 +89,15 @@ public final class DashboardCardConfiguration: ObservableObject {
         var order = saved.compactMap { migrateCardName($0) }.compactMap { DashboardCard(rawValue: $0) }
         let existingSet = Set(order)
         let newCards = DashboardCard.allCases.filter { !existingSet.contains($0) }
-        order.append(contentsOf: newCards)
+        if newCards.contains(.resilience),
+           let strategyIndex = order.firstIndex(of: .strategyMode) {
+            // Keep the new independent widget adjacent to the Strategy card,
+            // also when an existing user has a customized Dashboard order.
+            order.insert(.resilience, at: strategyIndex + 1)
+            order.append(contentsOf: newCards.filter { $0 != .resilience })
+        } else {
+            order.append(contentsOf: newCards)
+        }
         await SharedPreferences.dashboardCardOrder.set(order.map(\.rawValue))
         return order
     }
