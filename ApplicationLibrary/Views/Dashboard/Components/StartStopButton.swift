@@ -36,7 +36,6 @@ public struct StartStopButton: View {
         @EnvironmentObject private var profile: ExtensionProfile
         @State private var alert: AlertState?
         @State private var isStarting = false
-        @State private var sawConnecting = false
         #if os(iOS)
             @Environment(\.horizontalSizeClass) private var horizontalSizeClass
         #endif
@@ -87,60 +86,26 @@ public struct StartStopButton: View {
             #if os(iOS)
                 .modifier(PrimaryTintModifier())
             #endif
-                .disabled(!profile.status.isEnabled || isStarting)
+                .disabled(!profile.status.isEnabled)
                 .alert($alert)
                 .onChangeCompat(of: profile.status) { status in
                     Task { @MainActor in
-                        guard isStarting else { return }
-                        if status == .connecting || status == .reasserting {
-                            sawConnecting = true
-                        } else if status.isConnectedStrict {
-                            isStarting = false
-                            sawConnecting = false
-                            environments.commandClient.connect()
-                        } else if status == .disconnected {
-                            // startVPNTunnel() may have returned successfully,
-                            // but the Packet Tunnel can fail asynchronously.
-                            // Only report a genuine connecting -> disconnected
-                            // transition, not an old status notification while
-                            // loadFromPreferences() is still in progress.
-                            let failedDuringStartup = sawConnecting || profile.startRequestIssued
-                            isStarting = false
-                            sawConnecting = false
-                            if failedDuringStartup {
-                                let report = await startupFailureReport()
-                                // Keep the evidence even if iOS auto-reconnects.
-                                alert = AlertState(errorMessage: report)
+                        if isStarting {
+                            if status == .disconnected {
+                                isStarting = false
+                            } else if status.isConnectedStrict {
+                                isStarting = false
+                                environments.commandClient.connect()
                             }
                         }
                     }
                 }
         }
 
-        private func startupFailureReport() async -> String {
-            var details = "VPN отключился при первом подключении."
-            if #available(iOS 16.0, macOS 13.0, tvOS 17.0, *) {
-                do {
-                    try await profile.fetchLastDisconnectError()
-                } catch {
-                    let nsError = error as NSError
-                    details += "\nОшибка: \(nsError.domain) / \(nsError.code)\n\(nsError.localizedDescription)"
-                }
-            }
-            if let steps = LXStartupDiagnostics.latestStages(attempt: profile.lastStartAttemptID) {
-                details += "\nЭтапы запуска: \(steps)"
-            }
-            details += "\nСкопируйте текст ошибки для диагностики."
-            return details
-        }
-
         private nonisolated func switchProfile(_ isEnabled: Bool) async {
             do {
                 if isEnabled {
-                    await MainActor.run {
-                        isStarting = true
-                        sawConnecting = false
-                    }
+                    await MainActor.run { isStarting = true }
                     try await profile.start()
                 } else {
                     try await profile.stop()
@@ -149,13 +114,7 @@ public struct StartStopButton: View {
                 await MainActor.run {
                     isStarting = false
                     let action = isEnabled ? "start service" : "stop service"
-                    if isEnabled {
-                        let nsError = error as NSError
-                        let stages = LXStartupDiagnostics.latestStages(attempt: profile.lastStartAttemptID) ?? "нет данных"
-                        alert = AlertState(errorMessage: "Не удалось запустить VPN.\n\(nsError.domain) / \(nsError.code): \(nsError.localizedDescription)\nЭтапы: \(stages)")
-                    } else {
-                        alert = AlertState(action: action, error: error)
-                    }
+                    alert = AlertState(action: action, error: error)
                 }
             }
         }
