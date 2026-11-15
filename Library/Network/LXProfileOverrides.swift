@@ -273,12 +273,8 @@ public enum LXProfileOverrides {
             return item["tag"] as? String
         })
         guard let base = baseTags.first(where: urltestTags.contains),
-              let white = whiteTags.first(where: urltestTags.contains),
-              let rootIndex = outbounds.firstIndex(where: {
-                  ($0["tag"] as? String) == "Стратегия" &&
-                  ($0["type"] as? String) == "selector"
-              }) else {
-            throw OverrideError.invalidOption("для резервирования требуются группы Базовая, Белые и селектор Стратегия")
+              let white = whiteTags.first(where: urltestTags.contains) else {
+            throw OverrideError.invalidOption("для резервирования требуются группы Базовая и Белые")
         }
         let members = try smartMembers(base: base, white: white, in: outbounds)
         let expectedMembers = members.all
@@ -286,6 +282,8 @@ public enum LXProfileOverrides {
 
         // Rebuild the previous nested implementation in-place. This is a known
         // generated shape from earlier app versions, not a user-authored group.
+        // Always rebuild it AFTER the ordinary URLTest override pass, so a global
+        // round_robin/failover preference can never make this priority group invalid.
         if let existingIndex = outbounds.firstIndex(where: { ($0["tag"] as? String) == preferredFallbackTag }) {
             let existing = outbounds[existingIndex]
             let oldGeneratedShape =
@@ -299,21 +297,15 @@ public enum LXProfileOverrides {
             guard oldGeneratedShape || newGeneratedShape else {
                 throw OverrideError.invalidOption("существующая резервная группа имеет несовместимую конфигурацию")
             }
-            if oldGeneratedShape {
-                outbounds.remove(at: existingIndex)
-            } else {
-                // Keep the already-correct group; still ensure the selector references it.
-                if var rootTags = outbounds[rootIndex]["outbounds"] as? [String],
-                   !rootTags.contains(preferredFallbackTag) {
-                    rootTags.append(preferredFallbackTag)
-                    outbounds[rootIndex]["outbounds"] = rootTags
-                }
-                root["outbounds"] = outbounds
-                return
-            }
+            outbounds.remove(at: existingIndex)
         }
 
-        guard var rootTags = outbounds[rootIndex]["outbounds"] as? [String] else {
+        guard let rootIndex = outbounds.firstIndex(where: {
+            ($0["tag"] as? String) == "Стратегия" &&
+            ($0["type"] as? String) == "selector"
+        }), var rootTags = outbounds[rootIndex]["outbounds"] as? [String] else {
+            throw OverrideError.invalidOption("Стратегия не содержит список outbounds")
+        }
             throw OverrideError.invalidOption("Стратегия не содержит список outbounds")
         }
         if !rootTags.contains(preferredFallbackTag) {
