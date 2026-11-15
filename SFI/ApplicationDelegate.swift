@@ -113,6 +113,10 @@ class ApplicationDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCe
 
     @available(iOS 16.0, *)
     private nonisolated func registerFileProviderDomain() {
+        guard FilePath.hasSharedContainer else {
+            NSLog("File Provider registration skipped: no shared signed App Group")
+            return
+        }
         let domain = NSFileProviderDomain(
             identifier: NSFileProviderDomainIdentifier(AppConfiguration.fileProviderDomainID),
             displayName: "sing-box"
