@@ -314,15 +314,12 @@ public enum LXProfileOverrides {
         }), var rootTags = outbounds[rootIndex]["outbounds"] as? [String] else {
             throw OverrideError.invalidOption("Стратегия не содержит список outbounds")
         }
-            throw OverrideError.invalidOption("Стратегия не содержит список outbounds")
-        }
         if !rootTags.contains(preferredFallbackTag) {
             rootTags.append(preferredFallbackTag)
         }
         outbounds[rootIndex]["outbounds"] = rootTags
 
         let baseConfig = outbounds.first(where: { ($0["tag"] as? String) == base }) ?? [:]
-        let whiteConfig = outbounds.first(where: { ($0["tag"] as? String) == white }) ?? [:]
         var fallback: [String: Any] = [
             "type": "urltest",
             "tag": preferredFallbackTag,
