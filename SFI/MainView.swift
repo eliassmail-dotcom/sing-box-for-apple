@@ -485,31 +485,15 @@ struct MainView: View {
     private struct FABStartButton: View {
         @EnvironmentObject private var environments: ExtensionEnvironments
         @State private var alert: AlertState?
-        @State private var isStarting = false
 
         var body: some View {
             Button {
-                guard !isStarting, let profile = environments.extensionProfile else { return }
-                isStarting = true
+                guard let profile = environments.extensionProfile else { return }
                 Task {
-                    defer { isStarting = false }
                     do {
                         try await profile.start()
                     } catch {
-                        // The floating Start button is the primary iOS entrypoint.
-                        // Unlike StartStopButton, it previously dropped the NSError
-                        // code and all LX startup breadcrumbs (generic "internal error").
-                        let nsError = error as NSError
-                        let stages = LXStartupDiagnostics.latestStages(
-                            attempt: profile.lastStartAttemptID
-                        ) ?? "нет данных"
-                        let message = """
-                        Не удалось запустить VPN.
-                        Ошибка: \(nsError.domain) / \(nsError.code)
-                        \(nsError.localizedDescription)
-                        Этапы запуска: \(stages)
-                        """
-                        alert = AlertState(errorMessage: message)
+                        alert = AlertState(action: "start service", error: error)
                     }
                 }
             } label: {
@@ -522,7 +506,7 @@ struct MainView: View {
                     .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
             }
             .buttonStyle(.plain)
-            .disabled(environments.extensionProfile == nil || environments.emptyProfiles || isStarting)
+            .disabled(environments.extensionProfile == nil || environments.emptyProfiles)
             .alert($alert)
         }
 
