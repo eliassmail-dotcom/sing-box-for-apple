@@ -194,7 +194,7 @@ final class LXProfileOverridesTests: XCTestCase {
         {"outbounds":[
           {"type":"selector","tag":"Стратегия","outbounds":["Авто · Базовая","Авто · Белые"]},
           {"type":"urltest","tag":"Авто · Базовая","outbounds":["base-a","Базовая подгруппа"],"url":"https://base.example/health","interval":"5s"},
-          {"type":"urltest","tag":"Базовая подгруппа","outbounds":["base-b","base-c"]},
+          {"type":"urltest","tag":"Базовая подгруппа","outbounds":["base-b","base-c"],"url":"https://nested.example/health"},
           {"type":"urltest","tag":"Авто · Белые","outbounds":["white-a","base-a"],"url":"https://white.example/health"},
           {"type":"vless","tag":"base-a"}, {"type":"vless","tag":"base-b"},
           {"type":"vless","tag":"base-c"}, {"type":"vless","tag":"white-a"}
@@ -212,7 +212,7 @@ final class LXProfileOverridesTests: XCTestCase {
         XCTAssertEqual(smart["interval"] as? String, "5s")
         XCTAssertEqual(
             smart["urls"] as? [String],
-            ["https://base.example/health", "https://white.example/health"]
+            ["https://base.example/health", "https://nested.example/health", "https://white.example/health"]
         )
         // Source groups are retained, but Smart no longer nests them.
         XCTAssertEqual(
@@ -235,7 +235,12 @@ final class LXProfileOverridesTests: XCTestCase {
           {"type":"vless","tag":"a"}, {"type":"vless","tag":"w"}
         ],"route":{"final":"Стратегия"}}
         """
-        let root = try parsed(LXProfileOverrides.apply(source, profileID: 42, storedJSON: ""))
+        var settings = LXProfileSettings()
+        settings.urlTestDefault.mode = "round_robin"
+        settings.urlTestDefault.pool = 2
+        var store = LXOverridesStore()
+        store.profiles["42"] = settings
+        let root = try parsed(LXProfileOverrides.apply(source, profileID: 42, storedJSON: store.encode()))
         let outbounds = try XCTUnwrap(root["outbounds"] as? [[String: Any]])
         let smartGroups = outbounds.filter {
             ($0["tag"] as? String) == LXProfileOverrides.preferredFallbackTag
@@ -243,6 +248,9 @@ final class LXProfileOverridesTests: XCTestCase {
         XCTAssertEqual(smartGroups.count, 1)
         XCTAssertEqual(smartGroups.first?["outbounds"] as? [String], ["a", "w"])
         XCTAssertEqual(smartGroups.first?["priority_outbounds"] as? [String], ["a"])
+        XCTAssertEqual(smartGroups.first?["mode"] as? String, "least_test")
+        XCTAssertNil(smartGroups.first?["balancer"])
+        XCTAssertEqual(outbounds.first(where: { ($0["tag"] as? String) == "Авто · Базовая" })?["mode"] as? String, "round_robin")
         let selector = try XCTUnwrap(outbounds.first { ($0["tag"] as? String) == "Стратегия" })
         XCTAssertEqual(
             (selector["outbounds"] as? [String])?.filter { $0 == LXProfileOverrides.preferredFallbackTag }.count,
