@@ -160,6 +160,25 @@ final class StudioSemanticModelTests: XCTestCase {
         ]), "base")
     }
 
+    func testNoAutomaticReturnKeepsHealthyFallbackSelected() {
+        typealias Tier = StudioSemanticModel.PriorityTier
+        typealias Sample = StudioTierEligibility.NodeSample
+        let tiers = [
+            Tier(id: "base", group: "Base", check: .urlTest, minimumHealthy: 1,
+                 quarantine: .exclude, returnAfterRecovery: true),
+            Tier(id: "reserve", group: "Reserve", check: .urlTest, minimumHealthy: 1,
+                 quarantine: .exclude, returnAfterRecovery: false)
+        ]
+        let samples: [String: [Sample]] = [
+            "Base": [Sample(tag: "primary", urlTestOK: true, realDialOK: nil, quarantined: false)],
+            "Reserve": [Sample(tag: "backup", urlTestOK: true, realDialOK: nil, quarantined: false)]
+        ]
+        XCTAssertEqual(StudioTierEligibility.activeTier(tiers: tiers, samplesByGroup: samples),
+                       "base")
+        XCTAssertEqual(StudioTierEligibility.activeTier(tiers: tiers, samplesByGroup: samples,
+                                                        currentTierID: "reserve"), "reserve")
+    }
+
     func testNLevelHealthChecksAreIndependentOfURLTestAndQuarantine() {
         typealias Tier = StudioSemanticModel.PriorityTier
         typealias Sample = StudioTierEligibility.NodeSample
