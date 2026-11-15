@@ -24,7 +24,7 @@ final class SigningCompatibilityTests: XCTestCase {
         let xml = big(0xfade7171) + big(UInt32(8 + plist.count)) + Array(plist)
         let der = big(0xfade7172) + big(10) + [UInt8(0x30), UInt8(0x00)]
         let slots: [(UInt32, [UInt8])] =
-            (includeXML ? [(5, xml)] : []) + (includeDER ? [(7, der)] : [])
+            (includeXML ? [(UInt32(5), xml)] : []) + (includeDER ? [(UInt32(7), der)] : [])
 
         var blob = big(0xfade0cc0)
         let payloadLength = slots.reduce(0) { $0 + $1.1.count }
