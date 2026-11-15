@@ -488,8 +488,11 @@ struct StudioCategoryView: View {
 
     private var filtered: [StudioItem] {
         guard !query.isEmpty else { return category.items }
-        return category.items.filter { $0.title.localizedCaseInsensitiveContains(query) ||
-            $0.subtitle.localizedCaseInsensitiveContains(query) }
+        return category.items.filter { item in
+            item.title.localizedCaseInsensitiveContains(query) ||
+            item.subtitle.localizedCaseInsensitiveContains(query) ||
+            StudioDocumentFormatter.pretty(item.raw).localizedCaseInsensitiveContains(query)
+        }
     }
 
     var body: some View {
