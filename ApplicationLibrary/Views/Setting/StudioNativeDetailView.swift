@@ -462,9 +462,9 @@ struct StudioValueRow: View {
                 if StudioHumanFields.isBoolean(value) {
                     let state = (value as? NSNumber)?.boolValue == true
                     Label(state ? "Включено" : "Выключено",
-                          systemImage: state ? "checkmark.circle.fill" : "circle")
+                          systemImage: state ? "checkmark.circle" : "circle")
                         .font(.footnote)
-                        .foregroundStyle(state ? Color.green : Color.secondary)
+                        .foregroundStyle(.secondary)
                         .labelStyle(.titleAndIcon)
                 } else {
                     Text(StudioHumanFields.display(value, key: key))
