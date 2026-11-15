@@ -249,6 +249,26 @@ private struct StudioStrategyDetailsView: View {
         List {
             Section("Способ выбора") {
                 StudioLabelValue("Алгоритм", value: strategy.readableKind)
+                if let algorithm = strategy.algorithm, !strategy.priorityOutbounds.isEmpty {
+                    StudioLabelValue("Внутри уровня", value: StudioHumanFields.mode(algorithm))
+                }
+            }
+            if !strategy.priorityOutbounds.isEmpty {
+                Section("Очередь резервирования · 2 уровня LX") {
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text("1 · Приоритетные").font(.subheadline.weight(.semibold))
+                        Text(strategy.priorityOutbounds.joined(separator: ", "))
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text("2 · Резервные").font(.subheadline.weight(.semibold))
+                        Text(strategy.fallbackOutbounds.isEmpty ? "Не указаны" :
+                                strategy.fallbackOutbounds.joined(separator: ", "))
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                    Text("Это реальные уровни из priority_outbounds. При восстановлении доступного основного узла ядро возвращается к первому уровню.")
+                        .font(.footnote).foregroundStyle(.secondary)
+                }
             }
             if !strategy.participantGroups.isEmpty {
                 Section("Используемые группы") {
@@ -264,9 +284,9 @@ private struct StudioStrategyDetailsView: View {
                     }
                 }
             }
-            if strategy.verifiedPriorityLevels.isEmpty {
+            if strategy.verifiedPriorityLevels.isEmpty && strategy.priorityOutbounds.isEmpty {
                 Section {
-                    Text("Подтверждённая очередь резервирования в этом объекте не описана. Порядок outbounds в selector/urltest не равен приоритетам N-уровневой стратегии.")
+                    Text("Отдельная очередь резервирования здесь не задана. Обычный порядок участников selector/urltest не означает N уровней приоритета.")
                         .font(.footnote).foregroundStyle(.secondary)
                 }
             }
