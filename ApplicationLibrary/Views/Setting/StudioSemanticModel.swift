@@ -326,7 +326,16 @@ enum StudioTierEligibility {
     }
 
     static func activeTier(tiers: [StudioSemanticModel.PriorityTier],
-                           samplesByGroup: [String: [NodeSample]]) -> String? {
+                           samplesByGroup: [String: [NodeSample]],
+                           currentTierID: String? = nil) -> String? {
+        // Respect the current tier's explicit no-auto-return policy when it
+        // is still healthy. There is no silent promotion to a recovered tier.
+        if let currentTierID,
+           let current = tiers.first(where: { $0.id == currentTierID }),
+           !current.returnAfterRecovery,
+           evaluate(tier: current, samples: samplesByGroup[current.group] ?? []).meetsMinimum {
+            return currentTierID
+        }
         // First prefer any non-quarantined eligible tier in configured order.
         for tier in tiers {
             if evaluate(tier: tier, samples: samplesByGroup[tier.group] ?? []).meetsMinimum {
