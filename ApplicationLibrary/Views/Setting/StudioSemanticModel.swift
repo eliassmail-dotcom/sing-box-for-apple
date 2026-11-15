@@ -290,11 +290,14 @@ enum StudioTierEligibility {
     }
 
     static func evaluate(tier: StudioSemanticModel.PriorityTier,
-                         samples: [NodeSample]) -> Evaluation {
+                         samples: [NodeSample],
+                         allowQuarantine: Bool = false) -> Evaluation {
         var available: [String] = []
         var unknown: [String] = []
         for node in samples {
-            if node.quarantined && tier.quarantine == .exclude { continue }
+            // Quarantined candidates are tried only in the second pass, after
+            // every clean tier has failed. EXCLUDE is strict even in fallback.
+            if node.quarantined && (!allowQuarantine || tier.quarantine == .exclude) { continue }
             let passes: Bool?
             switch tier.check {
             case .urlTest: passes = node.urlTestOK
@@ -313,8 +316,17 @@ enum StudioTierEligibility {
 
     static func activeTier(tiers: [StudioSemanticModel.PriorityTier],
                            samplesByGroup: [String: [NodeSample]]) -> String? {
+        // First prefer any non-quarantined eligible tier in configured order.
         for tier in tiers {
             if evaluate(tier: tier, samples: samplesByGroup[tier.group] ?? []).meetsMinimum {
+                return tier.id
+            }
+        }
+        // If every healthy tier has failed, obey user-selected quarantine
+        // fallback policy. Never fabricate a DIRECT exit.
+        for tier in tiers where tier.quarantine != .exclude {
+            if evaluate(tier: tier, samples: samplesByGroup[tier.group] ?? [],
+                        allowQuarantine: true).meetsMinimum {
                 return tier.id
             }
         }
