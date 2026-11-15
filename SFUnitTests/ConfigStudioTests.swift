@@ -50,6 +50,7 @@ final class ConfigStudioTests: XCTestCase {
         XCTAssertFalse(preview.contains("sensitive-uuid"))
         XCTAssertFalse(preview.contains("sensitive-password"))
         XCTAssertFalse(preview.contains("secretvalue"))
+        XCTAssertFalse(StudioDocumentFormatter.pretty("password-secret", key: "password").contains("password-secret"))
         XCTAssertTrue(preview.contains("corporate-vpn"))
         XCTAssertTrue(preview.contains("Стратегия"))
         XCTAssertTrue(preview.contains("future_lx_field"))
