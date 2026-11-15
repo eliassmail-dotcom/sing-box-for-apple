@@ -1,10 +1,10 @@
 import Library
 import SwiftUI
 
-/// Compact two-column summary of the live routes selected by the core.
-/// Gemini chains are represented by a small link glyph; the displayed node
-/// remains the final exit node, while the first hop is already visible in
-/// the main-route column.
+/// Full-width vertical summary of the currently selected outbound tags.
+/// Preserve the exact names from the active configuration, including comments,
+/// suffixes and other meaningful node labels. Only Gemini chains receive
+/// a small link icon, with no redundant "chain" text.
 @MainActor
 public struct CurrentRoutesCard: View {
     @EnvironmentObject private var commandClient: CommandClient
@@ -21,18 +21,17 @@ public struct CurrentRoutesCard: View {
                     VStack(alignment: .leading, spacing: 10) {
                         DashboardCardHeader(icon: "network", title: "Маршруты")
 
-                        HStack(alignment: .top, spacing: 12) {
+                        VStack(alignment: .leading, spacing: 12) {
                             if hasStrategy {
-                                routeColumn(title: "Основной маршрут", result: strategyOutbound.result, showsChain: false)
+                                routeRow(title: "Основной маршрут", result: strategyOutbound.result, showsChain: false)
                             }
 
                             if hasStrategy && hasGemini {
                                 Divider()
-                                    .frame(height: 56)
                             }
 
                             if hasGemini {
-                                routeColumn(title: "Gemini", result: geminiOutbound.result, showsChain: true)
+                                routeRow(title: "Gemini", result: geminiOutbound.result, showsChain: true)
                             }
                         }
                     }
@@ -61,7 +60,7 @@ public struct CurrentRoutesCard: View {
         } == true
     }
 
-    private func routeColumn(title: String, result: ResolvedOutbound?, showsChain: Bool) -> some View {
+    private func routeRow(title: String, result: ResolvedOutbound?, showsChain: Bool) -> some View {
         VStack(alignment: .leading, spacing: 5) {
             HStack(spacing: 5) {
                 Text(title)
@@ -76,21 +75,27 @@ public struct CurrentRoutesCard: View {
                 }
             }
 
-            Text(result?.displayNodeTag ?? "Определяем узел…")
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(.primary)
-                .lineLimit(1)
-                .truncationMode(.middle)
-                .frame(maxWidth: .infinity, alignment: .leading)
+            HStack(alignment: .top, spacing: 12) {
+                // This is the original tag. Never strip suffixes such as
+                // "(Gemini)" or "(YouTube без рекламы)" for presentation.
+                Text(result?.displayNodeTag ?? "Определяем узел…")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.primary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .layoutPriority(1)
 
-            if let delay = result?.latencyMs, delay > 0 {
-                Text("\(delay) мс")
-                    .font(.caption.monospacedDigit().weight(.semibold))
-                    .foregroundStyle(delayColor(Int(delay)))
-            } else {
-                Text("—")
-                    .font(.caption.monospacedDigit())
-                    .foregroundStyle(.secondary)
+                if let delay = result?.latencyMs, delay > 0 {
+                    Text("\(delay) мс")
+                        .font(.caption.monospacedDigit().weight(.semibold))
+                        .foregroundStyle(delayColor(Int(delay)))
+                        .fixedSize(horizontal: true, vertical: false)
+                } else {
+                    Text("—")
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: true, vertical: false)
+                }
             }
 
             if let result, case .incomplete(_) = result.status {

@@ -202,6 +202,21 @@ final class SelectedOutboundResolverTests: XCTestCase {
         XCTAssertEqual(result.status, .incomplete(.noSelection("Пустая")))
     }
 
+    func testDashboardPreservesFullNodeNames() {
+        let primaryTag = "🇸🇪 Швеция (YouTube без рекламы)"
+        let geminiTag = "🇨🇭 Швейцария (Gemini)"
+        let resolver = SelectedOutboundResolver(nodes: [
+            OutboundConfigNode(tag: "Стратегия", type: "selector", members: [primaryTag]),
+            OutboundConfigNode(tag: "Gemini", type: "selector", members: [geminiTag]),
+            OutboundConfigNode(tag: primaryTag, type: "vless"),
+            OutboundConfigNode(tag: geminiTag, type: "vless"),
+        ])
+        let primary = resolver.resolve(rootTag: "Стратегия", live: [live("Стратегия", primaryTag)])
+        let gemini = resolver.resolve(rootTag: "Gemini", live: [live("Gemini", geminiTag)])
+        XCTAssertEqual(primary.displayNodeTag, primaryTag)
+        XCTAssertEqual(gemini.displayNodeTag, geminiTag)
+    }
+
     func testParsesRunningConfigJSON() throws {
         let json = """
         {
