@@ -60,6 +60,25 @@ final class StudioSemanticModelTests: XCTestCase {
         XCTAssertEqual(cycle.cycles, ["Цикл"])
     }
 
+    func testNestedDynamicIncludesAndExcludesApplyAtEachLevel() {
+        typealias Group = StudioNodeGroupComposer.Definition
+        let groups = [
+            Group(id: "Europe", members: ["CH base"],
+                  include: ["germany"], exclude: ["Germany white"]),
+            Group(id: "Composite", members: ["Europe", "PT base"],
+                  include: ["Swiss"], exclude: ["Portugal"])
+        ]
+        let inventory = ["CH base", "Germany base", "Germany white", "PT base", "Swiss backup"]
+        let result = StudioNodeGroupComposer.resolve(
+            group: "Composite", definitions: groups,
+            knownTags: inventory,
+            filterableNodes: inventory
+        )
+        XCTAssertEqual(result.nodes, ["CH base", "Germany base", "Swiss backup"])
+        XCTAssertTrue(result.missing.isEmpty)
+        XCTAssertTrue(result.cycles.isEmpty)
+    }
+
     func testStrategiesAreNotTechnicalGroupsAndHaveNoFabricatedTiers() throws {
         let model = try load()
         let smart = try XCTUnwrap(model.strategies.first { $0.id == "Основные" })
