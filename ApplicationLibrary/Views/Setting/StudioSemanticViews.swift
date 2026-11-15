@@ -306,44 +306,79 @@ private struct StudioStrategyDetailsView: View {
 
 private struct StudioDNSOverviewView: View {
     let model: StudioSemanticModel
+    @State private var tab: String = "areas"
+
+    private var dnsAreas: [StudioSemanticModel.AddressPolicy] {
+        model.addressPolicies.filter { !$0.dnsRules.isEmpty }
+    }
+
     var body: some View {
         List {
-            Section("DNS по умолчанию") {
-                StudioLabelValue("Сервер", value: model.defaultDNS ?? "Не задан")
-            }
-            Section("DNS-серверы · \(model.dnsServers.count)") {
-                ForEach(model.dnsServers) { server in
-                    NavigationLink {
-                        StudioNativeDetailView(title: server.name, path: "dns.servers",
-                                               value: server.raw)
-                    } label: {
-                        VStack(alignment: .leading, spacing: 3) {
-                            Text(server.name).font(.subheadline.weight(.medium))
-                            Text([StudioHumanFields.kind(server.type),
-                                  server.host.map { StudioHumanFields.display($0, key: "server") },
-                                  server.detour.map { "через \($0)" }]
-                                .compactMap { $0 }.joined(separator: " · "))
-                                .font(.caption).foregroundStyle(.secondary)
-                        }
-                    }
-                }
-            }
-            Section("Политики DNS · \(model.dnsPolicies.count)") {
-                ForEach(model.dnsPolicies) { policy in
-                    NavigationLink {
-                        StudioDNSPolicyDetailsView(model: model, policy: policy)
-                    } label: {
-                        VStack(alignment: .leading, spacing: 3) {
-                            Text(policy.summary).font(.subheadline.weight(.medium))
-                            Text("\(policy.indices.count) правил · №\(policy.indices.first.map { $0 + 1 } ?? 0) и далее")
-                                .font(.caption).foregroundStyle(.secondary)
-                        }
-                    }
-                }
+            Section("По умолчанию") {
+                StudioLabelValue("DNS-сервер", value: model.defaultDNS ?? "Не задан")
             }
             Section {
-                Text("Правила сгруппированы по DNS-серверу, действию и обработке ответов. Исходные номера сохранены; порядок исполнения не меняется.")
-                    .font(.footnote).foregroundStyle(.secondary)
+                Picker("Представление", selection: $tab) {
+                    Text("Области").tag("areas")
+                    Text("Серверы").tag("servers")
+                    Text("Механизмы").tag("mechanics")
+                }
+                .pickerStyle(.segmented)
+            }
+            if tab == "areas" {
+                Section("Группы адресов · \(dnsAreas.count)") {
+                    ForEach(dnsAreas) { item in
+                        NavigationLink {
+                            StudioAddressPolicyDetailsView(model: model, policy: item)
+                        } label: {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(item.title).font(.subheadline.weight(.medium))
+                                Text("\(item.dnsRules.count) правил · \(item.dnsTargets.joined(separator: ", "))")
+                                    .font(.caption).foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                }
+                Section {
+                    Text("Здесь группируются только правила с идентичными условиями для группы адресов. Несовпадающие или служебные проверки остаются в разделе «Механизмы».")
+                        .font(.footnote).foregroundStyle(.secondary)
+                }
+            } else if tab == "servers" {
+                Section("DNS-серверы · \(model.dnsServers.count)") {
+                    ForEach(model.dnsServers) { server in
+                        NavigationLink {
+                            StudioNativeDetailView(title: server.name, path: "dns.servers",
+                                                   value: server.raw)
+                        } label: {
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(server.name).font(.subheadline.weight(.medium))
+                                Text([StudioHumanFields.kind(server.type),
+                                      server.host.map { StudioHumanFields.display($0, key: "server") },
+                                      server.detour.map { "через \($0)" }]
+                                    .compactMap { $0 }.joined(separator: " · "))
+                                    .font(.caption).foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                }
+            } else {
+                Section("Механизмы и действия · \(model.dnsPolicies.count)") {
+                    ForEach(model.dnsPolicies) { policy in
+                        NavigationLink {
+                            StudioDNSPolicyDetailsView(model: model, policy: policy)
+                        } label: {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(policy.summary).font(.subheadline.weight(.medium))
+                                Text("\(policy.indices.count) правил · №\(policy.indices.first.map { $0 + 1 } ?? 0) и далее")
+                                    .font(.caption).foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                }
+                Section {
+                    Text("Группировка по DNS-серверу, действию и механизму обработки ответа. Сохраняем исходные позиции правил для проверки порядка.")
+                        .font(.footnote).foregroundStyle(.secondary)
+                }
             }
         }
         .navigationTitle("DNS")
