@@ -442,8 +442,8 @@ enum StudioDocumentFormatter {
         return value
     }
 
-    static func pretty(_ value: Any) -> String {
-        let redacted = sanitized(value)
+    static func pretty(_ value: Any, key: String = "") -> String {
+        let redacted = sanitized(value, key: key)
         guard JSONSerialization.isValidJSONObject(redacted),
               let data = try? JSONSerialization.data(withJSONObject: redacted, options: [.prettyPrinted, .sortedKeys]),
               let string = String(data: data, encoding: .utf8) else {
@@ -473,7 +473,7 @@ private struct StudioCategoryView: View {
             Section("Элементы · \(category.items.count)") {
                 ForEach(filtered) { item in
                     NavigationLink {
-                        StudioJSONView(title: item.title, content: StudioDocumentFormatter.pretty(item.raw), isSanitized: true)
+                        StudioJSONView(title: item.title, content: StudioDocumentFormatter.pretty(item.raw, key: item.title), isSanitized: true)
                     } label: {
                         VStack(alignment: .leading, spacing: 4) {
                             Text(item.title).font(.subheadline.weight(.medium))
