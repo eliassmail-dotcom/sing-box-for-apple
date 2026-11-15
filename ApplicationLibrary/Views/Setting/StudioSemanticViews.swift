@@ -426,7 +426,19 @@ private struct StudioAddressPolicyDetailsView: View {
                                value: policy.dnsTargets.isEmpty ? "Нет точного совпадения условий" : policy.dnsTargets.joined(separator: ", "))
                 StudioLabelValue("DNS-правила №",
                                value: policy.dnsRules.map { String($0 + 1) }.joined(separator: ", "))
-                Text("В 1.1 эти связи показываются из JSON без изменения политики. Автоматическое переключение DNS вслед за новым маршрутом поддерживается в модели редактора.")
+            }
+            Section("Будущая связь маршрута и DNS") {
+                NavigationLink {
+                    StudioRouteDNSPreviewView(
+                        model: model, addressTitle: policy.title,
+                        currentRoute: policy.destinations.count == 1 ? policy.destinations[0] : nil,
+                        currentDNS: policy.dnsTargets.count == 1 ? policy.dnsTargets[0] : nil,
+                        dnsHasExplicitOverride: !policy.dnsTargets.isEmpty
+                    )
+                } label: {
+                    Label("Проверить автопереключение DNS", systemImage: "arrow.left.arrow.right")
+                }
+                Text("Демонстрация расчёта: без применения настроек к VPN.")
                     .font(.footnote).foregroundStyle(.secondary)
             }
         }
