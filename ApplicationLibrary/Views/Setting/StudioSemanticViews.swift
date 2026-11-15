@@ -319,7 +319,9 @@ private struct StudioDNSOverviewView: View {
                     } label: {
                         VStack(alignment: .leading, spacing: 3) {
                             Text(server.name).font(.subheadline.weight(.medium))
-                            Text([StudioHumanFields.kind(server.type), server.host, server.detour.map { "через \($0)" }]
+                            Text([StudioHumanFields.kind(server.type),
+                                  server.host.map { StudioHumanFields.display($0, key: "server") },
+                                  server.detour.map { "через \($0)" }]
                                 .compactMap { $0 }.joined(separator: " · "))
                                 .font(.caption).foregroundStyle(.secondary)
                         }
