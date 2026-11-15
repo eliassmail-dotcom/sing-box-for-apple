@@ -58,9 +58,15 @@ public struct ConfigStudioView: View {
                     }
                     .buttonStyle(.plain)
                 } else if let errorMessage {
-                    ContentUnavailableView("Не удалось прочитать профиль", systemImage: "exclamationmark.triangle", description: Text(errorMessage))
+                    Label(errorMessage, systemImage: "exclamationmark.triangle")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .padding(24)
                 } else {
-                    ContentUnavailableView("Профиль не выбран", systemImage: "doc.questionmark", description: Text("Выберите профиль и повторите загрузку."))
+                    Label("Выберите профиль и повторите загрузку", systemImage: "doc.questionmark")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .padding(24)
                 }
                 Text("Config Studio 1.0 · Только просмотр конфигурации. Изменения узлов, маршрутов, DNS и OpenConnect появятся в следующем релизе.")
                     .font(.footnote)
@@ -293,10 +299,49 @@ private struct StudioDocument {
             covered.insert(key)
             categories.append(StudioCategory(path: key, title: title, subtitle: detail, icon: icon, raw: value))
         }
-        add("outbounds", "Узлы, группы и цепочки", "Селекторы, URLTest, VLESS, detour и chain", "server.rack")
+        add("outbounds", "Все выходы", "Полный список outbounds без исключений", "server.rack")
+        if let outbounds = root["outbounds"] as? [[String: Any]] {
+            func list(_ path: String, _ name: String, _ subtitle: String, _ icon: String,
+                      _ filter: ([String: Any]) -> Bool) {
+                let items = outbounds.filter(filter)
+                if !items.isEmpty {
+                    categories.append(StudioCategory(path: path, title: name,
+                                                     subtitle: subtitle, icon: icon, raw: items))
+                }
+            }
+            list("groups", "Группы и селекторы", "Включая технические A–F, если есть", "rectangle.3.group") {
+                ["selector", "urltest"].contains($0["type"] as? String ?? "")
+            }
+            list("chains", "Цепочки", "Native LX chain и связанные хопы", "point.3.connected.trianglepath.dotted") {
+                ($0["type"] as? String) == "chain"
+            }
+            list("nodes", "Прокси-узлы", "VLESS и другие конечные выходы", "server.rack") {
+                !["selector", "urltest", "chain", "direct", "block", "dns"].contains($0["type"] as? String ?? "")
+            }
+        }
         add("endpoints", "Корпоративные туннели", "OpenConnect, WireGuard и другие endpoints", "building.2.crop.circle")
-        add("route", "Маршрутизация", "Правила, Rule Sets, приоритеты и final", "arrow.triangle.branch")
-        add("dns", "DNS и политики", "DNS-серверы, правила и кеш", "globe")
+        if let route = root["route"] as? [String: Any] {
+            if let rules = route["rules"] {
+                categories.append(StudioCategory(path: "route.rules", title: "Правила маршрутизации",
+                                                 subtitle: "В точном порядке исполнения", icon: "arrow.triangle.branch", raw: rules))
+            }
+            if let sets = route["rule_set"] {
+                categories.append(StudioCategory(path: "route.rule_set", title: "Списки адресов",
+                                                 subtitle: "Локальные и удалённые SRS", icon: "list.bullet.rectangle", raw: sets))
+            }
+        }
+        add("route", "Параметры маршрутизации", "Final, интерфейсы и исходный route JSON", "map")
+        if let dns = root["dns"] as? [String: Any] {
+            if let servers = dns["servers"] {
+                categories.append(StudioCategory(path: "dns.servers", title: "DNS-серверы",
+                                                 subtitle: "Адреса, группы, detour, cache", icon: "globe", raw: servers))
+            }
+            if let rules = dns["rules"] {
+                categories.append(StudioCategory(path: "dns.rules", title: "DNS-правила",
+                                                 subtitle: "DNS Race, evaluate, respond и маршруты", icon: "list.number", raw: rules))
+            }
+        }
+        add("dns", "DNS · все параметры", "Полная политика DNS и кеширования", "globe")
         add("http_clients", "HTTP-клиенты", "Загрузка SRS и сетевые подключения", "network")
         add("inbounds", "Входящие подключения", "TUN и остальные входящие интерфейсы", "arrow.down.to.line")
         add("experimental", "API и экспериментальные функции", "Clash API, cache_file и другие параметры", "wrench.and.screwdriver")
@@ -354,7 +399,10 @@ private enum StudioDocumentFormatter {
         if let object = value as? [String: Any] {
             return (object["type"] as? String) ?? (object["action"] as? String) ?? "\(object.count) полей"
         }
-        if let text = value as? String { return text.count > 70 ? String(text.prefix(70)) + "…" : text }
+        if let text = value as? String {
+            let safe = sanitized(text) as? String ?? "•••"
+            return safe.count > 70 ? String(safe.prefix(70)) + "…" : safe
+        }
         return String(describing: value)
     }
 
@@ -367,9 +415,11 @@ private enum StudioDocumentFormatter {
             return "••••••"
         }
         if let dictionary = value as? [String: Any] {
-            return dictionary.mapValues { $0 } .reduce(into: [String: Any]()) { result, pair in
-                result[pair.key] = sanitized(pair.value, key: pair.key)
+            var result: [String: Any] = [:]
+            for (field, fieldValue) in dictionary {
+                result[field] = sanitized(fieldValue, key: field)
             }
+            return result
         }
         if let array = value as? [Any] {
             return array.map { sanitized($0) }
