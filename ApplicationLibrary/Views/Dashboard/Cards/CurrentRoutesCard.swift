@@ -76,12 +76,11 @@ public struct CurrentRoutesCard: View {
                 }
             }
 
-            Text(RouteNodePresentation.compactName(result?.displayNodeTag) ?? "Определяем узел…")
+            Text(result?.displayNodeTag ?? "Определяем узел…")
                 .font(.subheadline.weight(.semibold))
                 .foregroundStyle(.primary)
                 .lineLimit(1)
-                .minimumScaleFactor(0.75)
-                .truncationMode(.tail)
+                .truncationMode(.middle)
                 .frame(maxWidth: .infinity, alignment: .leading)
 
             if let delay = result?.latencyMs, delay > 0 {
