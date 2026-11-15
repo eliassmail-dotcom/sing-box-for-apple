@@ -72,5 +72,37 @@ final class ConfigStudioTests: XCTestCase {
         XCTAssertEqual(StudioGeneratorVariables.load()["GEMINI_NODES"], "Gemini")
         XCTAssertTrue(StudioGeneratorVariables.lines().contains("TEST_MODE=failover"))
     }
+    func testNativeFieldLabelsAndSelectorsAreHumanReadable() {
+        XCTAssertEqual(StudioHumanFields.label("domain_suffix"), "Домены и поддомены")
+        XCTAssertEqual(StudioHumanFields.label("ip_cidr"), "IP-адреса и подсети")
+        XCTAssertEqual(StudioHumanFields.label("outbounds"), "Участники")
+        XCTAssertEqual(StudioHumanFields.kind("openconnect"), "Корпоративный OpenConnect")
+        XCTAssertEqual(StudioHumanFields.mode("round_robin"), "Чередование узлов")
+        XCTAssertEqual(StudioHumanFields.mode("and"), "Все условия (И)")
+        XCTAssertEqual(StudioHumanFields.action("hijack-dns"), "Перехватить DNS")
+        XCTAssertEqual(StudioHumanFields.display("least_test", key: "mode"), "Самый быстрый доступный")
+    }
+
+    func testNativeScalarDisplayRedactsSecretsAndSeparatesBooleanFromNumeric() {
+        XCTAssertEqual(StudioHumanFields.display("abcdefgh", key: "password"), "••••••")
+        XCTAssertEqual(StudioHumanFields.display("client-uuid", key: "uuid"), "••••••")
+        XCTAssertEqual(StudioHumanFields.display(NSNumber(value: 175), key: "tolerance"), "175 мс")
+        XCTAssertTrue(StudioHumanFields.isBoolean(NSNumber(value: true)))
+        XCTAssertFalse(StudioHumanFields.isBoolean(NSNumber(value: 1)))
+        XCTAssertEqual(StudioHumanFields.display(NSNumber(value: true), key: "enabled"), "Включено")
+    }
+
+    func testNestedObjectsRetainFieldsWithoutUserFacingJSONFallback() throws {
+        let document = try StudioDocument(content: fixture)
+        let dns = try XCTUnwrap(document.categories.first(where: { $0.path == "dns.rules" }))
+        let rule = try XCTUnwrap(dns.items.first)
+        let options = try XCTUnwrap(rule.raw as? [String: Any])
+        XCTAssertEqual(options["action"] as? String, "evaluate")
+        XCTAssertEqual(options["server"] as? String, "dns")
+        XCTAssertEqual(dns.items.count, 1)
+        let nested = StudioDocumentFormatter.sanitized(document.root)
+        XCTAssertNotNil(nested as? [String: Any])
+    }
+
 }
 #endif
