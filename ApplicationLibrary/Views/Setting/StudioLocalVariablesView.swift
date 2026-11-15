@@ -27,7 +27,7 @@ public enum StudioGeneratorVariables {
         Category(name: "Проверка доступности", fields: [
             Field(key: "TEST_URL", name: "Адрес проверки", hint: "HTTPS без секретов и авторизации"),
             Field(key: "TEST_MODE", name: "Алгоритм LX", hint: "failover или least_test"),
-            Field(key: "TEST_INTERVAL", name: "Интервал, с", hint: "Минимум 15 c для LX"),
+            Field(key: "TEST_INTERVAL", name: "Интервал, с", hint: "Например, 5 секунд"),
             Field(key: "TEST_TOLERANCE", name: "Порог задержки, мс", hint: "По умолчанию 175"),
             Field(key: "TEST_IDLE", name: "Ожидание простоя, с", hint: "По умолчанию 180"),
             Field(key: "CONNECT_TIMEOUT", name: "Тайм-аут соединения, с", hint: "2–30"),
@@ -75,7 +75,7 @@ public enum StudioGeneratorVariables {
             "DNS_OPTIMISTIC", "NET_FALLBACK", "CORP_DNS_DYNAMIC",
         ]
         let bounds: [String: ClosedRange<Int>] = [
-            "TEST_INTERVAL": 15...3600,
+            "TEST_INTERVAL": 1...3600,
             "TEST_TOLERANCE": 0...2000,
             "TEST_IDLE": 0...3600,
             "CONNECT_TIMEOUT": 2...30,
