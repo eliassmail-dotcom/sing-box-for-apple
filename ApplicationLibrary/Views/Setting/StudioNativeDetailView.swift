@@ -402,7 +402,17 @@ struct StudioValueRow: View {
     let path: String
 
     var body: some View {
-        if let array = value as? [Any] {
+        if StudioDocumentFormatter.isSensitiveKey(key) {
+            HStack {
+                Text(StudioHumanFields.label(key))
+                    .font(.subheadline)
+                Spacer()
+                Label("Скрыто", systemImage: "lock.fill")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.vertical, 5)
+        } else if let array = value as? [Any] {
             NavigationLink {
                 StudioNativeDetailView(title: StudioHumanFields.label(key),
                                        path: path, value: array)
