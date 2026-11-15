@@ -104,7 +104,7 @@ public struct OverviewView: View {
 
     private func shouldShowCard(_ card: DashboardCard) -> Bool {
         switch card {
-        case .status, .connections, .uploadTraffic, .downloadTraffic, .clashMode, .strategyMode:
+        case .status, .connections, .uploadTraffic, .downloadTraffic, .clashMode, .strategyMode, .resilience:
             return Variant.screenshotMode || profile.status.isConnected
         case .httpProxy:
             return (Variant.screenshotMode || profile.status.isConnectedStrict) && systemProxyAvailable
@@ -141,6 +141,8 @@ public struct OverviewView: View {
         case .strategyMode:
             StrategyModeCard()
                 .environmentObject(environments.commandClient)
+        case .resilience:
+            ResilienceCard()
         case .profile:
             ProfileCard(
                 profileList: $profileList,
