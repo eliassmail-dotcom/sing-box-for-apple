@@ -70,7 +70,9 @@ public final class DashboardCardConfiguration: ObservableObject {
         // after a user explicitly hides it in Dashboard Items. Persisting the
         // new card's order is the migration marker; order is loaded second.
         let previousOrder = await SharedPreferences.dashboardCardOrder.get()
-        if cards.contains(.strategyMode) && !cards.contains(.currentRoutes) {
+        if cards.contains(.strategyMode) &&
+            !cards.contains(.currentRoutes) &&
+            !previousOrder.contains(DashboardCard.currentRoutes.rawValue) {
             cards.append(.currentRoutes)
         }
         if cards.contains(.strategyMode) &&

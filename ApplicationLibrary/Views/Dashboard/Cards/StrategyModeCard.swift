@@ -1,9 +1,9 @@
 import Library
 import SwiftUI
 
-// Dashboard mode selector + live routed outbounds in one compact card.
-// The selector's live state is authoritative; latency counters report the
-// latest successful URLTest probes, not per-connection network guarantees.
+// Dashboard mode selector. Live route details are rendered by
+// CurrentRoutesCard; the counters below are the latest successful URLTest
+// probes, not per-connection network guarantees.
 @MainActor
 public struct StrategyModeCard: View {
     @EnvironmentObject private var commandClient: CommandClient
