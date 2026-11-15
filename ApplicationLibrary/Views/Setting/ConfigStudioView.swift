@@ -107,7 +107,7 @@ public struct ConfigStudioView: View {
                     .background(.thinMaterial, in: Capsule())
             }
             Text("Конфигурация")
-                .font(.system(.largeTitle, design: .rounded, weight: .bold))
+                .font(.system(size: 34, weight: .bold, design: .rounded))
             Text(profileName.isEmpty ? "Выбранный профиль" : profileName)
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
@@ -143,7 +143,7 @@ public struct ConfigStudioView: View {
                 .font(.footnote)
                 .foregroundStyle(.secondary)
             Text(count.formatted())
-                .font(.system(.title2, design: .rounded, weight: .semibold))
+                .font(.system(size: 22, weight: .semibold, design: .rounded))
                 .monospacedDigit()
             Text(title)
                 .font(.caption2)
