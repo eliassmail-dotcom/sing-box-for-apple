@@ -362,8 +362,17 @@ struct StudioNativeDetailView: View {
         }
         if type == "urltest" {
             Section("Механизм выбора") {
-                StudioValueRow(key: "mode", value: group["mode"] ?? "least_test",
-                               path: "\(path).mode")
+                if let mode = group["mode"] {
+                    StudioValueRow(key: "mode", value: mode, path: "\(path).mode")
+                } else {
+                    HStack {
+                        Text("Алгоритм")
+                        Spacer()
+                        Text("Определяется ядром")
+                            .foregroundStyle(.secondary)
+                    }
+                    .font(.subheadline)
+                }
                 if let interval = group["interval"] {
                     StudioValueRow(key: "interval", value: interval, path: "\(path).interval")
                 }
