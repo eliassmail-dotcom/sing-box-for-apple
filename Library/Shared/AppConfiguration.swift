@@ -77,7 +77,14 @@ public enum AppConfiguration {
     }
 
     public static var profileUTType: String {
-        "\(packageName).profile"
+        // Re-signing may change CFBundleIdentifier but not registered UTI declarations.
+        // The actual plist registration is authoritative for document import.
+        let items = hostBundle?.object(forInfoDictionaryKey: "UTExportedTypeDeclarations") as? [[String: Any]]
+        if let identifier = items?.compactMap({ $0["UTTypeIdentifier"] as? String }).first,
+           !identifier.isEmpty {
+            return identifier
+        }
+        return "\(packageName).profile"
     }
 
     public static var backgroundTaskID: String {
@@ -93,7 +100,13 @@ public enum AppConfiguration {
     }
 
     public static var iCloudContainerID: String {
-        "iCloud.\(packageName)"
+        // iCloud container IDs are also provisioned at signing time.
+        // Prefer the original registered value; do not derive an unprovisioned one.
+        if let containers = hostBundle?.object(forInfoDictionaryKey: "NSUbiquitousContainers") as? [String: Any],
+           let registered = containers.keys.sorted().first {
+            return registered
+        }
+        return "iCloud.\(packageName)"
     }
 
     #if os(macOS) || JAILBREAK
