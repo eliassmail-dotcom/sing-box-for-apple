@@ -132,6 +132,9 @@ extension NEVPNStatus {
 enum WidgetTunnelControl {
     static func currentIsStarted() async throws -> Bool {
         guard let manager = try await loadManager() else {
+            // A missing app-owned VPN configuration is distinct from "stopped".
+            // Controls may be visible before a VPN profile has been installed.
+            NSLog("[WidgetTunnelControl] No app-owned tunnel configuration for status query")
             return false
         }
         return manager.connection.status.isStarted
@@ -146,8 +149,10 @@ enum WidgetTunnelControl {
         }
 
         if started {
-            if manager.isEnabled == false {
+            var preferencesChanged = false
+            if !manager.isEnabled {
                 manager.isEnabled = true
+                preferencesChanged = true
             }
             if let proto = manager.protocolConfiguration as? NETunnelProviderProtocol,
                let config = proto.providerConfiguration,
@@ -157,13 +162,22 @@ enum WidgetTunnelControl {
                 newConfig.removeValue(forKey: "wasOnDemandEnabled")
                 proto.providerConfiguration = newConfig
                 manager.isOnDemandEnabled = true
+                preferencesChanged = true
             }
-            try await manager.saveToPreferences()
-            do {
-                try manager.connection.startVPNTunnel()
-            } catch {
-                NSLog("[WidgetTunnelControl] startVPNTunnel failed: \(error.localizedDescription)")
-                throw error
+            if preferencesChanged {
+                try await manager.saveToPreferences()
+                // The NE preferences manager needs to be refreshed after a
+                // save. Otherwise a stale configuration can cause VPN start
+                // errors, especially from a short-lived widget process.
+                try await manager.loadFromPreferences()
+            }
+            if !manager.connection.status.isStarted {
+                do {
+                    try manager.connection.startVPNTunnel()
+                } catch {
+                    NSLog("[WidgetTunnelControl] startVPNTunnel failed: \(error.localizedDescription)")
+                    throw error
+                }
             }
         } else {
             if manager.isOnDemandEnabled {
@@ -174,6 +188,7 @@ enum WidgetTunnelControl {
                 }
                 manager.isOnDemandEnabled = false
                 try await manager.saveToPreferences()
+                try await manager.loadFromPreferences()
             }
             manager.connection.stopVPNTunnel()
         }
@@ -235,7 +250,22 @@ enum WidgetTunnelControl {
     /// iOS may retain old or additional VPN profiles; sending the LX command to
     /// one of those silently leaves the Dashboard's running route unchanged.
     private static func loadManager(connectedOnly: Bool = false) async throws -> NETunnelProviderManager? {
-        let managers = try await NETunnelProviderManager.loadAllFromPreferences()
+        let managers: [NETunnelProviderManager]
+        do {
+            managers = try await NETunnelProviderManager.loadAllFromPreferences()
+        } catch {
+            // This is often a signature-specific failure: iOS evaluates the
+            // WidgetExtension's entitlements, not only the host app's.
+            let declaredInXML = SignedEntitlements.stringArray(
+                "com.apple.developer.networking.networkextension"
+            ).contains("packet-tunnel-provider")
+            NSLog("[WidgetTunnelControl] VPN preferences unavailable; widgetNEInXML=\(declaredInXML); error=\(error.localizedDescription)")
+            throw NSError(domain: "WidgetTunnelControl", code: 2, userInfo: [
+                NSLocalizedDescriptionKey:
+                    "Пункт управления не может прочитать VPN. Проверьте Network Extension entitlement в подписи WidgetExtension.",
+                NSUnderlyingErrorKey: error,
+            ])
+        }
         // GBox/other signing tools can rewrite the actual CFBundleIdentifier
         // while leaving BasePackageIdentifier in Info.plist unchanged.
         // Derive the installed package from this signed .widget extension too.
@@ -250,17 +280,16 @@ enum WidgetTunnelControl {
         let expectedIDs = Set(packageNames.flatMap { base in
             ["\(base).extension", "\(base).system"]
         })
-        let exact = managers.filter { manager in
-            guard let tunnel = manager.protocolConfiguration as? NETunnelProviderProtocol,
-                  let provider = tunnel.providerBundleIdentifier else { return false }
-            return expectedIDs.contains(provider)
-        }
         // Never select unrelated or stale VPN profiles by a generic serverAddress.
         // The embedded extension's real signed Bundle ID is authoritative.
         let candidates = managers.filter { manager in
             guard let tunnel = manager.protocolConfiguration as? NETunnelProviderProtocol,
                   let provider = tunnel.providerBundleIdentifier else { return false }
             return expectedIDs.contains(provider) || provider == WidgetAppConfiguration.packetTunnelBundleID
+        }
+        if candidates.isEmpty {
+            NSLog("[WidgetTunnelControl] No matching tunnel: storedManagers=\(managers.count), expectedProviders=\(expectedIDs.count), embeddedTunnelFound=\(WidgetAppConfiguration.packetTunnelBundleID != nil)")
+            return nil
         }
         if connectedOnly {
             return candidates.first(where: { $0.connection.status == .connected })
