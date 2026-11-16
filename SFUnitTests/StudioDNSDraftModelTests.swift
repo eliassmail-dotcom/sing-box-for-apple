@@ -148,6 +148,58 @@ final class StudioDNSDraftModelTests: XCTestCase {
                        ["bootstrap-direct-dns-group", "missing-tag"])
     }
 
+
+    func testDNSReuseSameRealSequenceForTwoAddressGroups() throws {
+        let document = try StudioDocument(content: """
+        {"dns":{"servers":[
+            {"tag":"mskix-dns","type":"udp","server":"62.76.76.62"},
+            {"tag":"mskix-dns-backup","type":"udp","server":"62.76.62.76"},
+            {"tag":"karing-direct-doh-backup","type":"https","server":"8.8.8.8"}
+          ],"rules":[
+            {"domain_suffix":["site-a.ru"],"action":"evaluate","server":"mskix-dns","tag":"a-1","timeout":"3s"},
+            {"match_response":"a-1","action":"respond"},
+            {"domain_suffix":["site-a.ru"],"action":"evaluate","server":"mskix-dns-backup","tag":"a-2","timeout":"3s"},
+            {"match_response":"a-2","action":"respond"},
+            {"domain_suffix":["site-a.ru"],"action":"route","server":"karing-direct-doh-backup"},
+            {"domain_suffix":["site-b.ru"],"action":"evaluate","server":"mskix-dns","tag":"b-1","timeout":"3s"},
+            {"match_response":"b-1","action":"respond"},
+            {"domain_suffix":["site-b.ru"],"action":"evaluate","server":"mskix-dns-backup","tag":"b-2","timeout":"3s"},
+            {"match_response":"b-2","action":"respond"},
+            {"domain_suffix":["site-b.ru"],"action":"route","server":"karing-direct-doh-backup"},
+            {"rule_set":["independent"],"action":"reject"}
+          ]}}
+        """)
+        let found = StudioDNSSchemeCatalog(document: document)
+        XCTAssertEqual(found.schemes.count, 1)
+        let scheme = try XCTUnwrap(found.schemes.first)
+        XCTAssertEqual(scheme.serversInOrder,
+                       ["mskix-dns", "mskix-dns-backup", "karing-direct-doh-backup"])
+        XCTAssertFalse(scheme.hasExplicitRace)
+        XCTAssertEqual(scheme.bindings.count, 2)
+        XCTAssertEqual(scheme.template.map(\.index), [0, 1, 2, 3, 4])
+        XCTAssertEqual(scheme.bindings[1].ruleIndexes, [5, 6, 7, 8, 9])
+        XCTAssertEqual(found.ungroupedRuleIndexes, [10])
+        XCTAssertEqual(found.linkedSchemes(forDNSRules: [7]).map(\.id), [scheme.id])
+        XCTAssertTrue(found.linkedSchemes(forDNSRules: [10]).isEmpty)
+    }
+
+    func testDNSSchemeNeverInventsRaceOrLinksUnqualifiedGlobalRules() throws {
+        let document = try StudioDocument(content: """
+        {"dns":{"rules":[
+          {"action":"evaluate","server":"proxy-doh"},
+          {"match_response":true,"action":"respond"},
+          {"domain":["gemini.google.com"],"action":"evaluate",
+           "server":"proxy-doh","tag":"gemini-1","race":true},
+          {"match_response":"gemini-1","action":"respond"},
+          {"domain":["gemini.google.com"],"action":"route","server":"proxy-doh-backup"}
+        ]}}
+        """)
+        let found = StudioDNSSchemeCatalog(document: document)
+        XCTAssertEqual(found.schemes.count, 1)
+        XCTAssertTrue(found.schemes[0].hasExplicitRace)
+        XCTAssertEqual(found.ungroupedRuleIndexes, [0, 1])
+    }
+
     @MainActor
     func testSelectionsRemainIndependentAndSessionOnly() {
         let store = StudioDNSDraftStore()
