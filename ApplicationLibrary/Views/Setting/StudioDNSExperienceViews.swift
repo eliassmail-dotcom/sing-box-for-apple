@@ -5,83 +5,85 @@ import SwiftUI
 /// The DNS home is a read-only explanation of live JSON, not a writable editor.
 struct StudioDNSHomeView: View {
     let model: StudioSemanticModel
-    private var profiles: [StudioDNSExplanation.Profile] {
-        StudioDNSExplanation.profiles(document: model.document)
-    }
-    private var steps: [StudioDNSExplanation.FlowStep] {
-        StudioDNSExplanation.steps(document: model.document)
+    @StateObject private var draft = StudioDNSDraftStore()
+
+    private var catalog: [StudioDNSCatalogEntry] {
+        StudioDNSCatalogEntry.catalog(document: model.document)
     }
 
     var body: some View {
         List {
             Section {
-                Text("Профили ниже — представления фактических DNS-серверов по способу подключения. Это ещё не самостоятельные настраиваемые DNS-профили.")
+                Label("Редактор DNS · черновик", systemImage: "pencil.and.list.clipboard")
+                    .font(.subheadline.weight(.medium))
+                Text("Выбор DNS-серверов и приоритетов пока действует только на этом экране. Текущие DNS и VPN не изменяются.")
                     .font(.footnote).foregroundStyle(.secondary)
             }
-            Section("DNS-подключения") {
-                ForEach(profiles) { profile in
-                    NavigationLink {
-                        StudioDNSProfileView(model: model, profile: profile)
-                    } label: {
-                        HStack(spacing: 12) {
-                            Image(systemName: profile.family == .direct ? "arrow.up.right.circle" :
-                                  profile.family == .proxy ? "shield.lefthalf.filled" : "gearshape.2")
-                                .foregroundStyle(.tint).frame(width: 26)
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text(profile.title).font(.headline)
-                                Text(profile.summary).font(.caption).foregroundStyle(.secondary)
-                            }
-                            Spacer(minLength: 5)
-                            Text("\(profile.bindings.count)")
-                                .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
-                        }
-                        .padding(.vertical, 5)
-                    }
+            Section("Для интернет-трафика") {
+                roleLink(.directTraffic)
+                roleLink(.proxyTraffic)
+            }
+            Section("Для подключения сервисов") {
+                roleLink(.proxyHosts)
+                roleLink(.dnsHosts)
+            }
+            Section("Серверы") {
+                NavigationLink {
+                    StudioDNSCatalogOverviewView(catalog: catalog)
+                } label: {
+                    Label("Каталог DNS-серверов", systemImage: "list.bullet")
                 }
             }
-            Section("Как выбирается DNS") {
+            Section("Действующая конфигурация") {
                 if let final = model.defaultDNS {
-                    HStack {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text("Если ни одно DNS-правило не подошло")
-                                .font(.subheadline.weight(.medium))
-                            Text("Используется сервер \(final)")
-                                .font(.caption).foregroundStyle(.secondary)
-                        }
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("DNS при отсутствии подходящего правила")
+                            .font(.subheadline)
+                        Text(final).font(.caption).foregroundStyle(.secondary)
                     }
-                } else {
-                    Text("Отдельный резервный DNS-сервер не указан в dns.final")
-                        .font(.footnote).foregroundStyle(.secondary)
                 }
                 NavigationLink {
                     StudioDNSAddressAreaListView(model: model)
                 } label: {
-                    Label("Области применения DNS", systemImage: "list.bullet.rectangle")
+                    Label("DNS-исключения и условия", systemImage: "shield.lefthalf.filled")
                 }
+                Text("Корпоративный DNS, специальные правила и DNS для служебной загрузки остаются под управлением исходной конфигурации.")
+                    .font(.footnote).foregroundStyle(.secondary)
+            }
+            Section("Дополнительно") {
                 NavigationLink {
                     StudioDNSRuleFlowView(model: model, filteredIndexes: nil)
                 } label: {
-                    HStack {
-                        Label("Порядок обработки DNS", systemImage: "arrow.triangle.branch")
-                        Spacer()
-                        Text("\(steps.count) правил").font(.caption).foregroundStyle(.secondary)
-                    }
+                    Label("Техническая диагностика DNS-правил", systemImage: "wrench.and.screwdriver")
                 }
-            }
-            Section("Справочник") {
-                NavigationLink {
-                    StudioDNSServersListView(model: model)
-                } label: {
-                    Label("Все DNS-серверы", systemImage: "server.rack")
-                }
-            }
-            Section {
-                Text("Для объяснения результата конкретного DNS-запроса нужна диагностика выполнения: статическая конфигурация не показывает, какое из конкурирующих правил реально сработало.")
+                Text("Исходный порядок правил доступен для диагностики, но не используется как основной способ настройки DNS.")
                     .font(.footnote).foregroundStyle(.secondary)
             }
         }
         .navigationTitle("DNS")
         .navigationBarTitleDisplayMode(.inline)
+    }
+
+    private func roleLink(_ role: StudioDNSRole) -> some View {
+        NavigationLink {
+            StudioDNSDraftProfileView(role: role, catalog: catalog, draft: draft)
+        } label: {
+            HStack(spacing: 12) {
+                Image(systemName: role.icon).foregroundStyle(.tint).frame(width: 25)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(role.title).font(.subheadline.weight(.semibold))
+                    Text(role.subtitle)
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 6)
+                let count = draft.rows(for: role).count
+                if count > 0 {
+                    Text("\(count)")
+                        .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+                }
+            }
+            .padding(.vertical, 4)
+        }
     }
 }
 
