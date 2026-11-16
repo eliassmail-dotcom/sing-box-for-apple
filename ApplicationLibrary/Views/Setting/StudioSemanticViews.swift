@@ -393,65 +393,37 @@ private struct StudioAddressPolicyDetailsView: View {
 
 private struct StudioDefaultPolicyView: View {
     let model: StudioSemanticModel
-    @State private var selectedRoute = ""
-    @State private var mappings: [String: String] = [:]
-
-    private var availableRoutes: [String] {
-        let routeTags = model.document.array("outbounds").compactMap { $0["tag"] as? String }
-        return Array(Set(routeTags + ["direct"])).sorted()
-    }
-    private var association: StudioDNSFollowRoute.Assignment {
-        StudioDNSFollowRoute.resolve(route: selectedRoute, choice: .automatic,
-                                     association: mappings, defaultDNS: model.defaultDNS)
-    }
-
     var body: some View {
-        Form {
-            Section("Фактическая конфигурация") {
-                StudioLabelValue("Общий маршрут при отсутствии правил", value: model.defaultRoute ?? "Не указан")
-                StudioLabelValue("DNS при отсутствии подходящего правила", value: model.defaultDNS ?? "Не указан")
+        List {
+            Section("Действующая конфигурация") {
+                StudioLabelValue("Общий маршрут при отсутствии правил",
+                                 value: model.defaultRoute ?? "Не указан")
+                StudioLabelValue("DNS при отсутствии подходящего правила",
+                                 value: model.defaultDNS ?? "Не указан")
                 if let client = model.defaultHTTPClient {
-                    StudioLabelValue("Служебная загрузка", value: client)
+                    StudioLabelValue("Служебная загрузка SRS", value: client)
                 }
             }
-            Section {
-                Label("Ниже — проверка будущей логики Route → DNS. Настройки не сохраняются и не меняют VPN.",
-                      systemImage: "eye")
+            Section("Привязка DNS к маршруту · предпросмотр") {
+                NavigationLink {
+                    StudioRouteDNSPreviewView(
+                        model: model, addressTitle: "Общий интернет",
+                        currentRoute: model.defaultRoute,
+                        currentDNS: nil, dnsHasExplicitOverride: false
+                    )
+                } label: {
+                    Label("Проверить Direct DNS / Proxy DNS", systemImage: "arrow.left.arrow.right")
+                }
+                Text("Профили Direct DNS и Proxy DNS описывают желаемую политику редактора. В действующем JSON маршруты и DNS пока имеют отдельные правила.")
                     .font(.footnote).foregroundStyle(.secondary)
             }
-            Section("Предпросмотр привязки DNS") {
-                Picker("Маршрут", selection: $selectedRoute) {
-                    ForEach(availableRoutes, id: \.self) { tag in Text(tag).tag(tag) }
-                }
-                if !selectedRoute.isEmpty {
-                    Picker("DNS для маршрута", selection: Binding(
-                        get: { mappings[selectedRoute] ?? "" },
-                        set: { if $0.isEmpty { mappings.removeValue(forKey: selectedRoute) }
-                               else { mappings[selectedRoute] = $0 } }
-                    )) {
-                        Text("Нет привязки").tag("")
-                        ForEach(model.dnsServers) { server in
-                            Text(server.name).tag(server.name)
-                        }
-                    }
-                }
-                StudioLabelValue("Будет использован DNS",
-                               value: association.dns ?? "Не определён")
-                if association.source == .unmapped {
-                    Text("Для этого выхода DNS не сопоставлен. Пока используется общий DNS; это не подтверждение корректной связки.")
-                        .font(.footnote).foregroundStyle(.secondary)
-                }
-            }
             Section {
-                Text("При реализации редактора смена маршрута будет пересчитывать DNS по этой таблице, кроме корпоративных и явно защищённых переопределений. Сейчас это только локальный просмотр алгоритма.")
+                Text("Изменения на этих экранах не сохраняются и не влияют на работающий VPN.")
                     .font(.footnote).foregroundStyle(.secondary)
             }
         }
         .navigationTitle("Основные настройки")
         .navigationBarTitleDisplayMode(.inline)
-        .onAppear {
-            if selectedRoute.isEmpty { selectedRoute = model.defaultRoute ?? availableRoutes.first ?? "" }
-        }
     }
 }
 
