@@ -65,10 +65,10 @@ final class StudioSemanticModelTests: XCTestCase {
         let groups = [
             Group(id: "Europe", members: ["CH base"],
                   include: ["germany"], exclude: ["Germany white"]),
-            Group(id: "Composite", members: ["Europe", "PT base"],
+            Group(id: "Composite", members: ["Europe", "Portugal base"],
                   include: ["Swiss"], exclude: ["Portugal"])
         ]
-        let inventory = ["CH base", "Germany base", "Germany white", "PT base", "Swiss backup"]
+        let inventory = ["CH base", "Germany base", "Germany white", "Portugal base", "Swiss backup"]
         let result = StudioNodeGroupComposer.resolve(
             group: "Composite", definitions: groups,
             knownTags: inventory,
@@ -77,6 +77,19 @@ final class StudioSemanticModelTests: XCTestCase {
         XCTAssertEqual(result.nodes, ["CH base", "Germany base", "Swiss backup"])
         XCTAssertTrue(result.missing.isEmpty)
         XCTAssertTrue(result.cycles.isEmpty)
+    }
+
+    func testExcludeMatchesLiteralNodeNameNotCountryAbbreviation() {
+        let group = StudioNodeGroupComposer.Definition(
+            id: "Test", members: ["PT base", "Portugal base"],
+            include: [], exclude: ["Portugal"]
+        )
+        let nodes = ["PT base", "Portugal base"]
+        let result = StudioNodeGroupComposer.resolve(
+            group: "Test", definitions: [group],
+            knownTags: nodes, filterableNodes: nodes
+        )
+        XCTAssertEqual(result.nodes, ["PT base"])
     }
 
     func testStrategiesAreNotTechnicalGroupsAndHaveNoFabricatedTiers() throws {
