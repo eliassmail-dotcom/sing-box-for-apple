@@ -24,7 +24,7 @@ enum StudioDNSRole: String, CaseIterable, Identifiable {
     }
     var subtitle: String {
         switch self {
-        case .directTraffic: return "DNS для прямого интернет-трафика"
+        case .directTraffic: return "DNS-серверы с прямым сетевым путём"
         case .proxyTraffic: return "DNS-серверы с проксируемым сетевым путём"
         case .geminiTraffic: return "Явные условия Gemini в действующих DNS-правилах"
         case .proxyHosts: return "DNS для подключения к узлам, до запуска прокси"
