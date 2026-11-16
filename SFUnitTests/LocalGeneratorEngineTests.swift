@@ -27,6 +27,19 @@ final class LocalGeneratorEngineTests: XCTestCase {
         XCTAssertThrowsError(try LocalGeneratorEngine.parseVariables("TEST=1\nTEST=2"))
     }
 
+    func testStreamingSubscriptionLimitRejectsBeforeAppendingExtraByte() throws {
+        var data = Data()
+        for byte in [UInt8(1), 2, 3] {
+            try LocalGeneratorEngine.appendLimitedSubscriptionByte(byte, to: &data, limit: 3)
+        }
+        XCTAssertEqual(data, Data([1, 2, 3]))
+        XCTAssertThrowsError(
+            try LocalGeneratorEngine.appendLimitedSubscriptionByte(4, to: &data, limit: 3)
+        )
+        // The fourth byte was not allocated into the accumulated buffer.
+        XCTAssertEqual(data, Data([1, 2, 3]))
+    }
+
     func testBundledGeneratorZlibPayloadIsValidAndRunnable() throws {
         // Isolate the compressed bundle from WKWebView lifecycle. Older
         // versions passed the RFC 1950 zlib header to a raw DEFLATE decoder,

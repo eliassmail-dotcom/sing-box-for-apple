@@ -33,6 +33,19 @@ public final class LocalGeneratorEngine: NSObject, WKNavigationDelegate {
 
     private var webView: WKWebView?
     private var pageContinuation: CheckedContinuation<Void, Error>?
+    private var pageTimeoutTask: Task<Void, Never>?
+    private var generationInProgress = false
+
+    // Constrain the response *during* streaming, not only after URLSession
+    // has already allocated the entire HTTP body.
+    static func appendLimitedSubscriptionByte(
+        _ byte: UInt8, to data: inout Data, limit: Int = 2_000_000
+    ) throws {
+        guard data.count < limit else {
+            throw GeneratorError.invalidInput("Подписка превышает лимит 2 МБ")
+        }
+        data.append(byte)
+    }
 
     public static func parseVariables(_ input: String) throws -> [String: String] {
         guard input.utf8.count <= 120_000 else {
@@ -71,15 +84,21 @@ public final class LocalGeneratorEngine: NSObject, WKNavigationDelegate {
         guard !body.isEmpty && body.utf8.count <= 2_000_000 else {
             throw GeneratorError.invalidInput("Пустая подписка или превышен лимит 2 МБ")
         }
+        guard !generationInProgress else {
+            throw GeneratorError.generation("GENERATOR_BUSY")
+        }
+        generationInProgress = true
         // Decode and verify the bundled script BEFORE starting WebKit.
         // A corrupted bundle must not create an orphaned WebContent process.
-        let script = try LocalGeneratorBundle.javascript()
         defer {
+            generationInProgress = false
+            pageTimeoutTask?.cancel()
+            pageTimeoutTask = nil
             webView?.stopLoading()
             webView?.navigationDelegate = nil
             webView = nil
-            pageContinuation = nil
         }
+        let script = try LocalGeneratorBundle.javascript()
         try await preparePage()
         guard let webView else { throw GeneratorError.javascriptUnavailable }
         // Never embed untrusted input into executable JavaScript source.
@@ -126,25 +145,61 @@ public final class LocalGeneratorEngine: NSObject, WKNavigationDelegate {
               content="default-src 'none'; connect-src 'none'; img-src 'none'; frame-src 'none'; form-action 'none'; script-src 'unsafe-eval' 'unsafe-inline'">
         </head><body></body></html>
         """
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-            pageContinuation = continuation
-            webView.loadHTMLString(html, baseURL: nil)
+        try Task.checkCancellation()
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                pageContinuation = continuation
+                pageTimeoutTask?.cancel()
+                pageTimeoutTask = Task { @MainActor [weak self] in
+                    do {
+                        try await Task.sleep(nanoseconds: 10_000_000_000)
+                    } catch {
+                        return
+                    }
+                    self?.finishPage(error: GeneratorError.javascriptUnavailable)
+                }
+                webView.loadHTMLString(html, baseURL: nil)
+            }
+        } onCancel: {
+            Task { @MainActor [weak self] in
+                self?.finishPage(error: CancellationError())
+            }
+        }
+    }
+
+    /// Resume a checked continuation at most once, regardless of which
+    /// navigation callback, cancellation or timeout wins the race.
+    private func finishPage(error: Error? = nil) {
+        let pending = pageContinuation
+        pageContinuation = nil
+        pageTimeoutTask?.cancel()
+        pageTimeoutTask = nil
+        guard let pending else { return }
+        if let error {
+            pending.resume(throwing: error)
+        } else {
+            pending.resume()
         }
     }
 
     public func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-        pageContinuation?.resume()
-        pageContinuation = nil
+        guard webView === self.webView else { return }
+        finishPage()
     }
 
     public func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
-        pageContinuation?.resume(throwing: GeneratorError.javascriptUnavailable)
-        pageContinuation = nil
+        guard webView === self.webView else { return }
+        finishPage(error: GeneratorError.javascriptUnavailable)
     }
 
     public func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
-        pageContinuation?.resume(throwing: GeneratorError.javascriptUnavailable)
-        pageContinuation = nil
+        guard webView === self.webView else { return }
+        finishPage(error: GeneratorError.javascriptUnavailable)
+    }
+
+    public func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+        guard webView === self.webView else { return }
+        finishPage(error: GeneratorError.javascriptUnavailable)
     }
 
     public struct SubscriptionPayload {
@@ -229,7 +284,9 @@ public final class LocalGeneratorEngine: NSObject, WKNavigationDelegate {
             // exposure in browser history, CDN URL logs, and referrers.
             request.setValue(proxyKey, forHTTPHeaderField: "X-Subscription-Proxy-Key")
         }
-        let (data, response) = try await session.data(for: request)
+        // AsyncBytes exposes the response headers before the body is collected
+        // and cancels immediately once our strict limit is exceeded.
+        let (bytes, response) = try await session.bytes(for: request)
         guard let http = response as? HTTPURLResponse else {
             throw GeneratorError.invalidInput("Источник подписки вернул некорректный ответ")
         }
@@ -239,8 +296,16 @@ public final class LocalGeneratorEngine: NSObject, WKNavigationDelegate {
             }
             throw GeneratorError.invalidInput("Ошибка HTTP при загрузке подписки: \(http.statusCode)")
         }
-        guard data.count <= 2_000_000 else {
+        let maxBytes = 2_000_000
+        guard http.expectedContentLength <= Int64(maxBytes) else {
             throw GeneratorError.invalidInput("Подписка превышает лимит 2 МБ")
+        }
+        var data = Data()
+        if http.expectedContentLength > 0 {
+            data.reserveCapacity(Int(min(http.expectedContentLength, Int64(maxBytes))))
+        }
+        for try await byte in bytes {
+            try appendLimitedSubscriptionByte(byte, to: &data, limit: maxBytes)
         }
         guard let text = String(data: data, encoding: .utf8), !text.isEmpty else {
             throw GeneratorError.invalidInput("Подписка пуста или не является UTF-8 текстом")
