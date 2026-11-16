@@ -51,15 +51,18 @@ final class LocalGeneratorEngineTests: XCTestCase {
         XCTAssertEqual(script, try LocalGeneratorBundle.javascript())
     }
 
-    func testBundledGeneratorContainsVerifiedR5Modules() throws {
+    func testBundledGeneratorContainsR6Modules() throws {
         let script = try LocalGeneratorBundle.javascript()
-        XCTAssertTrue(script.contains("v1.4.48r5"))
+        XCTAssertTrue(script.contains("v1.4.48r6"))
+        XCTAssertTrue(script.contains("mskix-dns"))
+        XCTAssertTrue(script.contains("mskix-dns-backup"))
+        XCTAssertFalse(script.contains("karing-direct-dns"))
         XCTAssertTrue(script.contains("bootstrap-direct-dns-group"))
         XCTAssertTrue(script.contains("Gemini • Super • A"))
         XCTAssertTrue(script.contains("__localYcGenerator"))
     }
 
-    func testR5TwoGeminiNodesAndBootstrapOnDevice() async throws {
+    func testR6TwoGeminiNodesAndBootstrapOnDevice() async throws {
         // Two Gemini exits plus one normal node must create four members:
         // two direct paths and two chains. No external subscription is fetched.
         let nodes = offlineNodes.replacingOccurrences(
