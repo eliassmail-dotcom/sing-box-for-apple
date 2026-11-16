@@ -78,7 +78,8 @@ final class StudioDNSDraftModelTests: XCTestCase {
         let data = """
         {
           "outbounds":[{"tag":"direct","type":"direct"},
-                       {"tag":"Стратегия","type":"selector","outbounds":[]}],
+                       {"tag":"Стратегия","type":"selector","outbounds":[]},
+                       {"tag":"Gemini","type":"selector","outbounds":[]}],
           "route":{"default_domain_resolver":"local"},
           "dns":{
             "final":"cloudflare-proxy",
