@@ -131,6 +131,13 @@ open class ExtensionProvider: NEPacketTunnelProvider {
             try validateStartOptions(lastGood)
             return lastGood
         }
+        #if os(iOS)
+            if !FilePath.hasSharedContainer {
+                throw ExtensionStartupError(
+                    "(packet-tunnel) error: no saved configuration in isolated mode. Open the app and start VPN once from Dashboard before using Control Center or On Demand."
+                )
+            }
+        #endif
         throw ExtensionStartupError("(packet-tunnel) error: missing valid start options")
     }
 
@@ -161,13 +168,12 @@ open class ExtensionProvider: NEPacketTunnelProvider {
 
     override open func startTunnel(options startOptions: [String: NSObject]?) async throws {
         #if os(iOS)
-            // Local Application Support is a safe UI fallback, not a shared
-            // container. Refuse tunnel startup when re-signing removed its
-            // matching App Group entitlement.
-            guard FilePath.hasSharedContainer else {
-                throw ExtensionStartupError(
-                    "(packet-tunnel) error: missing common signed App Group; re-sign the app and Packet Tunnel with matching entitlements"
-                )
+            // The validated config is supplied by the containing app through
+            // startVPNTunnel(options:). A missing App Group is NOT fatal to
+            // packet-tunnel setup: use this extension's private Application
+            // Support container and keep its own last-good startup snapshot.
+            if !FilePath.hasSharedContainer {
+                Self.logger.warning("Packet Tunnel using process-local storage (no shared App Group): \(AppConfiguration.signingDiagnostics)")
             }
         #endif
         let basePath: String
