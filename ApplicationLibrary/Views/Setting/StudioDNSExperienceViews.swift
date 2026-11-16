@@ -281,24 +281,127 @@ private struct StudioDNSAreaDetailView: View {
     }
 }
 
+/// Compact, readable overview for both the whole DNS program and any
+/// selected address condition. Never pretend that N matching rule records
+/// equal N operations executed by a single lookup.
 struct StudioDNSRuleFlowView: View {
     let model: StudioSemanticModel
     let filteredIndexes: [Int]?
-    @State private var query = ""
-    @State private var mode = "all"
 
-    private var allSteps: [StudioDNSExplanation.FlowStep] {
-        StudioDNSExplanation.steps(document: model.document)
+    private var selectedRules: [StudioDNSExplanation.FlowStep] {
+        let all = StudioDNSExplanation.steps(document: model.document)
+        guard let filteredIndexes else { return all }
+        let indices = Set(filteredIndexes)
+        return all.filter { indices.contains($0.index) }
     }
-    private var steps: [StudioDNSExplanation.FlowStep] {
-        let allowed = filteredIndexes.map(Set.init)
-        return allSteps.filter { step in
-            if let allowed, !allowed.contains(step.index) { return false }
-            if mode == "checks" && step.action != "evaluate" && step.responseDependency == nil { return false }
-            if mode == "race" && !step.race && !step.speculative { return false }
-            if mode == "answers" && step.action != "respond" && step.action != "route" { return false }
-            if query.isEmpty { return true }
-            return [step.condition, step.heading, step.server ?? "", step.number]
+    private var servers: [String] {
+        Array(Set(selectedRules.compactMap(\.server))).sorted()
+    }
+    private var requests: Int {
+        selectedRules.filter { $0.action == "route" }.count
+    }
+    private var evaluations: Int {
+        selectedRules.filter { $0.action == "evaluate" }.count
+    }
+    private var answers: Int {
+        selectedRules.filter { $0.action == "respond" }.count
+    }
+    private var parallelChecks: Int {
+        selectedRules.filter(\.race).count
+    }
+    private var earlyRequests: Int {
+        selectedRules.filter(\.speculative).count
+    }
+    private var otherActions: Int {
+        selectedRules.filter {
+            !["route", "evaluate", "respond"].contains($0.action)
+        }.count
+    }
+
+    var body: some View {
+        List {
+            Section {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(filteredIndexes == nil
+                         ? "Здесь показано, из чего состоит действующая DNS-схема."
+                         : "Здесь собраны DNS-действия для выбранных условий.")
+                        .font(.subheadline.weight(.medium))
+                    Text("Сводка составлена по конфигурации. Она не показывает, какие правила сработали при конкретном запросе.")
+                        .font(.footnote).foregroundStyle(.secondary)
+                }
+                .padding(.vertical, 4)
+            }
+            Section("Обработка запросов") {
+                summaryRow("Запросы к DNS", count: requests + evaluations,
+                           detail: "Запрашивают сервер или получают ответ для проверки")
+                summaryRow("Проверки ответов", count: parallelChecks,
+                           detail: "Правила с RACE — допускают параллельную оценку")
+                if earlyRequests > 0 {
+                    summaryRow("Предварительные запросы", count: earlyRequests,
+                               detail: "Speculative — могут выполняться до завершения RACE")
+                }
+                summaryRow("Возврат проверенного ответа", count: answers,
+                           detail: "Используют результат предыдущего запроса")
+                if otherActions > 0 {
+                    summaryRow("Другие действия", count: otherActions,
+                               detail: "Блокировки, готовые ответы и прочие операции")
+                }
+            }
+            Section("DNS-серверы в этих правилах") {
+                if servers.isEmpty {
+                    Text("Прямые ссылки на серверы не найдены. Некоторые действия используют результат более ранних правил.")
+                        .font(.footnote).foregroundStyle(.secondary)
+                } else {
+                    ForEach(servers, id: \.self) { server in
+                        Text(server).font(.subheadline)
+                    }
+                }
+            }
+            Section("Исходная конфигурация") {
+                NavigationLink {
+                    StudioDNSRawRulesView(steps: selectedRules)
+                } label: {
+                    HStack(spacing: 10) {
+                        Label("Посмотреть технические записи", systemImage: "list.bullet.rectangle")
+                        Spacer(minLength: 4)
+                        Text("\(selectedRules.count)")
+                            .font(.caption.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                Text("Все исходные правила сохранены в прежнем порядке. Полный список нужен для диагностики, а не для выбора DNS или настройки приоритетов.")
+                    .font(.footnote).foregroundStyle(.secondary)
+            }
+        }
+        .navigationTitle("Обработка DNS")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+
+    private func summaryRow(_ title: String, count: Int, detail: String) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title).font(.subheadline.weight(.medium))
+                Text(detail).font(.caption).foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 6)
+            Text("\(count)")
+                .font(.subheadline.monospacedDigit().weight(.semibold))
+                .foregroundStyle(.secondary)
+        }
+        .padding(.vertical, 5)
+    }
+}
+
+/// A deliberate, second-level expert screen. Each record takes a short row;
+/// expanded original fields remain accessible via the existing native view.
+private struct StudioDNSRawRulesView: View {
+    let steps: [StudioDNSExplanation.FlowStep]
+    @State private var query = ""
+
+    private var filtered: [StudioDNSExplanation.FlowStep] {
+        guard !query.isEmpty else { return steps }
+        return steps.filter {
+            [$0.number, $0.heading, $0.server ?? "", $0.condition]
                 .contains { $0.localizedCaseInsensitiveContains(query) }
         }
     }
@@ -306,83 +409,38 @@ struct StudioDNSRuleFlowView: View {
     var body: some View {
         List {
             Section {
-                Text("Правила показаны в исходном порядке. Evaluate получает результат для последующих проверок; RACE может параллельно проверять ответы. Номер — место в исходном JSON, а не отдельный профиль DNS.")
+                Text("Технические записи из JSON. Номера показывают исходный порядок, но не означают, что каждый DNS-запрос выполняет все правила.")
                     .font(.footnote).foregroundStyle(.secondary)
             }
-            Section {
-                Picker("Показать", selection: $mode) {
-                    Text("Все").tag("all")
-                    Text("Проверки").tag("checks")
-                    Text("RACE").tag("race")
-                    Text("Ответы").tag("answers")
-                }
-                .pickerStyle(.segmented)
-            }
-            Section("Шаги · \(steps.count)") {
-                ForEach(steps) { step in
+            Section("Записи · \(filtered.count)") {
+                ForEach(filtered) { step in
                     NavigationLink {
-                        StudioDNSRuleStepView(step: step)
+                        StudioNativeDetailView(
+                            title: "DNS-правило \(step.number)",
+                            path: "dns.rules[\(step.index)]",
+                            value: step.raw
+                        )
                     } label: {
-                        VStack(alignment: .leading, spacing: 5) {
-                            HStack(spacing: 6) {
-                                Text(step.number).font(.caption.monospacedDigit())
-                                    .foregroundStyle(.secondary)
-                                Text(step.heading).font(.subheadline.weight(.semibold))
-                            }
-                            Text("Когда: \(step.condition)")
-                                .font(.caption).foregroundStyle(.secondary)
-                                .lineLimit(2)
-                            Text(step.result).font(.caption).lineLimit(2)
-                            if let concurrent = step.concurrency {
-                                Text(concurrent).font(.caption2)
-                                    .foregroundStyle(.secondary).lineLimit(2)
+                        HStack(alignment: .firstTextBaseline, spacing: 12) {
+                            Text(step.number)
+                                .font(.caption.monospacedDigit())
+                                .foregroundStyle(.secondary)
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(step.heading)
+                                    .font(.subheadline.weight(.medium))
+                                if let server = step.server {
+                                    Text(server)
+                                        .font(.caption).foregroundStyle(.secondary)
+                                }
                             }
                         }
-                        .padding(.vertical, 5)
+                        .padding(.vertical, 3)
                     }
                 }
             }
         }
-        .searchable(text: $query, prompt: "Сервер, условие или номер")
-        .navigationTitle("Порядок обработки DNS")
-        .navigationBarTitleDisplayMode(.inline)
-    }
-}
-
-private struct StudioDNSRuleStepView: View {
-    let step: StudioDNSExplanation.FlowStep
-
-    var body: some View {
-        List {
-            Section("Когда выполняется") {
-                Text(step.condition)
-            }
-            Section("Что делает") {
-                Text(step.heading).font(.subheadline.weight(.semibold))
-                Text(step.result).font(.subheadline)
-                if let dependency = step.responseDependency {
-                    Text("Используется \(dependency.lowercased())")
-                        .font(.footnote).foregroundStyle(.secondary)
-                }
-                if let concurrency = step.concurrency {
-                    Text(concurrency).font(.footnote).foregroundStyle(.secondary)
-                }
-            }
-            Section("Техническая запись") {
-                NavigationLink {
-                    StudioNativeDetailView(title: "DNS-правило \(step.number)",
-                                           path: "dns.rules[\(step.index)]",
-                                           value: step.raw)
-                } label: {
-                    Label("Показать все условия и параметры", systemImage: "slider.horizontal.3")
-                }
-            }
-            Section {
-                Text("Порядок важен. Это объяснение настроек, а не журнал фактически выполненного DNS-запроса.")
-                    .font(.footnote).foregroundStyle(.secondary)
-            }
-        }
-        .navigationTitle("DNS-правило \(step.number)")
+        .searchable(text: $query, prompt: "Номер, действие или сервер")
+        .navigationTitle("Исходные DNS-правила")
         .navigationBarTitleDisplayMode(.inline)
     }
 }
