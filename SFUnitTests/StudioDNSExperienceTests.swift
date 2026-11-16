@@ -71,6 +71,31 @@ final class StudioDNSExperienceTests: XCTestCase {
         XCTAssertEqual(steps[4].heading, "Запросить DNS-сервер")
     }
 
+    func testCompactSummaryCountsRulesWithoutClaimingExecutionOrder() throws {
+        let steps = StudioDNSExplanation.steps(document: try document())
+        let summary = StudioDNSExplanation.RuleSummary(rules: steps)
+        XCTAssertEqual(steps.count, 5)
+        XCTAssertEqual(summary.routeCount, 3)
+        XCTAssertEqual(summary.evaluateCount, 1)
+        XCTAssertEqual(summary.respondCount, 1)
+        XCTAssertEqual(summary.raceCount, 1)
+        XCTAssertEqual(summary.speculativeCount, 1)
+        XCTAssertEqual(summary.otherCount, 0)
+        XCTAssertEqual(summary.servers, ["direct-a", "proxy-a"])
+    }
+
+    func testFilteredSummaryNeverInventsMissingEvaluationSteps() throws {
+        let steps = StudioDNSExplanation.steps(document: try document())
+        let subset = steps.filter { [1, 2, 3].contains($0.index) }
+        let summary = StudioDNSExplanation.RuleSummary(rules: subset)
+        XCTAssertEqual(subset.map(\.index), [1, 2, 3])
+        XCTAssertEqual(summary.evaluateCount, 0)
+        XCTAssertEqual(summary.respondCount, 1)
+        XCTAssertEqual(summary.raceCount, 1)
+        XCTAssertEqual(summary.speculativeCount, 1)
+        XCTAssertEqual(summary.servers, ["direct-a", "proxy-a"])
+    }
+
     func testRoutesSuggestProfilesWithoutChangingDNSRules() throws {
         let doc = try document()
         XCTAssertEqual(StudioDNSExplanation.suggestedFamily(forRoute: "direct", document: doc), .direct)

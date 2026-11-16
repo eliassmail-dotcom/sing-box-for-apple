@@ -69,6 +69,24 @@ enum StudioDNSExplanation {
         }
     }
 
+    /// Totals for the UI overview. These are counts of configured rule
+    /// records, never the number of operations performed by one DNS lookup.
+    struct RuleSummary {
+        let rules: [FlowStep]
+
+        var routeCount: Int { rules.filter { $0.action == "route" }.count }
+        var evaluateCount: Int { rules.filter { $0.action == "evaluate" }.count }
+        var respondCount: Int { rules.filter { $0.action == "respond" }.count }
+        var raceCount: Int { rules.filter(\.race).count }
+        var speculativeCount: Int { rules.filter(\.speculative).count }
+        var otherCount: Int {
+            rules.filter { !["route", "evaluate", "respond"].contains($0.action) }.count
+        }
+        var servers: [String] {
+            Array(Set(rules.compactMap(\.server))).sorted()
+        }
+    }
+
     struct Profile: Identifiable {
         let family: Family
         let bindings: [ServerBinding]
