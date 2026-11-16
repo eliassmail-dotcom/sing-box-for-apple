@@ -8,12 +8,16 @@ it is no longer a hard requirement for a manual, isolated Packet Tunnel start.
 
 ## Required capabilities
 
-- Main app and Packet Tunnel extension: packet-tunnel-provider entitlement.
+- Main app, Packet Tunnel extension **and WidgetExtension**: `packet-tunnel-provider`
+  Network Extension entitlement if direct Control Center VPN actions are needed.
+  The widget is a separate executable/process; the main app's rights do not
+  grant it the same capability. Every embedded executable needs its **own**
+  compatible provisioning/signing rights.
 - Full-featured mode: main app and Packet Tunnel extension need at least one
   identical authorized com.apple.security.application-groups value.
 - All embedded executables/frameworks/extensions must be consistently signed.
 - iOS 15+ signatures must include DER entitlements (CodeDirectory special slot -7).
-- Widget and File Provider need access to the same group for shared features.
+- Widget and File Provider need access to the same group for shared features. The WidgetExtension may read VPN preferences and message the running tunnel only if the **signed widget** has the Network Extension capability. An unsigned IPA does not demonstrate this.
 - Signing Team ID and Bundle ID must be resolved from signed values, not Xcode defaults.
 
 ## Runtime behavior
@@ -82,3 +86,36 @@ and an iOS simulator build before declaring GO.
    agreement. Verify with an exported signed IPA, not just unsigned CI output.
 6. Never infer working signed entitlements from the unsigned IPA or from the
    provisioning profile alone. The iOS sandbox is the authority at runtime.
+
+
+## Control Center troubleshooting for a differently signed iPhone (b27)
+
+The Control Center implementation is hosted in `WidgetExtension.appex`:
+`ServiceToggleControl` uses `NETunnelProviderManager` and `NextNodeControl`
+uses `NETunnelProviderSession.sendProviderMessage`. Both need the widget
+extension's own Network Extension entitlement; host-only rights are insufficient.
+
+Checklist for the **actual GBox-signed IPA**:
+
+1. Verify signed entitlements separately for `sing-box.app`,
+   `PlugIns/Extension.appex` and `PlugIns/WidgetExtension.appex`.
+   Each needs `com.apple.developer.networking.networkextension` with
+   `packet-tunnel-provider` to use its VPN-related APIs.
+2. Confirm `WidgetExtension.appex/Info.plist` actually registers
+   `com.apple.widgetkit-extension` and Bundle IDs remain consistent.
+3. Verify the VPN configuration was created by the signed host app and
+   `NETunnelProviderProtocol.providerBundleIdentifier` matches the installed
+   Packet Tunnel extension; profiles created by a different Team ID are not
+   automatically transferred.
+4. Start the tunnel from Dashboard first, then test Stop and Next Node
+   from Control Center. Without a shared App Group, cold start from a widget
+   cannot supply the app-private configuration; this remains a limitation.
+5. After re-signing/reinstalling, remove and re-add the Control Center items
+   to clear a stale WidgetKit kind/Bundle ID registration.
+6. If actions still fail, capture Console logs from `WidgetTunnelControl`,
+   `chronod` and `SpringBoard` together with the signed entitlements and
+   the exact symptom (not visible, tap ignored, state incorrect, or error).
+   Do not export subscription tokens, server addresses or secrets.
+
+The b27 patch adds the entitlement request to source and clearer diagnostics,
+but **cannot grant a missing entitlement after GBox signs the app**.
