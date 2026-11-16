@@ -319,7 +319,16 @@ public class ExtensionProfile: ObservableObject {
             options["includeAllNetworks"] = await NSNumber(value: SharedPreferences.includeAllNetworks.get())
         #endif
 
-        #if os(tvOS)
+        #if os(iOS)
+            // Forward the same per-install loopback credentials as the host's
+            // LibboxSetup. The tunnel must never create an unauthenticated TCP
+            // command endpoint, and a signed IPA contains no fixed secret.
+            if IsolatedCommandTransport.isRequired {
+                let channel = try IsolatedCommandTransport.credentials()
+                options["commandServerPort"] = NSNumber(value: channel.port)
+                options["commandServerSecret"] = NSString(string: channel.secret)
+            }
+        #elseif os(tvOS)
             options["commandServerPort"] = await NSNumber(value: SharedPreferences.commandServerPort.get())
             options["commandServerSecret"] = await NSString(string: SharedPreferences.commandServerSecret.get())
         #endif
