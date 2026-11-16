@@ -48,17 +48,18 @@ struct StudioSemanticHomeView: View {
                         !["selector", "urltest", "chain", "direct", "block", "dns"].contains($0["type"] as? String ?? "")
                     })
             }
-            entry(title: "Группы узлов", description: "Состав, вложенные группы и фильтры",
-                  icon: "rectangle.3.group", count: info.groups.count) {
-                StudioGroupListView(model: info)
+            entry(title: "Группы адресов", description: "Основной путь: куда направлять трафик и какой DNS использовать",
+                  icon: "list.bullet.rectangle", count: info.addressPolicies.count) {
+                StudioAddressPolicyListView(model: info)
+            }
+            entry(title: "Группы", description: "Группы узлов, фильтры, цепочки и составные группы",
+                  icon: "rectangle.3.group",
+                  count: StudioGroupCatalog(document: document).allCount) {
+                StudioGroupsHomeView(document: document)
             }
             entry(title: "Стратегии", description: "Ручной выбор, URLTest и приоритеты",
                   icon: "brain.head.profile", count: info.strategies.count) {
                 StudioStrategyListView(model: info)
-            }
-            entry(title: "Группы адресов", description: "Совпадения, маршруты и связанные DNS-правила",
-                  icon: "list.bullet.rectangle", count: info.addressPolicies.count) {
-                StudioAddressPolicyListView(model: info)
             }
             entry(title: "DNS", description: "Direct DNS, Proxy DNS и логика обработки запросов",
                   icon: "globe", count: info.dnsPolicies.count) {
@@ -69,14 +70,6 @@ struct StudioSemanticHomeView: View {
                   count: document.array("endpoints").count) {
                 StudioNativeDetailView(title: "Корпоративные подключения", path: "endpoints",
                                        value: document.array("endpoints"))
-            }
-            entry(title: "Цепочки", description: "Хопы и порядок подключения",
-                  icon: "point.3.connected.trianglepath.dotted",
-                  count: document.array("outbounds").filter { ($0["type"] as? String) == "chain" }.count) {
-                StudioNativeDetailView(title: "Цепочки", path: "outbounds",
-                                       value: document.array("outbounds").filter {
-                                           ($0["type"] as? String) == "chain"
-                                       })
             }
             entry(title: "Параметры сети", description: "TUN, HTTP-клиенты, LX и расширения",
                   icon: "network", count: nil) {
