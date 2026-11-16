@@ -20,8 +20,9 @@ public enum AppConfiguration {
         if let id = resolvedAppGroupID {
             return id
         }
-        // Empty means no entitled group; FilePath falls back safely to local storage.
-        return Bundle.main.object(forInfoDictionaryKey: "AppGroupIdentifier") as? String ?? ""
+        // Do not advertise an unverified build-time group as usable.
+        // When no shared group is accessible, FilePath uses process-local storage.
+        return ""
     }()
 
     /// Team ID is a signing entitlement, NEVER the prefix of an App Group.
@@ -185,46 +186,84 @@ public enum AppConfiguration {
 
     private static let resolvedExtensionBundleID: String? = packetTunnelBundle?.bundleIdentifier
 
-    /// App groups usable in this process: entitled per this binary's signature,
-    /// intersected with the peer binary's signed groups (when discoverable),
-    /// with a live container, sorted for determinism.
-    private static let usableAppGroups: [String] = {
-        // Never assume a local-only group is usable by the VPN extension.
-        guard let peerBundle else { return [] }
-        let own = Set(SignedEntitlements.stringArray("com.apple.security.application-groups"))
-        let peer = Set(SignedEntitlements.stringArray("com.apple.security.application-groups", of: peerBundle))
-        return own.intersection(peer)
-            .filter { FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: $0) != nil }
-            .sorted()
-    }()
-
-    /// The build-time AppGroupIdentifier, when it is still entitled and usable
-    /// under the current signature (priority 1).
-    private static let preferredAppGroup: String? = {
-        guard let value = Bundle.main.object(forInfoDictionaryKey: "AppGroupIdentifier") as? String,
-              !value.isEmpty,
-              usableAppGroups.contains(value) else {
-            return nil
+    /// Builds an ordered set of candidate group identifiers. XML entitlements
+    /// are only one way to discover names: some re-signers produce DER-only
+    /// code signatures. A candidate still MUST open as a real iOS App Group
+    /// container in the current process before it can be selected.
+    ///
+    /// When both signed sets are readable, a mismatch is authoritative and
+    /// must not be papered over with unsigned Info.plist placeholders.
+    public static func candidateAppGroups(
+        ownSigned: [String],
+        peerSigned: [String],
+        hostConfigured: String?,
+        tunnelConfigured: String?
+    ) -> [String] {
+        let own = Set(ownSigned.filter { !$0.isEmpty })
+        let peer = Set(peerSigned.filter { !$0.isEmpty })
+        if !own.isEmpty && !peer.isEmpty {
+            return own.intersection(peer).sorted()
         }
-        return value
+        if !own.isEmpty { return own.sorted() }
+        if !peer.isEmpty { return peer.sorted() }
+
+        // The XML rights of both binaries were unreadable. Fall back only
+        // to a common declared group name; never invent a Team-ID group.
+        guard let hostConfigured, !hostConfigured.isEmpty,
+              let tunnelConfigured, hostConfigured == tunnelConfigured else {
+            return []
+        }
+        return [hostConfigured]
+    }
+
+    private static let usableAppGroups: [String] = {
+        guard let peerBundle else { return [] }
+        let own = SignedEntitlements.stringArray("com.apple.security.application-groups")
+        let peer = SignedEntitlements.stringArray(
+            "com.apple.security.application-groups", of: peerBundle
+        )
+        let hostDeclared = hostBundle?.object(forInfoDictionaryKey: "AppGroupIdentifier") as? String
+        let tunnelDeclared = packetTunnelBundle?.object(forInfoDictionaryKey: "AppGroupIdentifier") as? String
+        return candidateAppGroups(
+            ownSigned: own, peerSigned: peer,
+            hostConfigured: hostDeclared, tunnelConfigured: tunnelDeclared
+        ).filter {
+            FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: $0) != nil
+        }
     }()
 
-    /// App group resolved from the signed entitlements, with priority:
-    /// 1. build-time AppGroupIdentifier if still usable;
-    /// 2. intersection of the host/extension signed groups;
-    /// 3. the single remaining usable group;
-    /// 4. with several remaining, a deterministic (sorted) choice - see
-    ///    appGroupSelectionAmbiguous for diagnostics.
-    /// A shared group is selected only when both host and tunnel are entitled.
-    /// Never silently pick an arbitrary group if more than one is eligible.
+    private static let preferredAppGroup: String? = {
+        // Prefer the same group in both bundle declarations, if permitted.
+        let host = hostBundle?.object(forInfoDictionaryKey: "AppGroupIdentifier") as? String
+        let tunnel = packetTunnelBundle?.object(forInfoDictionaryKey: "AppGroupIdentifier") as? String
+        guard let host, host == tunnel, usableAppGroups.contains(host) else { return nil }
+        return host
+    }()
+
+    /// A selected shared group is validated by containerURL in EACH process.
+    /// With several valid, non-preferred groups, ambiguity is a real error.
     public static let resolvedAppGroupID: String? = {
         if let preferredAppGroup { return preferredAppGroup }
         return usableAppGroups.count == 1 ? usableAppGroups[0] : nil
     }()
 
-    /// True when several app groups remained eligible and none was preferred:
-    /// the chosen group is deterministic, but not provably the intended one.
     public static var appGroupSelectionAmbiguous: Bool {
         preferredAppGroup == nil && usableAppGroups.count > 1
     }
+
+    /// Non-sensitive diagnostics for GBox/other re-signing tools.
+    /// Does not claim that the extension can access a container merely because
+    /// the host can; the extension repeats the same live access check.
+    public static var signingDiagnostics: String {
+        let own = SignedEntitlements.stringArray("com.apple.security.application-groups")
+        let peer = peerBundle.map {
+            SignedEntitlements.stringArray("com.apple.security.application-groups", of: $0)
+        } ?? []
+        return "host=\(packageName); tunnel=\(extensionBundleID); " +
+            "ownXMLGroups=\(own.count); peerXMLGroups=\(peer.count); " +
+            "usableGroups=\(usableAppGroups.count); " +
+            "resolved=\(resolvedAppGroupID ?? "none"); " +
+            "ambiguous=\(appGroupSelectionAmbiguous)"
+    }
+
 }
