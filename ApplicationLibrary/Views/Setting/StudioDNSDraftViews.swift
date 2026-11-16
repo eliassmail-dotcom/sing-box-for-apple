@@ -188,7 +188,7 @@ struct StudioDNSCatalogPickerView: View {
                 Image(systemName: draft.contains(item.id, in: role)
                       ? "checkmark.square.fill" : "square")
                     .font(.title3)
-                    .foregroundStyle(draft.contains(item.id, in: role) ? .green : .secondary)
+                    .foregroundStyle(draft.contains(item.id, in: role) ? Color.green : Color.secondary)
             }
             .contentShape(Rectangle())
             .padding(.vertical, 6)
