@@ -119,7 +119,7 @@ open class ExtensionProvider: NEPacketTunnelProvider {
         // The desired snapshot is refreshed by the app whenever the selected
         // profile or its overrides change. If it is damaged or no longer valid,
         // retain the last successfully started configuration.
-        if let desired = try? loadPersistedStartOptions(), let desired {
+        if let desired = try? loadPersistedStartOptions() {
             do {
                 try validateStartOptions(desired)
                 return desired
@@ -127,7 +127,7 @@ open class ExtensionProvider: NEPacketTunnelProvider {
                 Self.logger.error("Desired start snapshot rejected: \(error.localizedDescription)")
             }
         }
-        if let lastGood = try? loadLastGoodStartOptions(), let lastGood {
+        if let lastGood = try? loadLastGoodStartOptions() {
             try validateStartOptions(lastGood)
             return lastGood
         }
