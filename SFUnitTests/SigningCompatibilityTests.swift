@@ -91,4 +91,62 @@ final class SigningCompatibilityTests: XCTestCase {
         XCTAssertNil(SignedEntitlements.parse(unsigned))
         XCTAssertFalse(SignedEntitlements.hasDEREntitlements(unsigned))
     }
+    func testDEROnlySigningUsesMutuallyDeclaredAppGroupCandidate() {
+        XCTAssertEqual(
+            AppConfiguration.candidateAppGroups(
+                ownSigned: [], peerSigned: [],
+                hostConfigured: "group.example.shared",
+                tunnelConfigured: "group.example.shared"
+            ),
+            ["group.example.shared"]
+        )
+    }
+
+    func testMismatchNeverTrustsUnsignedPlistOverReadableSignature() {
+        XCTAssertEqual(
+            AppConfiguration.candidateAppGroups(
+                ownSigned: ["group.example.host"],
+                peerSigned: ["group.example.extension"],
+                hostConfigured: "group.example.shared",
+                tunnelConfigured: "group.example.shared"
+            ),
+            []
+        )
+    }
+
+    func testMixedXMLAndDEROnlySigningUsesKnownSignedCandidates() {
+        XCTAssertEqual(
+            AppConfiguration.candidateAppGroups(
+                ownSigned: ["group.example.actual"],
+                peerSigned: [],
+                hostConfigured: "group.example.stale",
+                tunnelConfigured: "group.example.stale"
+            ),
+            ["group.example.actual"]
+        )
+    }
+
+    func testAmbiguousGroupSetIsNotSilentlyReduced() {
+        XCTAssertEqual(
+            AppConfiguration.candidateAppGroups(
+                ownSigned: ["group.example.b", "group.example.a"],
+                peerSigned: ["group.example.a", "group.example.b"],
+                hostConfigured: nil,
+                tunnelConfigured: nil
+            ),
+            ["group.example.a", "group.example.b"]
+        )
+    }
+
+    func testFallbackRejectsMissingOrDivergentDeclarations() {
+        XCTAssertTrue(AppConfiguration.candidateAppGroups(
+            ownSigned: [], peerSigned: [],
+            hostConfigured: nil, tunnelConfigured: "group.example.x"
+        ).isEmpty)
+        XCTAssertTrue(AppConfiguration.candidateAppGroups(
+            ownSigned: [], peerSigned: [],
+            hostConfigured: "group.example.x", tunnelConfigured: "group.example.y"
+        ).isEmpty)
+    }
+
 }
