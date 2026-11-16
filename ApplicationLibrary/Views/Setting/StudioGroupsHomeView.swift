@@ -29,7 +29,6 @@ struct StudioGroupsHomeView: View {
                             Spacer()
                             Text("Позже").font(.caption2).foregroundStyle(.tertiary)
                         }
-                        .accessibilityAddTraits(.isStaticText)
                     } else {
                         NavigationLink {
                             StudioGroupCategoryView(kind: kind, items: data.items(kind))
@@ -139,12 +138,12 @@ private struct StudioGroupObjectView: View {
             }
             if !item.members.isEmpty {
                 Section("Участники · \(item.members.count)") {
-                    ForEach(Array(item.members.enumerated()), id: \.offset) { index, name in
+                    ForEach(item.members.indices, id: \.self) { index in
                         HStack {
                             Text("\(index + 1)")
                                 .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
                                 .frame(width: 26)
-                            Text(name)
+                            Text(item.members[index])
                         }
                     }
                 }
