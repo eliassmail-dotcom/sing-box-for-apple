@@ -363,6 +363,26 @@ private struct StudioAddressPolicyDetailsView: View {
                 StudioLabelValue("Исходные правила",
                                value: policy.routeRules.map { String($0 + 1) }.joined(separator: ", "))
             }
+            let linked = StudioDNSSchemeCatalog(document: model.document)
+                .linkedSchemes(forDNSRules: policy.dnsRules)
+            Section("DNS-схема") {
+                if linked.isEmpty {
+                    Text("Однозначная переиспользуемая DNS-последовательность в этой группе не обнаружена. Проверяйте исходные DNS-правила: приложение не создаёт выдуманную схему.")
+                        .font(.footnote).foregroundStyle(.secondary)
+                } else {
+                    ForEach(linked) { scheme in
+                        NavigationLink {
+                            StudioDNSSchemeDetailView(scheme: scheme)
+                        } label: {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(scheme.title).font(.subheadline.weight(.medium))
+                                Text(scheme.serversInOrder.joined(separator: " → "))
+                                    .font(.caption).foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                }
+            }
             Section("DNS · найдено в JSON") {
                 StudioLabelValue("DNS-серверы в правилах",
                                value: policy.dnsTargets.isEmpty ? "Нет точного совпадения" : policy.dnsTargets.joined(separator: ", "))
