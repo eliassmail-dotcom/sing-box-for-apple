@@ -105,6 +105,9 @@ final class LocalGeneratorEngineTests: XCTestCase {
             let server = try XCTUnwrap(servers.first { ($0["tag"] as? String) == tag })
             XCTAssertNil(server["detour"], "DoH bootstrap detour must not be emitted for LX")
         }
+        XCTAssertTrue(servers.contains { ($0["tag"] as? String) == "mskix-dns" })
+        XCTAssertTrue(servers.contains { ($0["tag"] as? String) == "mskix-dns-backup" })
+        XCTAssertFalse(servers.contains { ($0["tag"] as? String) == "karing-direct-dns" })
     }
 
     func testBundledGeneratorBuildsRealJSONOfflineWithoutYandex() async throws {
