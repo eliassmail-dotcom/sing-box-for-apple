@@ -18,10 +18,21 @@ enum WidgetAppConfiguration {
         // host app / packet-tunnel extension signed groups, then the single
         // remaining usable group. The widget, the app and the tunnel must all
         // resolve the same group.
-        let ownGroups = SignedEntitlements.stringArray("com.apple.security.application-groups")
+        // DER-only re-signatures can omit the XML slot entirely. Treat
+        // provisioning groups only as candidate *names* and require a live
+        // App Group container to confirm actual entitlement in this process.
+        let ownXML = SignedEntitlements.stringArray("com.apple.security.application-groups")
+        let ownGroups = ownXML.isEmpty
+            ? SignedEntitlements.provisionedAppGroups(of: Bundle.main) : ownXML
+        let peerGroups = peerBundleGroups() ?? []
         var candidates = ownGroups
-        if let peerGroups = peerBundleGroups(), !peerGroups.isEmpty {
-            candidates = Array(Set(candidates).intersection(Set(peerGroups)))
+        if !peerGroups.isEmpty {
+            candidates = candidates.isEmpty ? peerGroups
+                : Array(Set(candidates).intersection(Set(peerGroups)))
+        }
+        if candidates.isEmpty && ownGroups.isEmpty && peerGroups.isEmpty,
+           let preferred = Bundle.main.object(forInfoDictionaryKey: "AppGroupIdentifier") as? String {
+            candidates = [preferred]
         }
         let usable = candidates
             .filter { FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: $0) != nil }
@@ -85,7 +96,8 @@ enum WidgetAppConfiguration {
             guard let ext = info["NSExtension"] as? [String: Any] else { continue }
             guard ext["NSExtensionPointIdentifier"] as? String == "com.apple.networkextension.packet-tunnel" else { continue }
             guard let bundle = Bundle(url: item) else { continue }
-            return SignedEntitlements.stringArray("com.apple.security.application-groups", of: bundle)
+            let xml = SignedEntitlements.stringArray("com.apple.security.application-groups", of: bundle)
+            return xml.isEmpty ? SignedEntitlements.provisionedAppGroups(of: bundle) : xml
         }
         return nil
     }
