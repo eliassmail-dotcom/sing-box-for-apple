@@ -62,7 +62,7 @@ final class StudioDNSExperienceTests: XCTestCase {
         XCTAssertEqual(steps.map(\.index), [0, 1, 2, 3, 4])
         XCTAssertEqual(steps.map(\.action),
                        ["evaluate", "route", "route", "respond", "route"])
-        XCTAssertEqual(steps[0].condition, "2 точных доменов")
+        XCTAssertEqual(steps[0].condition, "2 точных домена")
         XCTAssertTrue(steps[0].result.contains("следующими правилами"))
         XCTAssertEqual(steps[1].responseDependency, "Результат проверки «probe»")
         XCTAssertTrue(steps[1].race)
@@ -80,13 +80,13 @@ final class StudioDNSExperienceTests: XCTestCase {
         let model = StudioSemanticModel(document: doc)
         XCTAssertEqual(model.defaultDNS, "direct-a")
         XCTAssertEqual(model.defaultRoute, "Proxy")
-        XCTAssertEqual(model.addressPolicies.first?.title, "2 точных доменов")
+        XCTAssertEqual(model.addressPolicies.first?.title, "2 точных домена")
     }
 
     func testDNSConditionsDoNotClaimSingleDomainForLists() {
         let exact = ["a.example", "b.example", "c.example"]
         XCTAssertEqual(StudioDNSExplanation.exactDomainCount(["domain": exact]), 3)
-        XCTAssertEqual(StudioDNSExplanation.conditionsDescription(["domain": exact]), "3 точных доменов")
+        XCTAssertEqual(StudioDNSExplanation.conditionsDescription(["domain": exact]), "3 точных домена")
         XCTAssertEqual(StudioDNSExplanation.conditionsDescription([:]),
                        "Если предыдущие правила не завершили обработку")
     }
