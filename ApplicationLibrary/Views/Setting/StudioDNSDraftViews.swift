@@ -102,7 +102,7 @@ struct StudioDNSDraftProfileView: View {
                 switch role {
                 case .directTraffic:
                     Text("При реализации этот профиль предназначен для прямого трафика. Путь подключения каждого DNS нужно проверять отдельно.")
-                case .proxyTraffic:
+                case .proxyTraffic, .geminiTraffic:
                     Text("При реализации эти DNS должны подключаться через разрешённый прокси, без скрытого перехода на DIRECT.")
                 case .proxyHosts, .dnsHosts:
                     Text("Служебный DNS должен быть доступен до подключения прокси. Для защиты от циклов он проверяется отдельно.")
@@ -212,7 +212,7 @@ struct StudioDNSCatalogOverviewView: View {
     var body: some View {
         List {
             Section {
-                Text("Справочник адресов DNS. Чтобы добавить сервер в Direct DNS или Proxy DNS, открой соответствующий профиль и нажми «Выбрать DNS-серверы».")
+                Text("Серверы, обнаруженные в загруженной конфигурации. Их исходные теги и адреса показаны без изменений.")
                     .font(.footnote).foregroundStyle(.secondary)
             }
             ForEach(filtered) { item in
