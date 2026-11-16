@@ -185,6 +185,11 @@ public class ExtensionProfile: ObservableObject {
             connectedDate = Date()
             return
         }
+        guard FilePath.hasSharedContainer else {
+            throw NSError(domain: "SigningCompatibility", code: 1, userInfo: [
+                NSLocalizedDescriptionKey: "VPN unavailable: the app and Packet Tunnel extension require a matching signed App Group.",
+            ])
+        }
         // Build and validate the complete effective configuration before
         // asking NetworkExtension to start. Never persist an unvalidated candidate.
         let options = try await prepareStartOptions()
@@ -370,10 +375,15 @@ public class ExtensionProfile: ObservableObject {
 
     public static func load() async throws -> ExtensionProfile? {
         let managers = try await NETunnelProviderManager.loadAllFromPreferences()
-        if managers.isEmpty {
-            return nil
-        }
-        let profile = ExtensionProfile(managers[0])
+        // A re-signed installation must never attach to another application's
+        // NE manager or an obsolete provider from a previous signing identity.
+        let expectedIDs = Set(AppConfiguration.packetTunnelBundleIDs)
+        guard let owned = managers.first(where: {
+            guard let tunnel = $0.protocolConfiguration as? NETunnelProviderProtocol,
+                  let provider = tunnel.providerBundleIdentifier else { return false }
+            return expectedIDs.contains(provider)
+        }) else { return nil }
+        let profile = ExtensionProfile(owned)
         if profile.status == .disconnected {
             schedulePromoteOOMDraft()
         }
@@ -381,6 +391,11 @@ public class ExtensionProfile: ObservableObject {
     }
 
     public static func install() async throws {
+        guard FilePath.hasSharedContainer else {
+            throw NSError(domain: "SigningCompatibility", code: 1, userInfo: [
+                NSLocalizedDescriptionKey: "VPN unavailable: the app and Packet Tunnel extension require a matching signed App Group.",
+            ])
+        }
         let manager = NETunnelProviderManager()
         manager.localizedDescription = Variant.applicationName
         let tunnelProtocol = NETunnelProviderProtocol()

@@ -160,6 +160,16 @@ open class ExtensionProvider: NEPacketTunnelProvider {
     }
 
     override open func startTunnel(options startOptions: [String: NSObject]?) async throws {
+        #if os(iOS)
+            // Local Application Support is a safe UI fallback, not a shared
+            // container. Refuse tunnel startup when re-signing removed its
+            // matching App Group entitlement.
+            guard FilePath.hasSharedContainer else {
+                throw ExtensionStartupError(
+                    "(packet-tunnel) error: missing common signed App Group; re-sign the app and Packet Tunnel with matching entitlements"
+                )
+            }
+        #endif
         let basePath: String
         let workingPath: String
         let tempPath: String
