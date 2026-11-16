@@ -149,4 +149,45 @@ final class SigningCompatibilityTests: XCTestCase {
         ).isEmpty)
     }
 
+    func testExtractAuthorizedGroupNamesFromCMSWrappedProfile() throws {
+        let profile = try PropertyListSerialization.data(fromPropertyList: [
+            "Entitlements": [
+                "com.apple.security.application-groups": [
+                    "group.example.b", "group.example.a", "group.example.a"
+                ],
+            ],
+        ], format: .xml, options: 0)
+        let wrapped = Data([0x30, 0x82, 0x00, 0x00]) + profile + Data([0xff, 0xee])
+        XCTAssertEqual(SignedEntitlements.provisionedAppGroups(in: wrapped),
+                       ["group.example.a", "group.example.b"])
+    }
+
+    func testProvisioningPermissionsCannotOverrideContradictorySignedRights() {
+        XCTAssertEqual(AppConfiguration.candidateAppGroups(
+            ownSigned: ["group.example.host"],
+            peerSigned: ["group.example.tunnel"],
+            hostConfigured: nil,
+            tunnelConfigured: nil,
+            hostProvisioned: ["group.example.both"],
+            tunnelProvisioned: ["group.example.both"]
+        ), [])
+    }
+
+    func testDEROnlyProfilesSelectCommonAuthorizedCandidate() {
+        XCTAssertEqual(AppConfiguration.candidateAppGroups(
+            ownSigned: [], peerSigned: [],
+            hostConfigured: "group.example.stale",
+            tunnelConfigured: "group.example.stale",
+            hostProvisioned: ["group.example.host", "group.example.shared"],
+            tunnelProvisioned: ["group.example.shared", "group.example.tunnel"]
+        ), ["group.example.shared"])
+    }
+
+    func testMalformedProvisioningDoesNotAuthorizeAnyGroup() {
+        XCTAssertEqual(SignedEntitlements.provisionedAppGroups(in: Data([0x30, 0x00, 0xff])), [])
+        XCTAssertEqual(SignedEntitlements.provisionedAppGroups(
+            in: Data(repeating: 0, count: 3_000_001)
+        ), [])
+    }
+
 }
