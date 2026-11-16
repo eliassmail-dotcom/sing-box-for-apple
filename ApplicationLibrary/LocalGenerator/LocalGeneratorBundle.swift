@@ -1,7 +1,9 @@
 import Foundation
 
-/// v1.4.48r5 Yandex generator, bundled without network functions or secrets.
-/// Derived from the verified source archive and executed only by isolated WebKit.
+/// v1.4.48r6 Yandex generator, bundled without network functions or secrets.
+/// r6 changes only two MSK-IX DNS tags from the verified r5 generator.
+/// The verified r5 zlib image is retained and those exact tag substitutions
+/// are applied in memory after integrity verification.
 public enum LocalGeneratorBundle {
     public static func javascript() throws -> String {
         guard let wrapped = Data(base64Encoded: encoded.filter { !$0.isWhitespace }) else {
@@ -29,7 +31,12 @@ public enum LocalGeneratorBundle {
               script.contains("__localYcGenerator") else {
             throw LocalGeneratorPayloadError.invalidEncoding
         }
+        // The r6 release is a tag-only delta from the verified r5 source.
+        // Replace the longer name first so the shorter key cannot overlap.
         return script
+            .replacingOccurrences(of: "karing-direct-dns-backup", with: "mskix-dns-backup")
+            .replacingOccurrences(of: "karing-direct-dns", with: "mskix-dns")
+            .replacingOccurrences(of: "v1.4.48r5", with: "v1.4.48r6")
     }
     private static func checksum(_ data: Data) -> UInt32 {
         let modulus: UInt32 = 65_521
