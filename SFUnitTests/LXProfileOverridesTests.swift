@@ -65,6 +65,70 @@ final class LXProfileOverridesTests: XCTestCase {
         XCTAssertEqual(balancer["sticky_hash"] as? [String], ["none"])
     }
 
+    func testModeOverrideRejectsLeakedNativeAdaptiveFields() throws {
+        let source = """
+        {"outbounds":[
+          {"type":"urltest","tag":"Auto","outbounds":["a","b"],"mode":"least_test",
+           "tolerance":20,"tolerance_percent":25,"min_hold":"30s",
+           "priority_outbounds":["a"],"passive_guard":true,
+           "balancer":{"pool":2,"pool_tolerance":175}},
+          {"type":"vless","tag":"a"},{"type":"vless","tag":"b"}
+        ]}
+        """
+        for mode in ["failover", "round_robin"] {
+            var store = LXOverridesStore()
+            var settings = LXProfileSettings()
+            settings.urlTestDefault.mode = mode
+            store.profiles["42"] = settings
+            let root = try parsed(LXProfileOverrides.apply(source, profileID: 42, storedJSON: store.encode()))
+            let groups = try XCTUnwrap(root["outbounds"] as? [[String: Any]])
+            let group = groups[0]
+            XCTAssertEqual(group["mode"] as? String, mode)
+            for field in ["tolerance", "tolerance_percent", "min_hold", "priority_outbounds"] {
+                XCTAssertNil(group[field], "\(mode) leaked \(field)")
+            }
+            if mode == "failover" {
+                XCTAssertNil(group["balancer"])
+                XCTAssertEqual(group["passive_guard"] as? Bool, true)
+            } else {
+                XCTAssertNotNil(group["balancer"])
+                XCTAssertNil(group["passive_guard"])
+            }
+        }
+    }
+
+    func testInheritedModeNormalizationWhenOtherOverrideChangesProfile() throws {
+        let source = """
+        {"outbounds":[
+          {"type":"urltest","tag":"Failover","outbounds":["a"],"mode":"failover",
+           "tolerance_percent":20,"min_hold":"30s","balancer":{"pool":2},"custom_extra":"keep"},
+          {"type":"urltest","tag":"RoundRobin","outbounds":["a"],"mode":"round_robin",
+           "tolerance":20,"priority_outbounds":["a"],"passive_guard":true},
+          {"type":"urltest","tag":"Least","outbounds":["a"],"mode":"least_test",
+           "balancer":{"pool":2},"tolerance_percent":20},
+          {"type":"vless","tag":"a"}
+        ]}
+        """
+        var store = LXOverridesStore()
+        var settings = LXProfileSettings()
+        settings.probeURLs = "https://health.example/ping"
+        store.profiles["42"] = settings
+        let root = try parsed(LXProfileOverrides.apply(source, profileID: 42, storedJSON: store.encode()))
+        let groups = try XCTUnwrap(root["outbounds"] as? [[String: Any]])
+        XCTAssertNil(groups[0]["tolerance_percent"])
+        XCTAssertNil(groups[0]["min_hold"])
+        XCTAssertNil(groups[0]["balancer"])
+        XCTAssertEqual(groups[0]["custom_extra"] as? String, "keep")
+        XCTAssertNil(groups[1]["tolerance"])
+        XCTAssertNil(groups[1]["priority_outbounds"])
+        XCTAssertNil(groups[1]["passive_guard"])
+        XCTAssertNil(groups[2]["balancer"])
+        XCTAssertEqual(groups[2]["tolerance_percent"] as? Int, 20)
+        for group in groups.prefix(3) {
+            XCTAssertEqual(group["urls"] as? [String], ["https://health.example/ping"])
+        }
+    }
+
     func testDNSAndWGOnOffPreserveMTU() throws {
         var store = LXOverridesStore()
         var profile = LXProfileSettings()
