@@ -44,13 +44,27 @@ The server itself must have its own configured subscription source.
 
 ## Verification
 
-Node parity test from the uploaded archive:
-node test_local_parity.mjs → PARITY_OK 20 (all 20 combinations of profile,
-core and platform for deterministic offline fixtures).
+Source: uploaded `VPN_Config_v1.4.48r5_VERIFIED_YANDEX_DEPLOY(1).zip`.
+The bundled JavaScript contains the 13 exact r5 routing/DNS/profile modules
+and their immutable `base-template.json`, adapted to a synchronous,
+network-disabled CommonJS registry for WebKit. No live subscription or
+Yandex tokens are embedded.
 
-This verifies generator logic in Node, not operation on iOS. Xcode CI and
-on-device tests must still validate the embedded WebKit runtime,
-signing/runtime permissions, local creation and startup.
+Verification in an independent Node VM:
+- Upstream r5 source tests: 18/18 PASS.
+- Bundled WebKit-compatible generator vs native r5 source: 20/20 JSON outputs
+  byte-identical across core (LX/stock), variant (corporate/personal/guest/NB/CD)
+  and platform (iOS/Windows), using synthetic nodes.
+- With 2 Gemini exits, Super A has 4 paths, VLESS uses
+  `bootstrap-direct-dns-group`, and Cloudflare/Google bootstrap-DoH
+  does not include a `detour`. `NET_FALLBACK=true` enables
+  `route.auto_detect_interface`.
+- Bundled uncompressed JS SHA-256:
+  `efde145e9068caf1b7f1aa095b5ac8d025aafb292045b5f196e3366d24490c6a`.
+
+These checks verify static and deterministic generator parity, **not**
+signed-device VPN connectivity. The Xcode simulator and on-device tests
+must still validate embedded WebKit execution, signing, startup and routing.
 
 ## Security
 
