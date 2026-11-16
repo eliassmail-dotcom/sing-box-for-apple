@@ -270,7 +270,7 @@ struct StudioDNSSchemeDetailView: View {
                                     .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
                                 Text(step.action == "evaluate" ? "Проверка DNS" :
                                      step.action == "respond" ? "Обработка ответа" :
-                                     step.action == "route" ? "Резервный маршрут" : step.action)
+                                     step.action == "route" ? "DNS-маршрут" : step.action)
                                     .font(.subheadline.weight(.medium))
                             }
                             if let server = step.server {
