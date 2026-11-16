@@ -185,11 +185,21 @@ public class ExtensionProfile: ObservableObject {
             connectedDate = Date()
             return
         }
-        guard FilePath.hasSharedContainer else {
-            throw NSError(domain: "SigningCompatibility", code: 1, userInfo: [
-                NSLocalizedDescriptionKey: "VPN unavailable: the app and Packet Tunnel extension require a matching signed App Group.",
-            ])
-        }
+        #if os(iOS)
+            // A shared container is preferred for cross-process commands, but
+            // NOT an iOS prerequisite for launching a Packet Tunnel. The app
+            // passes the validated config directly in startVPNTunnel(options:).
+            // Without App Group the extension stores its own last-good snapshot.
+            if !FilePath.hasSharedContainer {
+                logger.warning("VPN starting in isolated container mode: \(AppConfiguration.signingDiagnostics)")
+            }
+        #else
+            guard FilePath.hasSharedContainer else {
+                throw NSError(domain: "SigningCompatibility", code: 1, userInfo: [
+                    NSLocalizedDescriptionKey: "Shared application container is unavailable.",
+                ])
+            }
+        #endif
         // Build and validate the complete effective configuration before
         // asking NetworkExtension to start. Never persist an unvalidated candidate.
         let options = try await prepareStartOptions()
@@ -391,11 +401,20 @@ public class ExtensionProfile: ObservableObject {
     }
 
     public static func install() async throws {
-        guard FilePath.hasSharedContainer else {
-            throw NSError(domain: "SigningCompatibility", code: 1, userInfo: [
-                NSLocalizedDescriptionKey: "VPN unavailable: the app and Packet Tunnel extension require a matching signed App Group.",
-            ])
-        }
+        #if os(iOS)
+            // Do not reject VPN installation based solely on App Group
+            // signatures: NETunnelProviderManager is the authority for whether
+            // the current provisioning profile permits Packet Tunnel.
+            if !FilePath.hasSharedContainer {
+                logger.warning("Installing VPN without App Group; isolated start required: \(AppConfiguration.signingDiagnostics)")
+            }
+        #else
+            guard FilePath.hasSharedContainer else {
+                throw NSError(domain: "SigningCompatibility", code: 1, userInfo: [
+                    NSLocalizedDescriptionKey: "Shared application container is unavailable.",
+                ])
+            }
+        #endif
         let manager = NETunnelProviderManager()
         manager.localizedDescription = Variant.applicationName
         let tunnelProtocol = NETunnelProviderProtocol()
