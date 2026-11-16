@@ -168,4 +168,104 @@ final class StudioDNSDraftStore: ObservableObject {
         assignments[role] = []
     }
 }
+
+/**
+ Read-only view of the DNS program actually present in the selected profile.
+ NEVER writes or compiles a speculative direct/proxy/Gemini policy.
+ Network path (detour) is explicitly distinct from the conditions on a DNS query.
+ */
+struct StudioDNSObservedProfile {
+    let role: StudioDNSRole
+    let servers: [StudioDNSExplanation.ServerBinding]
+    let rules: [StudioDNSExplanation.FlowStep]
+    let unresolvedResolvers: [String]
+    let finalServer: String?
+
+    init(document: StudioDocument, role: StudioDNSRole) {
+        self.role = role
+        let bindings = StudioDNSExplanation.bindings(document: document)
+        let steps = StudioDNSExplanation.steps(document: document)
+        let dns = document.root["dns"] as? [String: Any] ?? [:]
+        let route = document.root["route"] as? [String: Any] ?? [:]
+        finalServer = dns["final"] as? String
+
+        var namedResolvers: [String] = []
+        func collect(_ value: Any?) {
+            if let string = value as? String, !string.isEmpty {
+                namedResolvers.append(string)
+            } else if let strings = value as? [String] {
+                namedResolvers.append(contentsOf: strings.filter { !$0.isEmpty })
+            }
+        }
+
+        switch role {
+        case .directTraffic:
+            servers = bindings.filter { $0.family == .direct }
+        case .proxyTraffic:
+            servers = bindings.filter { $0.family == .proxy }
+        case .geminiTraffic:
+            // A route called Gemini is not automatically a separate DNS profile.
+            // Include only rules with explicit Gemini selectors/conditions.
+            let tagged = steps.filter { Self.hasGeminiCondition($0.raw) }
+            let evaluated = Set(tagged.compactMap(\.server))
+            servers = bindings.filter { evaluated.contains($0.name) }
+        case .proxyHosts:
+            collect(route["default_domain_resolver"])
+            for item in document.array("outbounds") + document.array("endpoints") {
+                collect(item["domain_resolver"])
+                collect(item["address_resolver"])
+            }
+            let names = Set(namedResolvers)
+            servers = bindings.filter { names.contains($0.name) }
+        case .dnsHosts:
+            collect(dns["default_domain_resolver"])
+            for item in dns["servers"] as? [[String: Any]] ?? [] {
+                collect(item["address_resolver"])
+                collect(item["domain_resolver"])
+            }
+            let names = Set(namedResolvers)
+            servers = bindings.filter { names.contains($0.name) }
+        }
+
+        let available = Set(bindings.map(\.name))
+        unresolvedResolvers = Array(Set(namedResolvers.filter { !available.contains($0) })).sorted()
+
+        let targetServers = Set(servers.map(\.name))
+        let directSteps: [StudioDNSExplanation.FlowStep]
+        if role == .geminiTraffic {
+            directSteps = steps.filter { Self.hasGeminiCondition($0.raw) }
+        } else {
+            directSteps = steps.filter { step in
+                step.server.map { targetServers.contains($0) } ?? false
+            }
+        }
+        // Include respond steps referencing an evaluate result by its actual tag.
+        let evaluateTags = Set(directSteps.compactMap { step -> String? in
+            guard step.action == "evaluate" else { return nil }
+            return step.raw["tag"] as? String
+        })
+        let indexes = Set(directSteps.map(\.index))
+        rules = steps.filter { step in
+            indexes.contains(step.index)
+                || ((step.raw["match_response"] as? String).map {
+                    evaluateTags.contains($0)
+                } ?? false)
+        }
+    }
+
+    private static func hasGeminiCondition(_ rule: [String: Any]) -> Bool {
+        // Match explicit DNS conditions, not a server's name or a VPN route.
+        let keys = ["domain", "domain_suffix", "domain_keyword",
+                    "domain_regex", "rule_set", "clash_mode"]
+        return keys.contains { key in
+            if let list = rule[key] as? [String] {
+                return list.contains { $0.localizedCaseInsensitiveContains("gemini") }
+            }
+            if let value = rule[key] as? String {
+                return value.localizedCaseInsensitiveContains("gemini")
+            }
+            return false
+        }
+    }
+}
 #endif
