@@ -228,7 +228,7 @@ public struct LXRuntimeSettingsView: View {
     }
 
     private func overrideValue(_ mode: String) -> Bool? {
-        switch mode {
+        return switch mode {
         case "on": true
         case "off": false
         default: nil
