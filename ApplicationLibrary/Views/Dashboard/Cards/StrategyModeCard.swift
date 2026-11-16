@@ -17,7 +17,7 @@ public struct StrategyModeCard: View {
             if let strategyGroup {
                 DashboardCardView(title: "") {
                     VStack(alignment: .leading, spacing: 10) {
-                        DashboardCardHeader(icon: "wand.and.stars", title: "Режим")
+                        DashboardCardHeader(icon: "wand.and.stars", title: "Выбор узлов")
 
                         // Primary strategy first: full width and separate Base/White
                         // availability, instead of a misleading aggregate count.
