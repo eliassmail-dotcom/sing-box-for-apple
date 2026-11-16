@@ -39,6 +39,36 @@ public enum SignedEntitlements {
         return dict[key] as? [String] ?? []
     }
 
+    /// The provisioning profile may list App Group identifiers authorized for
+    /// re-signing. This is ONLY a name-discovery fallback for DER-only signatures.
+    /// Authorization is not an actual entitlement: each candidate must still
+    /// succeed in FileManager.containerURL in the running process.
+    public static func provisionedAppGroups(of bundle: Bundle) -> [String] {
+        let url = bundle.bundleURL.appendingPathComponent("embedded.mobileprovision")
+        guard let data = try? Data(contentsOf: url, options: .mappedIfSafe) else { return [] }
+        return provisionedAppGroups(in: data)
+    }
+
+    /// Extracts an embedded XML property list from the CMS-wrapped profile.
+    /// Malformed input yields no candidates; never treats the profile as rights.
+    public static func provisionedAppGroups(in data: Data) -> [String] {
+        guard data.count <= 3_000_000,
+              let opening = data.range(of: Data("<plist".utf8)),
+              let closing = data.range(of: Data("</plist>".utf8), in: opening.lowerBound..<data.endIndex),
+              closing.upperBound > opening.lowerBound else {
+            return []
+        }
+        let plist = data.subdata(in: opening.lowerBound..<closing.upperBound)
+        guard let dictionary = (try? PropertyListSerialization.propertyList(
+            from: plist, options: [], format: nil
+        )) as? [String: Any],
+              let entitlements = dictionary["Entitlements"] as? [String: Any],
+              let groups = entitlements["com.apple.security.application-groups"] as? [String] else {
+            return []
+        }
+        return Array(Set(groups.filter { $0.hasPrefix("group.") })).sorted()
+    }
+
     /// Parses the XML entitlements blob out of a Mach-O image (thin or universal).
     public static func parse(_ data: Data) -> [String: Any]? {
         var slice = data
