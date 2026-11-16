@@ -18,6 +18,20 @@ struct StudioDNSHomeView: View {
                 Text("Серверы и последовательность DNS-правил загружены из выбранного JSON. Приоритеты, RACE и резервирование отображаются только там, где они реально описаны; ничего не выбирается и не сохраняется.")
                     .font(.footnote).foregroundStyle(.secondary)
             }
+            Section("DNS-схемы · из действующих правил") {
+                NavigationLink {
+                    StudioDNSSchemeListView(model: model)
+                } label: {
+                    HStack {
+                        Label("DNS-схемы", systemImage: "point.3.connected.trianglepath.dotted")
+                        Spacer()
+                        Text("\(StudioDNSSchemeCatalog(document: model.document).schemes.count)")
+                            .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+                    }
+                }
+                Text("Одинаковые последовательности DNS-проверок объединены в одну схему. Связанные группы адресов, исходные номера правил и порядок обработки сохраняются.")
+                    .font(.footnote).foregroundStyle(.secondary)
+            }
             Section("Для интернет-трафика") {
                 roleLink(.directTraffic)
                 roleLink(.proxyTraffic)
@@ -184,6 +198,124 @@ private struct StudioDNSConfiguredProfileView: View {
             }
         }
         .navigationTitle(role.title)
+        .navigationBarTitleDisplayMode(.inline)
+    }
+}
+
+/// Read-only DNS scheme library; the JSON remains the single source of truth.
+struct StudioDNSSchemeListView: View {
+    let model: StudioSemanticModel
+    private var catalog: StudioDNSSchemeCatalog {
+        StudioDNSSchemeCatalog(document: model.document)
+    }
+
+    var body: some View {
+        let items = catalog
+        List {
+            Section {
+                Text("DNS-схема — общая последовательность реальных evaluate/respond/route правил. Она может использоваться несколькими группами адресов. Это представление JSON, а не отдельная настройка ядра.")
+                    .font(.footnote).foregroundStyle(.secondary)
+            }
+            Section("Схемы · \(items.schemes.count)") {
+                ForEach(items.schemes) { scheme in
+                    NavigationLink {
+                        StudioDNSSchemeDetailView(scheme: scheme)
+                    } label: {
+                        VStack(alignment: .leading, spacing: 5) {
+                            Text(scheme.title).font(.subheadline.weight(.semibold))
+                            Text(scheme.serversInOrder.joined(separator: " → "))
+                                .font(.caption).foregroundStyle(.secondary)
+                                .lineLimit(3)
+                            Text("Групп адресов: \(scheme.bindings.count) · \(scheme.hasExplicitRace ? "RACE присутствует в JSON" : "Без явного RACE")")
+                                .font(.caption2).foregroundStyle(.tertiary)
+                        }
+                    }
+                }
+            }
+            Section("Остальные правила") {
+                Text("\(items.ungroupedRuleIndexes.count) записей не объединены в схему: одиночные DNS-правила, блокировки, специальные условия или неполные последовательности. Все они доступны без потерь.")
+                    .font(.footnote).foregroundStyle(.secondary)
+                NavigationLink {
+                    StudioDNSRuleFlowView(model: model, filteredIndexes: nil)
+                } label: {
+                    Label("Все DNS-правила в оригинальном порядке", systemImage: "list.number")
+                }
+            }
+        }
+        .navigationTitle("DNS-схемы")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+}
+
+struct StudioDNSSchemeDetailView: View {
+    let scheme: StudioDNSSchemeCatalog.Scheme
+
+    var body: some View {
+        List {
+            Section {
+                Text("Одинаковый DNS-порядок применяется в \(scheme.bindings.count) наборах условий. Отображаемый порядок этапов получен из dns.rules, а не задан отдельным вымышленным параметром priority.")
+                    .font(.footnote).foregroundStyle(.secondary)
+            }
+            Section("DNS-последовательность") {
+                ForEach(scheme.template) { step in
+                    NavigationLink {
+                        StudioNativeDetailView(
+                            title: "DNS-правило №\(step.index + 1)",
+                            path: "dns.rules[\(step.index)]", value: step.raw
+                        )
+                    } label: {
+                        VStack(alignment: .leading, spacing: 5) {
+                            HStack(spacing: 8) {
+                                Text("№\(step.index + 1)")
+                                    .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+                                Text(step.action == "evaluate" ? "Проверка DNS" :
+                                     step.action == "respond" ? "Обработка ответа" :
+                                     step.action == "route" ? "Резервный маршрут" : step.action)
+                                    .font(.subheadline.weight(.medium))
+                            }
+                            if let server = step.server {
+                                Text(server)
+                                    .font(.subheadline).foregroundStyle(.secondary)
+                            }
+                            if let responseTag = step.responseTag {
+                                Text("Результат проверки: \(responseTag)")
+                                    .font(.caption2).foregroundStyle(.tertiary)
+                            }
+                            if let timeout = step.timeout {
+                                Text("Таймаут: \(timeout)")
+                                    .font(.caption2).foregroundStyle(.tertiary)
+                            }
+                            if step.isRace {
+                                Text("RACE: задано в правиле")
+                                    .font(.caption2).foregroundStyle(.secondary)
+                            }
+                            if step.isSpeculative {
+                                Text("Speculative: задано в правиле")
+                                    .font(.caption2).foregroundStyle(.secondary)
+                            }
+                        }
+                        .padding(.vertical, 3)
+                    }
+                }
+            }
+            Section("Связанные группы адресов · \(scheme.bindings.count)") {
+                ForEach(scheme.bindings) { binding in
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text(binding.description).font(.subheadline)
+                        Text("Правила: " + binding.ruleIndexes.map { "#\($0 + 1)" }.joined(separator: ", "))
+                            .font(.caption2).foregroundStyle(.secondary)
+                        NavigationLink {
+                            StudioNativeDetailView(title: "Условия DNS", path: "dns.scheme.conditions",
+                                                   value: binding.conditions)
+                        } label: {
+                            Label("Условия и адреса", systemImage: "list.bullet.rectangle")
+                        }
+                    }
+                    .padding(.vertical, 4)
+                }
+            }
+        }
+        .navigationTitle(scheme.title)
         .navigationBarTitleDisplayMode(.inline)
     }
 }
