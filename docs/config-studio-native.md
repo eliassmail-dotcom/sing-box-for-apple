@@ -63,3 +63,25 @@ and retains DNS fallback, not an invented priority/Race field. The current
 offline generator remains r5 until separately upgraded and verified; Config
 Studio reads whichever profile JSON is selected, including r6 profiles loaded
 from the external generator. No save/apply mutation is part of this change.
+
+## Groups navigation contract (r6, read-only)
+
+The agreed order in **Группы** is:
+1. **Группы узлов** — groups whose JSON explicitly lists concrete outbound tags.
+2. **Динамические группы** — actual `include`/`exclude` filters when recorded in JSON.
+3. **Умные группы** — disabled; quarantine, new-node and health analytics are future work.
+4. **Цепочки** — both native `type: chain` and actual proxy `detour`-linked hops
+   (in r6 the Gemini chain copies are VLESS outbounds with `detour: "Стратегия"`).
+5. **Составные группы** — selectors/URLTests referencing other groups plus nodes.
+
+The primary entry point is **Группы адресов** (destination first), while
+**Группы**, **Стратегии** and **DNS** provide component-first inspection.
+The legacy `Пул A`–`Пул D` entries stay visible as real outbound groups;
+the original dynamic generator distribution algorithm cannot be uniquely
+reconstructed from generated JSON and is not implemented in the editor.
+
+Categorization is a presentation projection only: a selector may also
+appear in Strategies. This must not duplicate or alter configuration objects.
+All source tags and original order are retained, including invisible U+2060
+characters on generated Gemini chain tags. Undefined future group semantics
+must never be fabricated from generated membership.
