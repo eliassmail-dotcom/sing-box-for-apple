@@ -11,7 +11,7 @@ struct StudioSemanticHomeView: View {
     var body: some View {
         let info = model
         VStack(alignment: .leading, spacing: 13) {
-            Text("ПОЛИТИКИ ПОДКЛЮЧЕНИЯ")
+            Text("ОСНОВНЫЕ НАСТРОЙКИ")
                 .font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
             NavigationLink {
                 StudioDefaultPolicyView(model: info)
@@ -21,8 +21,8 @@ struct StudioSemanticHomeView: View {
                         .foregroundStyle(.tint)
                         .frame(width: 32)
                     VStack(alignment: .leading, spacing: 5) {
-                        Text("По умолчанию").font(.headline)
-                        Text("Маршрут: \(info.defaultRoute ?? "не задан") · DNS: \(info.defaultDNS ?? "не задан")")
+                        Text("Общий маршрут и DNS").font(.headline)
+                        Text("Маршрут: \(info.defaultRoute ?? "не задан") · DNS при отсутствии правила: \(info.defaultDNS ?? "не задан")")
                             .font(.caption).foregroundStyle(.secondary)
                             .lineLimit(2)
                     }
@@ -60,9 +60,9 @@ struct StudioSemanticHomeView: View {
                   icon: "list.bullet.rectangle", count: info.addressPolicies.count) {
                 StudioAddressPolicyListView(model: info)
             }
-            entry(title: "DNS", description: "Серверы, политики и проверка ответов",
+            entry(title: "DNS", description: "Direct DNS, Proxy DNS и логика обработки запросов",
                   icon: "globe", count: info.dnsPolicies.count) {
-                StudioDNSOverviewView(model: info)
+                StudioDNSHomeView(model: info)
             }
             entry(title: "Корпоративные подключения", description: "OpenConnect и другие endpoints",
                   icon: "building.2.crop.circle",
@@ -304,123 +304,6 @@ private struct StudioStrategyDetailsView: View {
     }
 }
 
-private struct StudioDNSOverviewView: View {
-    let model: StudioSemanticModel
-    @State private var tab: String = "areas"
-
-    private var dnsAreas: [StudioSemanticModel.AddressPolicy] {
-        model.addressPolicies.filter { !$0.dnsRules.isEmpty }
-    }
-
-    var body: some View {
-        List {
-            Section("По умолчанию") {
-                StudioLabelValue("DNS-сервер", value: model.defaultDNS ?? "Не задан")
-            }
-            Section {
-                Picker("Представление", selection: $tab) {
-                    Text("Области").tag("areas")
-                    Text("Серверы").tag("servers")
-                    Text("Механизмы").tag("mechanics")
-                }
-                .pickerStyle(.segmented)
-            }
-            if tab == "areas" {
-                Section("Группы адресов · \(dnsAreas.count)") {
-                    ForEach(dnsAreas) { item in
-                        NavigationLink {
-                            StudioAddressPolicyDetailsView(model: model, policy: item)
-                        } label: {
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text(item.title).font(.subheadline.weight(.medium))
-                                Text("\(item.dnsRules.count) правил · \(item.dnsTargets.joined(separator: ", "))")
-                                    .font(.caption).foregroundStyle(.secondary)
-                            }
-                        }
-                    }
-                }
-                Section {
-                    Text("Здесь группируются только правила с идентичными условиями для группы адресов. Несовпадающие или служебные проверки остаются в разделе «Механизмы».")
-                        .font(.footnote).foregroundStyle(.secondary)
-                }
-            } else if tab == "servers" {
-                Section("DNS-серверы · \(model.dnsServers.count)") {
-                    ForEach(model.dnsServers) { server in
-                        NavigationLink {
-                            StudioNativeDetailView(title: server.name, path: "dns.servers",
-                                                   value: server.raw)
-                        } label: {
-                            VStack(alignment: .leading, spacing: 3) {
-                                Text(server.name).font(.subheadline.weight(.medium))
-                                Text([StudioHumanFields.kind(server.type),
-                                      server.host.map { StudioHumanFields.display($0, key: "server") },
-                                      server.detour.map { "через \($0)" }]
-                                    .compactMap { $0 }.joined(separator: " · "))
-                                    .font(.caption).foregroundStyle(.secondary)
-                            }
-                        }
-                    }
-                }
-            } else {
-                Section("Механизмы и действия · \(model.dnsPolicies.count)") {
-                    ForEach(model.dnsPolicies) { policy in
-                        NavigationLink {
-                            StudioDNSPolicyDetailsView(model: model, policy: policy)
-                        } label: {
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text(policy.summary).font(.subheadline.weight(.medium))
-                                Text("\(policy.indices.count) правил · №\(policy.indices.first.map { $0 + 1 } ?? 0) и далее")
-                                    .font(.caption).foregroundStyle(.secondary)
-                            }
-                        }
-                    }
-                }
-                Section {
-                    Text("Группировка по DNS-серверу, действию и механизму обработки ответа. Сохраняем исходные позиции правил для проверки порядка.")
-                        .font(.footnote).foregroundStyle(.secondary)
-                }
-            }
-        }
-        .navigationTitle("DNS")
-        .navigationBarTitleDisplayMode(.inline)
-    }
-}
-
-private struct StudioDNSPolicyDetailsView: View {
-    let model: StudioSemanticModel
-    let policy: StudioSemanticModel.DNSPolicy
-
-    private var rules: [[String: Any]] {
-        (model.document.root["dns"] as? [String: Any])?["rules"] as? [[String: Any]] ?? []
-    }
-    var body: some View {
-        List {
-            Section("Назначение") {
-                StudioLabelValue("Действие", value: StudioHumanFields.action(policy.action))
-                if let server = policy.server { StudioLabelValue("DNS-сервер", value: server) }
-                if policy.race { Label("Параллельная обработка ответов", systemImage: "arrow.triangle.branch") }
-                if policy.speculative { Label("Предварительное разрешение", systemImage: "bolt") }
-                if policy.matchesEvaluatedResponse { Label("Проверка ответа DNS", systemImage: "checkmark.shield") }
-            }
-            Section("Исходные правила · \(policy.indices.count)") {
-                ForEach(policy.indices, id: \.self) { index in
-                    if rules.indices.contains(index) {
-                        NavigationLink {
-                            StudioNativeDetailView(title: "DNS-правило №\(index + 1)",
-                                                   path: "dns.rules[\(index)]",
-                                                   value: rules[index])
-                        } label: {
-                            Text("Правило №\(index + 1)")
-                        }
-                    }
-                }
-            }
-        }
-        .navigationTitle(policy.server ?? "DNS-политика")
-        .navigationBarTitleDisplayMode(.inline)
-    }
-}
-
 private struct StudioAddressPolicyListView: View {
     let model: StudioSemanticModel
     @State private var search = ""
@@ -466,23 +349,27 @@ private struct StudioAddressPolicyDetailsView: View {
     let policy: StudioSemanticModel.AddressPolicy
     var body: some View {
         List {
-            Section("Условия") {
+            Section("Что должно совпасть") {
+                Text(StudioDNSExplanation.conditionsDescription(policy.conditions))
+                    .font(.footnote).foregroundStyle(.secondary)
                 ForEach(policy.conditions.keys.sorted(), id: \.self) { key in
                     StudioValueRow(key: key, value: policy.conditions[key]!,
                                    path: "address.\(key)")
                 }
             }
-            Section("Маршрутизация") {
-                StudioLabelValue("Указанные назначения",
-                               value: policy.destinations.isEmpty ? "Не найдены" : policy.destinations.joined(separator: ", "))
-                StudioLabelValue("Правила №",
+            Section("Маршрутизация · найдено в JSON") {
+                StudioLabelValue("Назначения в правилах",
+                               value: policy.destinations.isEmpty ? "Нет точного совпадения" : policy.destinations.joined(separator: ", "))
+                StudioLabelValue("Исходные правила",
                                value: policy.routeRules.map { String($0 + 1) }.joined(separator: ", "))
             }
-            Section("DNS") {
-                StudioLabelValue("Указанные серверы",
-                               value: policy.dnsTargets.isEmpty ? "Нет точного совпадения условий" : policy.dnsTargets.joined(separator: ", "))
-                StudioLabelValue("DNS-правила №",
+            Section("DNS · найдено в JSON") {
+                StudioLabelValue("DNS-серверы в правилах",
+                               value: policy.dnsTargets.isEmpty ? "Нет точного совпадения" : policy.dnsTargets.joined(separator: ", "))
+                StudioLabelValue("Исходные правила",
                                value: policy.dnsRules.map { String($0 + 1) }.joined(separator: ", "))
+                Text("Эти номера — ссылки на порядок правил. Они показывают найденные условия, но не подтверждают, какой маршрут или DNS реально сработает.")
+                    .font(.footnote).foregroundStyle(.secondary)
             }
             Section("Будущая связь маршрута и DNS") {
                 NavigationLink {
@@ -521,8 +408,8 @@ private struct StudioDefaultPolicyView: View {
     var body: some View {
         Form {
             Section("Фактическая конфигурация") {
-                StudioLabelValue("Маршрут по умолчанию", value: model.defaultRoute ?? "Не указан")
-                StudioLabelValue("DNS по умолчанию", value: model.defaultDNS ?? "Не указан")
+                StudioLabelValue("Общий маршрут при отсутствии правил", value: model.defaultRoute ?? "Не указан")
+                StudioLabelValue("DNS при отсутствии подходящего правила", value: model.defaultDNS ?? "Не указан")
                 if let client = model.defaultHTTPClient {
                     StudioLabelValue("Служебная загрузка", value: client)
                 }
@@ -560,7 +447,7 @@ private struct StudioDefaultPolicyView: View {
                     .font(.footnote).foregroundStyle(.secondary)
             }
         }
-        .navigationTitle("По умолчанию")
+        .navigationTitle("Основные настройки")
         .navigationBarTitleDisplayMode(.inline)
         .onAppear {
             if selectedRoute.isEmpty { selectedRoute = model.defaultRoute ?? availableRoutes.first ?? "" }
