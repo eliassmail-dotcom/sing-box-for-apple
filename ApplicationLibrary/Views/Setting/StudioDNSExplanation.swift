@@ -155,6 +155,24 @@ enum StudioDNSExplanation {
         }
     }
 
+    /// Suggested profile family for the future editor. A selector or urltest
+    /// generally serves proxy traffic; it may contain a DIRECT member, so the
+    /// mapping remains a suggestion, not a statement of actual DNS routing.
+    static func suggestedFamily(forRoute route: String,
+                                document: StudioDocument) -> Family? {
+        if route.lowercased() == "direct" { return .direct }
+        guard let outbound = document.array("outbounds").first(where: {
+            ($0["tag"] as? String) == route
+        }) else { return nil }
+        switch outbound["type"] as? String ?? "" {
+        case "direct": return .direct
+        case "selector", "urltest", "vless", "vmess", "trojan",
+             "shadowsocks", "hysteria", "hysteria2", "tuic", "chain":
+            return .proxy
+        default: return nil
+        }
+    }
+
     /// Human-readable conditions, not an independently editable address group.
     static func conditionsDescription(_ object: [String: Any]) -> String {
         let keys: [(String, String)] = [
