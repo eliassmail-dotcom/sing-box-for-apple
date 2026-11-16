@@ -5,23 +5,23 @@ import SwiftUI
 /// The DNS home is a read-only explanation of live JSON, not a writable editor.
 struct StudioDNSHomeView: View {
     let model: StudioSemanticModel
-    @StateObject private var draft = StudioDNSDraftStore()
 
     private var catalog: [StudioDNSCatalogEntry] {
-        StudioDNSCatalogEntry.catalog(document: model.document)
+        StudioDNSCatalogEntry.catalog(document: model.document).filter(\.isConfigured)
     }
 
     var body: some View {
         List {
             Section {
-                Label("Редактор DNS · черновик", systemImage: "pencil.and.list.clipboard")
+                Label("Действующая конфигурация · только чтение", systemImage: "doc.text.magnifyingglass")
                     .font(.subheadline.weight(.medium))
-                Text("Выбор DNS-серверов и приоритетов пока действует только на этом экране. Текущие DNS и VPN не изменяются.")
+                Text("Серверы и последовательность DNS-правил загружены из выбранного JSON. Приоритеты, RACE и резервирование отображаются только там, где они реально описаны; ничего не выбирается и не сохраняется.")
                     .font(.footnote).foregroundStyle(.secondary)
             }
             Section("Для интернет-трафика") {
                 roleLink(.directTraffic)
                 roleLink(.proxyTraffic)
+                roleLink(.geminiTraffic)
             }
             Section("Для подключения сервисов") {
                 roleLink(.proxyHosts)
@@ -31,7 +31,7 @@ struct StudioDNSHomeView: View {
                 NavigationLink {
                     StudioDNSCatalogOverviewView(catalog: catalog)
                 } label: {
-                    Label("Каталог DNS-серверов", systemImage: "list.bullet")
+                    Label("DNS-серверы из конфигурации", systemImage: "list.bullet")
                 }
             }
             Section("Действующая конфигурация") {
@@ -47,7 +47,7 @@ struct StudioDNSHomeView: View {
                 } label: {
                     Label("DNS-исключения и условия", systemImage: "shield.lefthalf.filled")
                 }
-                Text("Корпоративный DNS, специальные правила и DNS для служебной загрузки остаются под управлением исходной конфигурации.")
+                Text("Корпоративный DNS, специальные правила, настройки загрузки и fallback показаны из реального JSON. Редактор появится отдельно.")
                     .font(.footnote).foregroundStyle(.secondary)
             }
             Section("Дополнительно") {
@@ -56,7 +56,7 @@ struct StudioDNSHomeView: View {
                 } label: {
                     Label("Обзор DNS-механизмов", systemImage: "wrench.and.screwdriver")
                 }
-                Text("Исходный порядок правил доступен для диагностики, но не используется как основной способ настройки DNS.")
+                Text("В этом релизе ничего не редактируется. Порядок evaluate, respond, route и race берётся из исходных правил, без моделирования будущей политики.")
                     .font(.footnote).foregroundStyle(.secondary)
             }
         }
@@ -66,7 +66,7 @@ struct StudioDNSHomeView: View {
 
     private func roleLink(_ role: StudioDNSRole) -> some View {
         NavigationLink {
-            StudioDNSDraftProfileView(role: role, catalog: catalog, draft: draft)
+            StudioDNSConfiguredProfileView(model: model, role: role)
         } label: {
             HStack(spacing: 12) {
                 Image(systemName: role.icon).foregroundStyle(.tint).frame(width: 25)
@@ -76,14 +76,115 @@ struct StudioDNSHomeView: View {
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 Spacer(minLength: 6)
-                let count = draft.rows(for: role).count
-                if count > 0 {
-                    Text("\(count)")
-                        .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
-                }
+                let count = StudioDNSObservedProfile(document: model.document, role: role).servers.count
+                Text("\(count)").font(.caption.monospacedDigit()).foregroundStyle(.secondary)
             }
             .padding(.vertical, 4)
         }
+    }
+}
+
+/// Read-only inspection of what the active JSON actually declares.
+/// This deliberately does not present an empty editable DNS draft as current state.
+private struct StudioDNSConfiguredProfileView: View {
+    let model: StudioSemanticModel
+    let role: StudioDNSRole
+
+    private var observed: StudioDNSObservedProfile {
+        StudioDNSObservedProfile(document: model.document, role: role)
+    }
+
+    var body: some View {
+        let profile = observed
+        List {
+            Section {
+                Text(role.subtitle)
+                    .font(.subheadline.weight(.medium))
+                Text("Список ниже отражает только реальную конфигурацию, без предлагаемых DNS-серверов и выдуманных приоритетов.")
+                    .font(.footnote).foregroundStyle(.secondary)
+                if role == .directTraffic || role == .proxyTraffic {
+                    Text("Разделение Direct/Proxy здесь основано на пути подключения самого DNS (detour), а не на допущении, какие домены или сайты он обслуживает. Точные условия находятся в DNS-правилах.")
+                        .font(.footnote).foregroundStyle(.secondary)
+                }
+                if role == .geminiTraffic {
+                    Text("Отдельный Gemini DNS появляется только при наличии явных Gemini-условий в dns.rules. Если DNS-сервер не указан в таком правиле, приложение не приписывает ему сервер по имени.")
+                        .font(.footnote).foregroundStyle(.secondary)
+                }
+            }
+            Section("Серверы из dns.servers · \(profile.servers.count)") {
+                if profile.servers.isEmpty {
+                    Text("Для этого раздела нет явных DNS-серверов в загруженном JSON.")
+                        .font(.subheadline).foregroundStyle(.secondary)
+                }
+                ForEach(profile.servers) { server in
+                    NavigationLink {
+                        StudioDNSServerExplanationView(server: server)
+                    } label: {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(server.name).font(.subheadline.weight(.semibold))
+                            Text(StudioDNSCatalogEntry.uri(server.object))
+                                .font(.caption).foregroundStyle(.secondary)
+                            Text(server.reason)
+                                .font(.caption2).foregroundStyle(.tertiary)
+                        }
+                    }
+                }
+            }
+            if !profile.unresolvedResolvers.isEmpty {
+                Section("Ссылки, которых нет в dns.servers") {
+                    ForEach(profile.unresolvedResolvers, id: \.self) { name in
+                        Label(name, systemImage: "exclamationmark.triangle")
+                    }
+                }
+            }
+            Section("Правила и фактическая последовательность · \(profile.rules.count)") {
+                if profile.rules.isEmpty {
+                    Text("Прямых ссылок на эти DNS в правилах не найдено. Возможны наследование общего dns.final или служебные обращения, но отдельный порядок не задан.")
+                        .font(.footnote).foregroundStyle(.secondary)
+                }
+                ForEach(profile.rules) { step in
+                    NavigationLink {
+                        StudioNativeDetailView(title: "DNS-правило \(step.number)",
+                                               path: "dns.rules[\(step.index)]",
+                                               value: step.raw)
+                    } label: {
+                        VStack(alignment: .leading, spacing: 5) {
+                            HStack {
+                                Text(step.number).font(.caption.monospacedDigit())
+                                    .foregroundStyle(.secondary)
+                                Text(step.heading).font(.subheadline.weight(.medium))
+                            }
+                            if let name = step.server {
+                                Text(name).font(.caption).foregroundStyle(.secondary)
+                            }
+                            Text(step.condition)
+                                .font(.caption2).foregroundStyle(.tertiary)
+                            if let concurrency = step.concurrency {
+                                Text(concurrency).font(.caption2).foregroundStyle(.secondary)
+                            }
+                            if let timeout = step.raw["timeout"] as? String {
+                                Text("Таймаут: \(timeout)")
+                                    .font(.caption2).foregroundStyle(.secondary)
+                            }
+                        }
+                        .padding(.vertical, 2)
+                    }
+                }
+            }
+            Section("Общий DNS при отсутствии подходящего правила") {
+                Text(profile.finalServer ?? "Не задан")
+                    .font(.subheadline)
+                Text("dns.final действует при отсутствии более раннего подходящего правила. Это не назначение DNS конкретно для Direct, Proxy или Gemini.")
+                    .font(.footnote).foregroundStyle(.secondary)
+                NavigationLink {
+                    StudioDNSRuleFlowView(model: model, filteredIndexes: nil)
+                } label: {
+                    Label("Все DNS-правила в исходном порядке", systemImage: "list.number")
+                }
+            }
+        }
+        .navigationTitle(role.title)
+        .navigationBarTitleDisplayMode(.inline)
     }
 }
 
