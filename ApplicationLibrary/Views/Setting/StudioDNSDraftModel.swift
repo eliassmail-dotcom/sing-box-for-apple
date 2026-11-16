@@ -7,6 +7,7 @@ import SwiftUI
 enum StudioDNSRole: String, CaseIterable, Identifiable {
     case directTraffic
     case proxyTraffic
+    case geminiTraffic
     case proxyHosts
     case dnsHosts
 
@@ -16,6 +17,7 @@ enum StudioDNSRole: String, CaseIterable, Identifiable {
         switch self {
         case .directTraffic: return "Direct DNS"
         case .proxyTraffic: return "Proxy DNS"
+        case .geminiTraffic: return "Gemini DNS"
         case .proxyHosts: return "Адреса прокси-серверов"
         case .dnsHosts: return "Адреса DNS-серверов"
         }
@@ -23,7 +25,8 @@ enum StudioDNSRole: String, CaseIterable, Identifiable {
     var subtitle: String {
         switch self {
         case .directTraffic: return "DNS для прямого интернет-трафика"
-        case .proxyTraffic: return "DNS для проксируемого трафика, включая Gemini"
+        case .proxyTraffic: return "DNS-серверы с проксируемым сетевым путём"
+        case .geminiTraffic: return "Явные условия Gemini в действующих DNS-правилах"
         case .proxyHosts: return "DNS для подключения к узлам, до запуска прокси"
         case .dnsHosts: return "Начальное разрешение адресов DNS-серверов"
         }
@@ -32,6 +35,7 @@ enum StudioDNSRole: String, CaseIterable, Identifiable {
         switch self {
         case .directTraffic: return "globe"
         case .proxyTraffic: return "shield"
+        case .geminiTraffic: return "sparkles"
         case .proxyHosts: return "network"
         case .dnsHosts: return "server.rack"
         }
