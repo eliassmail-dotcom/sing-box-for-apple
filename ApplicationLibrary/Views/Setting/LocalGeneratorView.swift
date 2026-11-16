@@ -39,7 +39,7 @@ public struct LocalGeneratorView: View {
     public var body: some View {
         FormView {
             Section {
-                Text("Изолированный локальный генератор на основе v1.4.48r2. Профиль Яндекс-функции и текущий VPN не изменяются.")
+                Text("Изолированный локальный генератор на основе v1.4.48r5. Профиль Яндекс-функции и текущий VPN не изменяются.")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }

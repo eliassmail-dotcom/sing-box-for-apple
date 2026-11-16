@@ -392,6 +392,21 @@ private struct LogContentInnerView: View {
                 Text("Connecting...").onAppear {
                     environments.connect()
                 }
+            } else if environments.extensionProfile?.status == .connected {
+                // A tunnel may be connected even if its gRPC control channel
+                // cannot be reached (e.g. an isolated GBox signature).
+                // Don't falsely tell the user that the VPN isn't running.
+                VStack(spacing: 8) {
+                    Text("VPN подключён, но связь с сервисом недоступна")
+                    if let message = environments.commandClient.lastError {
+                        Text(message)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.center)
+                            .padding(.horizontal)
+                    }
+                }
+                .onAppear { environments.connect() }
             } else {
                 Text("Service not started").onAppear {
                     environments.connect()

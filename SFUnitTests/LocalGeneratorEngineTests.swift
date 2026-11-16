@@ -51,6 +51,59 @@ final class LocalGeneratorEngineTests: XCTestCase {
         XCTAssertEqual(script, try LocalGeneratorBundle.javascript())
     }
 
+    func testBundledGeneratorContainsVerifiedR5Modules() throws {
+        let script = try LocalGeneratorBundle.javascript()
+        XCTAssertTrue(script.contains("v1.4.48r5"))
+        XCTAssertTrue(script.contains("bootstrap-direct-dns-group"))
+        XCTAssertTrue(script.contains("Gemini • Super • A"))
+        XCTAssertTrue(script.contains("__localYcGenerator"))
+    }
+
+    func testR5TwoGeminiNodesAndBootstrapOnDevice() async throws {
+        // Two Gemini exits plus one normal node must create four members:
+        // two direct paths and two chains. No external subscription is fetched.
+        let nodes = offlineNodes.replacingOccurrences(
+            of: "🇫🇷 Франция", with: "🇦🇹 Gemini"
+        )
+        let result = try await LocalGeneratorEngine().generate(
+            variables: [
+                "GEMINI_NODES": "Gemini",
+                "NET_FALLBACK": "true",
+                "CONNECT_TIMEOUT": "2",
+                "SELECTOR_INTERRUPT": "false",
+                "TEST_INTERVAL": "5",
+            ],
+            subscription: nodes,
+            variant: "personal",
+            core: "lx",
+            platform: "ios",
+            log: "info"
+        )
+        let json = try XCTUnwrap(result.json)
+        let root = try XCTUnwrap(JSONSerialization.jsonObject(
+            with: Data(json.utf8)
+        ) as? [String: Any])
+        let route = try XCTUnwrap(root["route"] as? [String: Any])
+        XCTAssertEqual(route["auto_detect_interface"] as? Bool, true)
+        let outbounds = try XCTUnwrap(root["outbounds"] as? [[String: Any]])
+        let superA = try XCTUnwrap(outbounds.first {
+            ($0["tag"] as? String) == "Gemini • Super • A"
+        })
+        let members = try XCTUnwrap(superA["outbounds"] as? [String])
+        XCTAssertEqual(members.count, 4)
+        XCTAssertEqual(Set(members).count, 4)
+        XCTAssertEqual(members.filter { $0.hasPrefix("C • ") }.count, 2)
+        XCTAssertTrue(outbounds.filter { ($0["type"] as? String) == "vless" }.allSatisfy {
+            ($0["domain_resolver"] as? String) == "bootstrap-direct-dns-group"
+        })
+        let dns = try XCTUnwrap(root["dns"] as? [String: Any])
+        let servers = try XCTUnwrap(dns["servers"] as? [[String: Any]])
+        for tag in ["bootstrap-cloudflare-doh", "bootstrap-google-doh"] {
+            let server = try XCTUnwrap(servers.first { ($0["tag"] as? String) == tag })
+            XCTAssertNil(server["detour"], "DoH bootstrap detour must not be emitted for LX")
+        }
+    }
+
     func testBundledGeneratorBuildsRealJSONOfflineWithoutYandex() async throws {
         let engine = LocalGeneratorEngine()
         let generated = try await engine.generate(

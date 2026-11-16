@@ -2,7 +2,7 @@
 import Foundation
 import WebKit
 
-/// Executes the user-supplied Yandex v1.4.48r2 generator byte-for-byte in
+/// Executes the verified Yandex v1.4.48r5 generator in
 /// a network-disabled ephemeral WebKit context. Only native URLSession fetches
 /// the source subscription. No token, subscription or generated JSON is logged.
 @MainActor

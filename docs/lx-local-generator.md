@@ -1,14 +1,14 @@
-# Local generator (iOS) — v1.4.48r2 migration
+# Local generator (iOS) — v1.4.48r5 migration
 
 ## Scope
 
 The iOS Settings → Local Generator panel provides an **isolated** in-app
-version of the user-provided Yandex Cloud Function generator v1.4.48r2.
+version of the user-provided Yandex Cloud Function generator v1.4.48r5.
 The original Yandex service, saved profile subscriptions, and active VPN
 connection are left intact.
 
 Inputs: a VLESS subscription source (direct HTTPS URL, SUB_URL variable or
-pasted text); all v1.4.48r2 KEY=VALUE environment variables; output variant
+pasted text); all v1.4.48r5 KEY=VALUE environment variables; output variant
 personal/corporate/guest/NB/CD; core lx/upstream, iOS/Windows platform and
 log level. An optional authorized raw-node proxy is a separate HTTPS source.
 
@@ -36,7 +36,7 @@ Two distinct Yandex endpoint roles may coexist:
 2. Optional authorized raw-node proxy only for local generator connectivity
    fallback; returns raw subscription nodes, no routing or pools.
 
-The raw proxy endpoint does NOT yet exist in the user's v1.4.48r2 Yandex
+The raw proxy endpoint does NOT yet exist in the user's v1.4.48r5 Yandex
 Function. On direct download failure, the app can use the proxy if configured
 and if the function is later updated. The app sends a long secret via
 X-Subscription-Proxy-Key and does not pass the original source URL or token.
@@ -44,13 +44,27 @@ The server itself must have its own configured subscription source.
 
 ## Verification
 
-Node parity test from the uploaded archive:
-node test_local_parity.mjs → PARITY_OK 20 (all 20 combinations of profile,
-core and platform for deterministic offline fixtures).
+Source: uploaded `VPN_Config_v1.4.48r5_VERIFIED_YANDEX_DEPLOY(1).zip`.
+The bundled JavaScript contains the 13 exact r5 routing/DNS/profile modules
+and their immutable `base-template.json`, adapted to a synchronous,
+network-disabled CommonJS registry for WebKit. No live subscription or
+Yandex tokens are embedded.
 
-This verifies generator logic in Node, not operation on iOS. Xcode CI and
-on-device tests must still validate the embedded WebKit runtime,
-signing/runtime permissions, local creation and startup.
+Verification in an independent Node VM:
+- Upstream r5 source tests: 18/18 PASS.
+- Bundled WebKit-compatible generator vs native r5 source: 20/20 JSON outputs
+  byte-identical across core (LX/stock), variant (corporate/personal/guest/NB/CD)
+  and platform (iOS/Windows), using synthetic nodes.
+- With 2 Gemini exits, Super A has 4 paths, VLESS uses
+  `bootstrap-direct-dns-group`, and Cloudflare/Google bootstrap-DoH
+  does not include a `detour`. `NET_FALLBACK=true` enables
+  `route.auto_detect_interface`.
+- Bundled uncompressed JS SHA-256:
+  `efde145e9068caf1b7f1aa095b5ac8d025aafb292045b5f196e3366d24490c6a`.
+
+These checks verify static and deterministic generator parity, **not**
+signed-device VPN connectivity. The Xcode simulator and on-device tests
+must still validate embedded WebKit execution, signing, startup and routing.
 
 ## Security
 

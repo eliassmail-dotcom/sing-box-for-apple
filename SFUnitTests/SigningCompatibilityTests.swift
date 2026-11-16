@@ -190,4 +190,39 @@ final class SigningCompatibilityTests: XCTestCase {
         ), [])
     }
 
+    #if os(iOS)
+    func testIsolatedLoopbackCredentialsArePersistentAndAuthenticated() throws {
+        let first = try IsolatedCommandTransport.credentials()
+        let second = try IsolatedCommandTransport.credentials()
+        XCTAssertEqual(first.port, second.port)
+        XCTAssertEqual(first.secret, second.secret)
+        XCTAssertTrue((46_000...61_999).contains(Int(first.port)))
+        XCTAssertEqual(Data(base64Encoded: first.secret)?.count, 32)
+        XCTAssertTrue(IsolatedCommandTransport.validCredentials(
+            port: NSNumber(value: first.port), secret: first.secret
+        ))
+    }
+
+    func testIsolatedLoopbackNeverAcceptsEmptyOrShortSecret() {
+        XCTAssertFalse(IsolatedCommandTransport.validCredentials(
+            port: NSNumber(value: 50_000), secret: nil
+        ))
+        XCTAssertFalse(IsolatedCommandTransport.validCredentials(
+            port: NSNumber(value: 50_000), secret: ""
+        ))
+        XCTAssertFalse(IsolatedCommandTransport.validCredentials(
+            port: NSNumber(value: 50_000),
+            secret: Data(repeating: 0, count: 31).base64EncodedString()
+        ))
+        XCTAssertFalse(IsolatedCommandTransport.validCredentials(
+            port: NSNumber(value: 0),
+            secret: Data(repeating: 1, count: 32).base64EncodedString()
+        ))
+        XCTAssertFalse(IsolatedCommandTransport.validCredentials(
+            port: NSNumber(value: 63_000),
+            secret: Data(repeating: 1, count: 32).base64EncodedString()
+        ))
+    }
+    #endif
+
 }
