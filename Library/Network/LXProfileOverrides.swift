@@ -490,6 +490,26 @@ public enum LXProfileOverrides {
                     groupChanged = true
                 }
                 let effectiveMode = group["mode"] as? String ?? "least_test"
+                // Source configs can contain options left over from a previous
+                // mode. Even when only health URLs or other settings change,
+                // never emit combinations rejected by the LX URLTest parser.
+                // Keep this independent from the explicit mode-override path:
+                // "profile" means inherit the mode, not incompatible fields.
+                let disallowedFields: [String]
+                switch effectiveMode {
+                case "round_robin":
+                    disallowedFields = ["tolerance", "tolerance_percent", "min_hold", "priority_outbounds", "passive_guard"]
+                case "failover":
+                    disallowedFields = ["tolerance", "tolerance_percent", "min_hold", "priority_outbounds", "balancer"]
+                case "least_test":
+                    disallowedFields = ["balancer"]
+                default:
+                    disallowedFields = []
+                }
+                for field in disallowedFields where group[field] != nil {
+                    group.removeValue(forKey: field)
+                    groupChanged = true
+                }
                 if effectiveMode == "least_test" {
                     if settings.adaptiveToleranceOverride == true ||
                         (settings.adaptiveToleranceOverride == nil && settings.adaptiveTolerancePercent > 0) {
