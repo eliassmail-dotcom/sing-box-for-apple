@@ -162,14 +162,21 @@ struct StudioSemanticModel {
     }
 
     private static func addressTitle(_ conditions: [String: Any]) -> String {
-        for key in ["domain", "domain_suffix", "rule_set", "ip_cidr", "domain_keyword", "network_type"] {
-            if let values = conditions[key] as? [String], let first = values.first {
-                return values.count == 1 ? first : "\(first) +\(values.count - 1)"
+        let labels: [(String, String)] = [
+            ("domain", "точных доменов"),
+            ("domain_suffix", "доменов и поддоменов"),
+            ("rule_set", "списков адресов"),
+            ("ip_cidr", "IP-подсетей"),
+            ("domain_keyword", "ключевых слов")
+        ]
+        for (key, noun) in labels {
+            if let values = conditions[key] as? [String], !values.isEmpty {
+                if values.count == 1 { return values[0] }
+                return "\(values.count) \(noun)"
             }
             if let value = conditions[key] as? String { return value }
         }
-        let labels = conditions.keys.sorted().prefix(2).map(StudioHumanFields.label)
-        return labels.isEmpty ? "Условия" : labels.joined(separator: " · ")
+        return StudioDNSExplanation.conditionsDescription(conditions)
     }
 
     struct NodeGroup: Identifiable {
