@@ -225,7 +225,24 @@ open class ExtensionProvider: NEPacketTunnelProvider {
         options.appMarketingVersion = Bundle.application.version
         options.platformMetadata = platformMetadata()
 
-        #if os(tvOS)
+        #if os(iOS)
+            let commandPort = effectiveOptions["commandServerPort"] as? NSNumber
+            let commandSecret = effectiveOptions["commandServerSecret"] as? String
+            if commandPort != nil || commandSecret != nil || !FilePath.hasSharedContainer {
+                // Fail closed: never expose gRPC over localhost with an empty,
+                // stale or malformed authentication secret.
+                guard IsolatedCommandTransport.validCredentials(
+                    port: commandPort, secret: commandSecret
+                ), let commandPort, let commandSecret else {
+                    throw ExtensionStartupError(
+                        "(packet-tunnel) isolated command transport requires the " +
+                        "current app's secure start options; start VPN from Dashboard."
+                    )
+                }
+                options.commandServerListenPort = commandPort.int32Value
+                options.commandServerSecret = commandSecret
+            }
+        #elseif os(tvOS)
             if let port = effectiveOptions["commandServerPort"] as? NSNumber {
                 options.commandServerListenPort = port.int32Value
             }
