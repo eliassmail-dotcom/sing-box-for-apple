@@ -11,15 +11,15 @@ enum StudioHumanFields {
         "tag": "Название", "name": "Название", "type": "Тип",
         "server": "Сервер", "server_port": "Порт сервера", "port": "Порт",
         "outbound": "Маршрут", "outbounds": "Участники", "detour": "Через",
-        "default": "По умолчанию", "final": "Маршрут по умолчанию",
+        "default": "Начальное значение", "final": "При отсутствии подходящих правил",
         "mode": "Алгоритм", "action": "Действие",
-        "interval": "Интервал проверки", "idle_timeout": "Простой",
+        "interval": "Интервал проверки", "idle_timeout": "Остановка проверок при бездействии",
         "tolerance": "Порог задержки", "url": "Адрес проверки или источника",
         "urls": "Адреса проверки", "interrupt_exist_connections": "Прерывать действующие соединения",
         "adaptive_tolerance_percent": "Адаптивный порог", "min_hold": "Минимальное удержание",
         "balancer": "Балансировка", "pool": "Размер пула",
         "pool_tolerance": "Порог пула", "sticky_hash": "Закрепление соединений",
-        "domain": "Точный домен", "domain_suffix": "Домены и поддомены",
+        "domain": "Точные домены", "domain_suffix": "Домены и поддомены",
         "domain_keyword": "Ключевые слова доменов", "domain_regex": "Выражения доменов",
         "ip_cidr": "IP-адреса и подсети", "source_ip_cidr": "Исходные сети",
         "ip_is_private": "Частные IP-адреса", "rule_set": "Списки адресов",
@@ -299,17 +299,34 @@ struct StudioNativeDetailView: View {
         let action = rule["action"] as? String ?? ""
         let route = rule["outbound"] as? String
         let dnsServer = rule["server"] as? String
+        let dnsRule = path.hasPrefix("dns.rules")
         Section("Что происходит при совпадении") {
             Label {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(action.isEmpty ? (route == nil ? "DNS / действие из правила" : "Маршрутизация") :
-                        StudioHumanFields.action(action))
+                    Text(dnsRule ? StudioDNSExplanation.FlowStep(
+                        index: 0,
+                        action: action.isEmpty ? "route" : action,
+                        server: dnsServer,
+                        condition: "",
+                        responseDependency: nil,
+                        race: false,
+                        speculative: false,
+                        raw: rule
+                    ).heading : (action.isEmpty ? "Направить трафик" : StudioHumanFields.action(action)))
                         .font(.subheadline.weight(.medium))
                     if let route { Text("Через: \(route)").foregroundStyle(.secondary).font(.footnote) }
                     if let dnsServer { Text("DNS: \(dnsServer)").foregroundStyle(.secondary).font(.footnote) }
                 }
             } icon: {
                 Image(systemName: action == "reject" ? "hand.raised.slash" : "arrow.turn.down.right")
+            }
+            if dnsRule && action == "evaluate" {
+                Text("Получить и сохранить ответ для последующих DNS-правил; само правило не завершает обработку.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            if dnsRule && action == "respond" {
+                Text("Вернуть ответ, ранее полученный правилом evaluate.")
+                    .font(.caption).foregroundStyle(.secondary)
             }
             if let mode = rule["mode"] as? String {
                 Label(StudioHumanFields.mode(mode), systemImage: "point.3.connected.trianglepath.dotted")
@@ -404,11 +421,29 @@ struct StudioNativeDetailView: View {
             }
         }
         settingsSection(group, excluding: ["outbounds", "tag", "mode", "interval", "tolerance"])
+        if type == "urltest", group["idle_timeout"] != nil {
+            Section {
+                Text("Через указанное время без использования группы периодические URLTest-проверки приостанавливаются и возобновляются при новом трафике. VPN и активные соединения не отключаются.")
+                    .font(.footnote).foregroundStyle(.secondary)
+            }
+        }
     }
 
     @ViewBuilder
     private func standardSections(_ value: [String: Any]) -> some View {
-        settingsSection(value, excluding: [])
+        if path.hasPrefix("dns.servers"), type == "https",
+           let dnsPath = value["path"] as? String {
+            Section("DNS через HTTPS") {
+                HStack {
+                    Text("Путь запроса DoH")
+                    Spacer()
+                    Text(dnsPath).foregroundStyle(.secondary)
+                }
+                Text("Например /p0 — это часть URL DNS-сервера, а не цепочка VPN и не номер приоритета.")
+                    .font(.footnote).foregroundStyle(.secondary)
+            }
+        }
+        settingsSection(value, excluding: path.hasPrefix("dns.servers") && type == "https" ? ["path"] : [])
     }
 
     @ViewBuilder

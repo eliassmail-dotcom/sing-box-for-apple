@@ -2,8 +2,8 @@
 import Foundation
 import SwiftUI
 
-/// An isolated preview of the DNS-follow-route behavior planned for the
-/// writable policy editor. Changing any value here never touches live VPN.
+/// Local-only preview of route → DNS profile inheritance. This is a proposed
+/// policy model, not a change to DNS rules or the running VPN.
 struct StudioRouteDNSPreviewView: View {
     let model: StudioSemanticModel
     let addressTitle: String
@@ -11,115 +11,103 @@ struct StudioRouteDNSPreviewView: View {
     let currentDNS: String?
     let dnsHasExplicitOverride: Bool
 
-    @State private var route: String = ""
-    @State private var associations: [String: String] = [:]
-    @State private var policy: String = "auto"
-    @State private var explicitDNS: String = ""
+    @State private var route = ""
+    @State private var dnsChoice = "auto"
 
     private var routes: [String] {
         let names = model.document.array("outbounds").compactMap { $0["tag"] as? String }
         return Array(Set(names + ["direct"])).sorted()
     }
-
-    private var dnsTags: [String] {
-        Array(Set(model.dnsServers.map(\.name))).sorted()
+    private var profiles: [StudioDNSExplanation.Profile] {
+        StudioDNSExplanation.profiles(document: model.document)
     }
-
-    private var choice: StudioDNSFollowRoute.DNSChoice {
-        switch policy {
-        case "inherit": return .inherit
-        case "explicit": return .explicit(explicitDNS)
-        default: return .automatic
+    private var proposedFamily: StudioDNSExplanation.Family? {
+        switch dnsChoice {
+        case "direct": return .direct
+        case "proxy": return .proxy
+        case "inherit": return nil
+        default:
+            return StudioDNSExplanation.suggestedFamily(
+                forRoute: route, document: model.document)
         }
     }
-
-    private var resolved: StudioDNSFollowRoute.Assignment {
-        StudioDNSFollowRoute.resolve(route: route, choice: choice,
-                                     association: associations,
-                                     defaultDNS: model.defaultDNS)
+    private var selectedProfile: StudioDNSExplanation.Profile? {
+        guard let proposedFamily else { return nil }
+        return profiles.first { $0.family == proposedFamily }
     }
 
     var body: some View {
         Form {
-            Section("Текущее состояние · \(addressTitle)") {
-                field("Маршрут", value: currentRoute ?? model.defaultRoute ?? "Не определён")
-                field("DNS", value: currentDNS ?? "Нет точного совпадения DNS-условий")
+            Section("Найдено в конфигурации · \(addressTitle)") {
+                field("Маршрут в правилах", value: currentRoute ?? "Не установлен однозначно")
+                field("DNS-сервер в правилах", value: currentDNS ?? "Не установлен однозначно")
                 if dnsHasExplicitOverride {
-                    Label("Для этой группы выявлена отдельная DNS-политика",
+                    Label("Есть отдельное DNS-правило: будущий автоподбор не должен его затирать",
                           systemImage: "lock.shield")
                         .font(.footnote).foregroundStyle(.secondary)
                 }
             }
             Section {
-                Label("Ниже только предпросмотр будущего редактора. Никакие настройки VPN не сохраняются.",
-                      systemImage: "eye")
+                Text("Ниже — пример будущей логики. Ничего не сохраняется, и на действующий DNS это не влияет.")
                     .font(.footnote).foregroundStyle(.secondary)
             }
-            Section("Маршрут") {
-                Picker("Направлять через", selection: $route) {
-                    ForEach(routes, id: \.self) { value in
-                        Text(value).tag(value)
+            Section("Направление трафика") {
+                Picker("Маршрут", selection: $route) {
+                    ForEach(routes, id: \.self) { name in
+                        Text(name).tag(name)
                     }
                 }
             }
-            Section("DNS-поведение") {
-                Picker("Режим DNS", selection: $policy) {
-                    Text("Следовать маршруту").tag("auto")
-                    Text("Наследовать общий").tag("inherit")
-                    Text("Выбрать отдельно").tag("explicit")
+            Section("DNS-профиль для этого маршрута") {
+                Picker("Выбор профиля", selection: $dnsChoice) {
+                    Text("Автоматически по маршруту").tag("auto")
+                    Text("Общий DNS при отсутствии правила").tag("inherit")
+                    Text("Direct DNS").tag("direct")
+                    Text("Proxy DNS").tag("proxy")
                 }
-                if policy == "auto" && !route.isEmpty {
-                    Picker("DNS для \(route)", selection: Binding(
-                        get: { associations[route] ?? "" },
-                        set: { newValue in
-                            if newValue.isEmpty { associations.removeValue(forKey: route) }
-                            else { associations[route] = newValue }
-                        }
-                    )) {
-                        Text("Нет привязки").tag("")
-                        ForEach(dnsTags, id: \.self) { value in
-                            Text(value).tag(value)
-                        }
+                if let profile = selectedProfile {
+                    field("Предлагаемый профиль", value: profile.title)
+                    if profile.bindings.isEmpty {
+                        Text("Для этого профиля нет однозначно обнаруженных DNS-серверов. Нельзя автоматически сформировать рабочую схему.")
+                            .font(.footnote).foregroundStyle(.secondary)
+                    } else {
+                        field("DNS-серверы", value: profile.bindings.map(\.name).joined(separator: ", "))
                     }
-                } else if policy == "explicit" {
-                    Picker("Выбранный DNS", selection: $explicitDNS) {
-                        ForEach(dnsTags, id: \.self) { value in Text(value).tag(value) }
+                } else {
+                    field("Общий DNS-сервер", value: model.defaultDNS ?? "Не указан")
+                    if dnsChoice == "auto" {
+                        Text("Маршрут не позволяет достоверно определить тип DNS-профиля.")
+                            .font(.footnote).foregroundStyle(.secondary)
                     }
                 }
             }
-            Section("Результат моделирования") {
-                field("Маршрут", value: route)
-                field("DNS", value: resolved.dns ?? "Не определён")
-                if resolved.source == .unmapped {
-                    Label("Для этого выхода нет привязки DNS. Показан только DNS по умолчанию.",
-                          systemImage: "exclamationmark.triangle")
-                        .font(.footnote).foregroundStyle(.secondary)
+            Section("Обработка DNS") {
+                NavigationLink {
+                    StudioDNSRuleFlowView(model: model, filteredIndexes: nil)
+                } label: {
+                    Label("Посмотреть действующую схему RACE, проверок и ответов",
+                          systemImage: "arrow.triangle.branch")
                 }
+                Text("Профиль — будущая единица настроек. Сегодня RACE/Evaluate/Respond заданы общей последовательностью DNS-правил; приложение не приписывает эти действия выдуманному профилю.")
+                    .font(.footnote).foregroundStyle(.secondary)
             }
         }
         .navigationTitle("Маршрут и DNS")
         .navigationBarTitleDisplayMode(.inline)
         .onAppear {
-            if route.isEmpty { route = currentRoute ?? model.defaultRoute ?? routes.first ?? "" }
-            if let currentDNS, !currentDNS.isEmpty {
-                explicitDNS = currentDNS
-                if let currentRoute { associations[currentRoute] = currentDNS }
-            } else {
-                explicitDNS = model.defaultDNS ?? dnsTags.first ?? ""
+            if route.isEmpty {
+                route = currentRoute ?? model.defaultRoute ?? routes.first ?? ""
             }
-            if dnsHasExplicitOverride { policy = "explicit" }
         }
     }
 
     private func field(_ name: String, value: String) -> some View {
         HStack(spacing: 12) {
-            Text(name)
+            Text(name).font(.subheadline)
             Spacer(minLength: 10)
-            Text(value)
-                .foregroundStyle(.secondary)
+            Text(value).font(.subheadline).foregroundStyle(.secondary)
                 .multilineTextAlignment(.trailing)
         }
-        .font(.subheadline)
     }
 }
 #endif
