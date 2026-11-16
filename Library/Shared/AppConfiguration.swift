@@ -197,7 +197,9 @@ public enum AppConfiguration {
         ownSigned: [String],
         peerSigned: [String],
         hostConfigured: String?,
-        tunnelConfigured: String?
+        tunnelConfigured: String?,
+        hostProvisioned: [String] = [],
+        tunnelProvisioned: [String] = []
     ) -> [String] {
         let own = Set(ownSigned.filter { !$0.isEmpty })
         let peer = Set(peerSigned.filter { !$0.isEmpty })
@@ -207,8 +209,19 @@ public enum AppConfiguration {
         if !own.isEmpty { return own.sorted() }
         if !peer.isEmpty { return peer.sorted() }
 
-        // The XML rights of both binaries were unreadable. Fall back only
-        // to a common declared group name; never invent a Team-ID group.
+        // DER-only signatures do not give us XML names. Discover candidate
+        // names from the two embedded provisioning profiles, when available.
+        // This does not grant any rights: containerURL remains the gate.
+        let hostNames = Set(hostProvisioned)
+        let tunnelNames = Set(tunnelProvisioned)
+        if !hostNames.isEmpty && !tunnelNames.isEmpty {
+            return hostNames.intersection(tunnelNames).sorted()
+        }
+        if !hostNames.isEmpty { return hostNames.sorted() }
+        if !tunnelNames.isEmpty { return tunnelNames.sorted() }
+
+        // No readable signing metadata. Try a common declared group only,
+        // rather than manufacture an identifier from the signing Team ID.
         guard let hostConfigured, !hostConfigured.isEmpty,
               let tunnelConfigured, hostConfigured == tunnelConfigured else {
             return []
@@ -226,7 +239,11 @@ public enum AppConfiguration {
         let tunnelDeclared = packetTunnelBundle?.object(forInfoDictionaryKey: "AppGroupIdentifier") as? String
         return candidateAppGroups(
             ownSigned: own, peerSigned: peer,
-            hostConfigured: hostDeclared, tunnelConfigured: tunnelDeclared
+            hostConfigured: hostDeclared, tunnelConfigured: tunnelDeclared,
+            hostProvisioned: hostBundle.map { SignedEntitlements.provisionedAppGroups(of: $0) } ?? [],
+            tunnelProvisioned: packetTunnelBundle.map {
+                SignedEntitlements.provisionedAppGroups(of: $0)
+            } ?? []
         ).filter {
             FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: $0) != nil
         }
