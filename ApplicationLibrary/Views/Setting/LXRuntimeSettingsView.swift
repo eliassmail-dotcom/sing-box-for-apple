@@ -54,21 +54,33 @@ public struct LXRuntimeSettingsView: View {
                                 .font(.footnote).foregroundStyle(.secondary)
                         }
                         Section("Устойчивость URLTest") {
-                            Toggle("Адаптивный порог задержки", isOn: adaptiveEnabledBinding)
-                            if currentSettings.adaptiveTolerancePercent > 0 {
+                            Picker("Адаптивный порог", selection: adaptiveModeBinding) {
+                                Text("Как в профиле").tag("inherit")
+                                Text("Включить").tag("on")
+                                Text("Выключить").tag("off")
+                            }
+                            if adaptiveModeBinding.wrappedValue == "on" {
                                 Stepper("Относительный порог: \(currentSettings.adaptiveTolerancePercent)%",
                                         value: adaptivePercentBinding, in: 5...60, step: 5)
                             }
-                            Toggle("Удерживать выбранный узел", isOn: holdEnabledBinding)
-                            if currentSettings.minHoldSeconds > 0 {
+                            Picker("Удержание выбранного узла", selection: holdModeBinding) {
+                                Text("Как в профиле").tag("inherit")
+                                Text("Включить").tag("on")
+                                Text("Выключить").tag("off")
+                            }
+                            if holdModeBinding.wrappedValue == "on" {
                                 Stepper("Минимальное удержание: \(currentSettings.minHoldSeconds) с",
                                         value: holdSecondsBinding, in: 5...120, step: 5)
                             }
                             TextField("Проверочные URL через запятую", text: probeURLsBinding)
                             Text("До трёх HTTP(S)-адресов. Узел доступен, если ответил хотя бы один. Пустое поле сохраняет исходный URL. Порог и удержание действуют только для Least Test; при отказе или возврате на базовые удержание не мешает переключению.")
                                 .font(.footnote).foregroundStyle(.secondary)
-                            Toggle("Passive Guard · карантин узлов", isOn: passiveGuardEnabledBinding)
-                            Text("Экспериментально, по умолчанию выключено. Учитывает независимые ошибки соединений и зависания потоков; при подтверждённом отказе исключает узел на 60 с без разрыва действующих соединений. Только Least Test и Failover, не Round Robin. Это не гарантированный обход ТСПУ.")
+                            Picker("Passive Guard · карантин узлов", selection: passiveGuardModeBinding) {
+                                Text("Как в профиле").tag("inherit")
+                                Text("Включить").tag("on")
+                                Text("Выключить").tag("off")
+                            }
+                            Text("Наследование сохраняет политику исходной конфигурации. Явное выключение удаляет соответствующий параметр. Passive Guard учитывает независимые ошибки и зависания потоков; при подтверждённом отказе исключает узел на 60 с без разрыва действующих соединений. Только Least Test и Failover, не Round Robin. Это не гарантированный обход ТСПУ.")
                                 .font(.footnote).foregroundStyle(.secondary)
                         }
                         Section("Переопределения групп") {
@@ -99,11 +111,15 @@ public struct LXRuntimeSettingsView: View {
                     }
 
                     Section("Gemini") {
-                        Toggle("Gemini Chains", isOn: geminiChainsBinding)
-                            .disabled(!LXGeminiBuilder.hasSource(profileContent))
+                        Picker("Gemini Chains", selection: geminiChainsBinding) {
+                            Text("Как в профиле").tag("inherit")
+                            Text("Включить").tag("on")
+                            Text("Выключить").tag("off")
+                        }
+                        .disabled(!LXGeminiBuilder.hasSource(profileContent))
                         statusRow("Источник конечных узлов", value:
                             LXGeminiBuilder.hasSource(profileContent) ? "Gemini+" : "Gemini+ не найден")
-                        Text("Прямые Gemini-узлы собираются приложением из Gemini+. При включении добавляются цепочки: текущий узел Стратегии → Gemini-узел. Первый переход выбирается ядром динамически, без фиксации сервера. Исходная подписка не меняется.")
+                        Text("Наследование сохраняет группы и цепочки, пришедшие из конфигурации. Явное управление перестраивает Gemini-группы на устройстве. При включении добавляются цепочки: текущий узел Стратегии → Gemini-узел.")
                             .font(.footnote).foregroundStyle(.secondary)
                     }
 
@@ -206,31 +222,64 @@ public struct LXRuntimeSettingsView: View {
         )
     }
 
-    private var geminiChainsBinding: Binding<Bool> {
+    private func overrideMode(_ value: Bool?, legacyEnabled: Bool = false) -> String {
+        if let value { return value ? "on" : "off" }
+        return legacyEnabled ? "on" : "inherit"
+    }
+
+    private func overrideValue(_ mode: String) -> Bool? {
+        switch mode {
+        case "on": true
+        case "off": false
+        default: nil
+        }
+    }
+
+    private var geminiChainsBinding: Binding<String> {
         Binding(
-            get: { currentSettings.geminiChainsEnabled },
-            set: { enabled in mutate { $0.geminiChainsEnabled = enabled } }
+            get: { overrideMode(currentSettings.geminiChainsOverride) },
+            set: { value in mutate { $0.geminiChainsOverride = overrideValue(value) } }
         )
     }
 
-    private var adaptiveEnabledBinding: Binding<Bool> {
-        Binding(get: { currentSettings.adaptiveTolerancePercent > 0 },
-                set: { enabled in mutate { $0.adaptiveTolerancePercent = enabled ? 30 : 0; $0.resiliencePreset = "custom" } })
+    private var adaptiveModeBinding: Binding<String> {
+        Binding(
+            get: { overrideMode(currentSettings.adaptiveToleranceOverride,
+                                legacyEnabled: currentSettings.adaptiveTolerancePercent > 0) },
+            set: { value in
+                mutate {
+                    $0.adaptiveToleranceOverride = overrideValue(value)
+                    if value == "inherit" { $0.adaptiveTolerancePercent = 0 }
+                    else if value == "on" && $0.adaptiveTolerancePercent == 0 { $0.adaptiveTolerancePercent = 30 }
+                    $0.resiliencePreset = "custom"
+                }
+            }
+        )
     }
 
     private var adaptivePercentBinding: Binding<Int> {
         Binding(get: { currentSettings.adaptiveTolerancePercent },
-                set: { value in mutate { $0.adaptiveTolerancePercent = value; $0.resiliencePreset = "custom" } })
+                set: { value in mutate { $0.adaptiveTolerancePercent = value; $0.adaptiveToleranceOverride = true; $0.resiliencePreset = "custom" } })
     }
 
-    private var holdEnabledBinding: Binding<Bool> {
-        Binding(get: { currentSettings.minHoldSeconds > 0 },
-                set: { enabled in mutate { $0.minHoldSeconds = enabled ? 30 : 0; $0.resiliencePreset = "custom" } })
+    private var holdModeBinding: Binding<String> {
+        Binding(
+            get: { overrideMode(currentSettings.minHoldOverride,
+                                legacyEnabled: currentSettings.minHoldSeconds > 0) },
+            set: { value in
+                mutate {
+                    $0.minHoldOverride = overrideValue(value)
+                    if value == "inherit" { $0.minHoldSeconds = 0 }
+                    else if value == "on" && $0.minHoldSeconds == 0 { $0.minHoldSeconds = 30 }
+                    $0.resiliencePreset = "custom"
+                }
+            }
+        )
     }
 
     private var holdSecondsBinding: Binding<Int> {
         Binding(get: { currentSettings.minHoldSeconds },
-                set: { value in mutate { $0.minHoldSeconds = value; $0.resiliencePreset = "custom" } })
+                set: { value in mutate { $0.minHoldSeconds = value; $0.minHoldOverride = true; $0.resiliencePreset = "custom" } })
     }
 
     private var probeURLsBinding: Binding<String> {
@@ -238,9 +287,11 @@ public struct LXRuntimeSettingsView: View {
                 set: { value in mutate { $0.probeURLs = value } })
     }
 
-    private var passiveGuardEnabledBinding: Binding<Bool> {
-        Binding(get: { currentSettings.passiveGuardEnabled },
-                set: { enabled in mutate { $0.passiveGuardEnabled = enabled; $0.resiliencePreset = "custom" } })
+    private var passiveGuardModeBinding: Binding<String> {
+        Binding(
+            get: { overrideMode(currentSettings.passiveGuardOverride) },
+            set: { value in mutate { $0.passiveGuardOverride = overrideValue(value); $0.resiliencePreset = "custom" } }
+        )
     }
 
     private var globalModeBinding: Binding<String> {
