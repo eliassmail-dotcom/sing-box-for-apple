@@ -73,6 +73,80 @@ final class StudioDNSDraftModelTests: XCTestCase {
         XCTAssertFalse(groups[2].isRace)
     }
 
+
+    func testObservedR6DNSListsRealServersAndOrderedEvaluationWithoutDraft() throws {
+        let data = """
+        {
+          "outbounds":[{"tag":"direct","type":"direct"},
+                       {"tag":"Стратегия","type":"selector","outbounds":[]}],
+          "route":{"default_domain_resolver":"local"},
+          "dns":{
+            "final":"cloudflare-proxy",
+            "servers":[
+              {"tag":"local","type":"local"},
+              {"tag":"mskix-dns","type":"udp","server":"62.76.76.62"},
+              {"tag":"mskix-dns-backup","type":"udp","server":"62.76.62.76"},
+              {"tag":"cloudflare-proxy","type":"https","server":"1.1.1.1","detour":"Стратегия"},
+              {"tag":"gemini-special","type":"https","server":"8.8.8.8","detour":"Gemini"}
+            ],
+            "rules":[
+              {"action":"evaluate","server":"mskix-dns","tag":"failover-direct-01-1","timeout":"3s"},
+              {"action":"respond","match_response":"failover-direct-01-1"},
+              {"action":"evaluate","server":"mskix-dns-backup","tag":"failover-direct-01-2"},
+              {"action":"route","server":"cloudflare-proxy","race":true},
+              {"rule_set":["karing-acl-Gemini"],"action":"evaluate","server":"gemini-special","tag":"gemini-1"},
+              {"action":"respond","match_response":"gemini-1"}
+            ]
+          }
+        }
+        """
+        let document = try StudioDocument(content: data)
+        let direct = StudioDNSObservedProfile(document: document, role: .directTraffic)
+        XCTAssertEqual(direct.servers.map(\.name), ["mskix-dns", "mskix-dns-backup"])
+        XCTAssertEqual(direct.rules.map(\.index), [0, 1, 2])
+        XCTAssertEqual(direct.rules.map(\.action), ["evaluate", "respond", "evaluate"])
+        XCTAssertEqual(direct.finalServer, "cloudflare-proxy")
+        XCTAssertFalse(direct.rules.contains { $0.race })
+
+        let proxy = StudioDNSObservedProfile(document: document, role: .proxyTraffic)
+        XCTAssertEqual(proxy.servers.map(\.name), ["cloudflare-proxy", "gemini-special"])
+        XCTAssertEqual(proxy.rules.map(\.index), [3, 4, 5])
+        XCTAssertTrue(proxy.rules[0].race)
+
+        let service = StudioDNSObservedProfile(document: document, role: .proxyHosts)
+        XCTAssertEqual(service.servers.map(\.name), ["local"])
+        XCTAssertEqual(service.rules.count, 0)
+
+        let gemini = StudioDNSObservedProfile(document: document, role: .geminiTraffic)
+        XCTAssertEqual(gemini.servers.map(\.name), ["gemini-special"])
+        XCTAssertEqual(gemini.rules.map(\.index), [4, 5])
+        XCTAssertFalse(gemini.rules.contains { $0.race })
+    }
+
+    func testGeminiDoesNotInventDNSAssignmentsWhenOnlyMatchResponseExists() throws {
+        let document = try StudioDocument(content: """
+        {"dns":{"final":"proxy-doh",
+        "servers":[{"tag":"proxy-doh","type":"https","server":"1.1.1.1","detour":"Стратегия"}],
+        "rules":[{"rule_set":["karing-acl-Gemini"],"action":"respond","match_response":true}]}}
+        """)
+        let gemini = StudioDNSObservedProfile(document: document, role: .geminiTraffic)
+        XCTAssertTrue(gemini.servers.isEmpty)
+        XCTAssertEqual(gemini.rules.map(\.index), [0])
+        XCTAssertEqual(gemini.finalServer, "proxy-doh")
+    }
+
+    func testServiceResolversReportMissingReferencesWithoutFakingServers() throws {
+        let document = try StudioDocument(content: """
+        {"route":{"default_domain_resolver":"bootstrap-direct-dns-group"},
+         "dns":{"servers":[{"type":"local","tag":"local"}],"rules":[]},
+         "outbounds":[{"type":"vless","tag":"Server • Gemini","domain_resolver":"missing-tag"}]}
+        """)
+        let result = StudioDNSObservedProfile(document: document, role: .proxyHosts)
+        XCTAssertEqual(result.servers.count, 0)
+        XCTAssertEqual(result.unresolvedResolvers,
+                       ["bootstrap-direct-dns-group", "missing-tag"])
+    }
+
     @MainActor
     func testSelectionsRemainIndependentAndSessionOnly() {
         let store = StudioDNSDraftStore()
