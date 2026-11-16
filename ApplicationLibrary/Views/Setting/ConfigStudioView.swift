@@ -44,7 +44,7 @@ public struct ConfigStudioView: View {
                     } else {
                         hint("Получен из ядра запущенного туннеля через GetRunningConfig. Это не реконструкция по подписке.")
                     }
-                    categories(document)
+                    StudioSemanticHomeView(document: document)
                     NavigationLink {
                         StudioLocalVariablesView()
                     } label: {

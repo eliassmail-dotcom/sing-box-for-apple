@@ -226,8 +226,30 @@ struct StudioNativeDetailView: View {
             } else if let list {
                 Section("\(list.count) элементов") {
                     ForEach(list.indices, id: \.self) { index in
-                        StudioValueRow(key: "\(index + 1)", value: list[index],
-                                       path: "\(path)[\(index)]")
+                        if let entry = list[index] as? [String: Any] {
+                            let tag = entry["tag"] as? String
+                            let server = entry["server"] as? String
+                            let type = entry["type"] as? String ?? entry["action"] as? String ?? ""
+                            NavigationLink {
+                                StudioNativeDetailView(
+                                    title: tag ?? server ?? "Запись №\(index + 1)",
+                                    path: "\(path)[\(index)]",
+                                    value: entry
+                                )
+                            } label: {
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text(tag ?? server ?? "Запись №\(index + 1)")
+                                        .font(.subheadline.weight(.medium))
+                                    Text(StudioHumanFields.kind(type))
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                                .padding(.vertical, 4)
+                            }
+                        } else {
+                            StudioValueRow(key: "\(index + 1)", value: list[index],
+                                           path: "\(path)[\(index)]")
+                        }
                     }
                 }
             } else {
