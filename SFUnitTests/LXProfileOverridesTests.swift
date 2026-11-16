@@ -482,7 +482,9 @@ final class LXProfileOverridesTests: XCTestCase {
         XCTAssertNil(auto["tolerance_percent"])
         XCTAssertNil(auto["min_hold"])
         XCTAssertNil(auto["passive_guard"])
-        XCTAssertFalse(outbounds.contains { ($0["tag"] as? String)?.hasPrefix("LX • Gemini • Chain • ") == true })
+        let geminiRoot = try XCTUnwrap(outbounds.first { ($0["tag"] as? String) == "Gemini" })
+        XCTAssertFalse((geminiRoot["outbounds"] as? [String] ?? []).contains("Gemini • Chain • A"))
+        XCTAssertFalse(outbounds.contains { ($0["tag"] as? String) == "Gemini • Chain • A" })
     }
 
     func testModeSwitchStripsIncompatibleURLTestOptions() throws {
