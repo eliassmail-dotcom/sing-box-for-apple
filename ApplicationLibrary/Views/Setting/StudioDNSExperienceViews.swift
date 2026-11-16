@@ -490,6 +490,26 @@ private struct StudioDNSAreaDetailView: View {
                 row("DNS-серверы в правилах", policy.dnsTargets.isEmpty ?
                     "Явного сервера нет" : policy.dnsTargets.joined(separator: ", "))
             }
+            Section("DNS-схема") {
+                let linked = StudioDNSSchemeCatalog(document: model.document)
+                    .linkedSchemes(forDNSRules: policy.dnsRules)
+                if linked.isEmpty {
+                    Text("Подтверждённой общей последовательности DNS-проверок нет. Используются исходные отдельные правила.")
+                        .font(.footnote).foregroundStyle(.secondary)
+                } else {
+                    ForEach(linked) { scheme in
+                        NavigationLink {
+                            StudioDNSSchemeDetailView(scheme: scheme)
+                        } label: {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(scheme.title).font(.subheadline.weight(.medium))
+                                Text(scheme.serversInOrder.joined(separator: " → "))
+                                    .font(.caption).foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                }
+            }
             Section("Исходные правила") {
                 NavigationLink {
                     StudioDNSRuleFlowView(model: model, filteredIndexes: policy.dnsRules)
