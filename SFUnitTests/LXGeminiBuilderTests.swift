@@ -128,8 +128,12 @@ final class LXGeminiBuilderTests: XCTestCase {
         XCTAssertTrue(try outbounds(configured).contains {
             ($0["tag"] as? String) == "Gemini • Chain • A"
         })
+        // No opt-in/out on profile 41: inheritance preserves the source
+        // exactly, including its legacy Gemini • Chain • A group.
+        // The client-generated LX chains must remain scoped to profile 42.
+        XCTAssertEqual(try LXProfileOverrides.apply(source, profileID: 41, storedJSON: store.encode()), source)
         XCTAssertFalse(try outbounds(untouched).contains {
-            ($0["tag"] as? String) == "Gemini • Chain • A"
+            ($0["tag"] as? String)?.hasPrefix("LX • Gemini • Chain • ") == true
         })
     }
 
