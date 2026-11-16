@@ -54,7 +54,7 @@ struct StudioDNSHomeView: View {
                 NavigationLink {
                     StudioDNSRuleFlowView(model: model, filteredIndexes: nil)
                 } label: {
-                    Label("Техническая диагностика DNS-правил", systemImage: "wrench.and.screwdriver")
+                    Label("Обзор DNS-механизмов", systemImage: "wrench.and.screwdriver")
                 }
                 Text("Исходный порядок правил доступен для диагностики, но не используется как основной способ настройки DNS.")
                     .font(.footnote).foregroundStyle(.secondary)
@@ -261,7 +261,7 @@ private struct StudioDNSAreaDetailView: View {
                 NavigationLink {
                     StudioDNSRuleFlowView(model: model, filteredIndexes: policy.dnsRules)
                 } label: {
-                    Text("Посмотреть \(policy.dnsRules.count) DNS-правил")
+                    Text("Как обрабатываются эти DNS-условия")
                 }
                 Text("Это найденные совпадения условий в JSON. Нельзя утверждать, что они обязательно победят предшествующие правила или параллельные проверки.")
                     .font(.footnote).foregroundStyle(.secondary)
@@ -294,28 +294,8 @@ struct StudioDNSRuleFlowView: View {
         let indices = Set(filteredIndexes)
         return all.filter { indices.contains($0.index) }
     }
-    private var servers: [String] {
-        Array(Set(selectedRules.compactMap(\.server))).sorted()
-    }
-    private var requests: Int {
-        selectedRules.filter { $0.action == "route" }.count
-    }
-    private var evaluations: Int {
-        selectedRules.filter { $0.action == "evaluate" }.count
-    }
-    private var answers: Int {
-        selectedRules.filter { $0.action == "respond" }.count
-    }
-    private var parallelChecks: Int {
-        selectedRules.filter(\.race).count
-    }
-    private var earlyRequests: Int {
-        selectedRules.filter(\.speculative).count
-    }
-    private var otherActions: Int {
-        selectedRules.filter {
-            !["route", "evaluate", "respond"].contains($0.action)
-        }.count
+    private var summary: StudioDNSExplanation.RuleSummary {
+        StudioDNSExplanation.RuleSummary(rules: selectedRules)
     }
 
     var body: some View {
@@ -332,27 +312,27 @@ struct StudioDNSRuleFlowView: View {
                 .padding(.vertical, 4)
             }
             Section("Обработка запросов") {
-                summaryRow("Запросы к DNS", count: requests + evaluations,
+                summaryRow("Запросы к DNS", count: summary.routeCount + summary.evaluateCount,
                            detail: "Запрашивают сервер или получают ответ для проверки")
-                summaryRow("Проверки ответов", count: parallelChecks,
+                summaryRow("Параллельные проверки", count: summary.raceCount,
                            detail: "Правила с RACE — допускают параллельную оценку")
-                if earlyRequests > 0 {
-                    summaryRow("Предварительные запросы", count: earlyRequests,
+                if summary.speculativeCount > 0 {
+                    summaryRow("Предварительные запросы", count: summary.speculativeCount,
                                detail: "Speculative — могут выполняться до завершения RACE")
                 }
-                summaryRow("Возврат проверенного ответа", count: answers,
+                summaryRow("Возврат проверенного ответа", count: summary.respondCount,
                            detail: "Используют результат предыдущего запроса")
-                if otherActions > 0 {
-                    summaryRow("Другие действия", count: otherActions,
+                if summary.otherCount > 0 {
+                    summaryRow("Другие действия", count: summary.otherCount,
                                detail: "Блокировки, готовые ответы и прочие операции")
                 }
             }
             Section("DNS-серверы в этих правилах") {
-                if servers.isEmpty {
+                if summary.servers.isEmpty {
                     Text("Прямые ссылки на серверы не найдены. Некоторые действия используют результат более ранних правил.")
                         .font(.footnote).foregroundStyle(.secondary)
                 } else {
-                    ForEach(servers, id: \.self) { server in
+                    ForEach(summary.servers, id: \.self) { server in
                         Text(server).font(.subheadline)
                     }
                 }
