@@ -2246,7 +2246,7 @@
 				CODE_SIGN_ENTITLEMENTS = Extension/Extension.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 21;
+				CURRENT_PROJECT_VERSION = 22;
 				DEVELOPMENT_TEAM = P8XK3KHB48;
 				ENABLE_HARDENED_RUNTIME = YES;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -2286,7 +2286,7 @@
 				CODE_SIGN_ENTITLEMENTS = Extension/Extension.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 21;
+				CURRENT_PROJECT_VERSION = 22;
 				DEVELOPMENT_TEAM = P8XK3KHB48;
 				ENABLE_HARDENED_RUNTIME = YES;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -2586,7 +2586,7 @@
 				CODE_SIGN_ENTITLEMENTS = IntentsExtension/IntentsExtension.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 21;
+				CURRENT_PROJECT_VERSION = 22;
 				DEVELOPMENT_TEAM = P8XK3KHB48;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = IntentsExtension/Info.plist;
@@ -2625,7 +2625,7 @@
 				CODE_SIGN_ENTITLEMENTS = IntentsExtension/IntentsExtension.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 21;
+				CURRENT_PROJECT_VERSION = 22;
 				DEVELOPMENT_TEAM = P8XK3KHB48;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = IntentsExtension/Info.plist;
@@ -2716,7 +2716,7 @@
 				CODE_SIGN_ENTITLEMENTS = FileProviderExtension/FileProviderExtension.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 21;
+				CURRENT_PROJECT_VERSION = 22;
 				DEVELOPMENT_TEAM = P8XK3KHB48;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = FileProviderExtension/Info.plist;
@@ -2749,7 +2749,7 @@
 				CODE_SIGN_ENTITLEMENTS = FileProviderExtension/FileProviderExtension.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 21;
+				CURRENT_PROJECT_VERSION = 22;
 				DEVELOPMENT_TEAM = P8XK3KHB48;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = FileProviderExtension/Info.plist;
@@ -2855,7 +2855,7 @@
 				CODE_SIGN_ENTITLEMENTS = TVExtension/TVExtension.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 21;
+				CURRENT_PROJECT_VERSION = 22;
 				DEVELOPMENT_TEAM = P8XK3KHB48;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = TVExtension/Info.plist;
@@ -2891,7 +2891,7 @@
 				CODE_SIGN_ENTITLEMENTS = TVExtension/TVExtension.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 21;
+				CURRENT_PROJECT_VERSION = 22;
 				DEVELOPMENT_TEAM = P8XK3KHB48;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = TVExtension/Info.plist;
@@ -2930,7 +2930,7 @@
 				CODE_SIGN_ENTITLEMENTS = WidgetExtension/WidgetExtension.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 21;
+				CURRENT_PROJECT_VERSION = 22;
 				DEVELOPMENT_TEAM = P8XK3KHB48;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = WidgetExtension/Info.plist;
@@ -2961,7 +2961,7 @@
 				CODE_SIGN_ENTITLEMENTS = WidgetExtension/WidgetExtension.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 21;
+				CURRENT_PROJECT_VERSION = 22;
 				DEVELOPMENT_TEAM = P8XK3KHB48;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = WidgetExtension/Info.plist;
@@ -3208,7 +3208,7 @@
 				CODE_SIGN_ENTITLEMENTS = SFI/SFI.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 21;
+				CURRENT_PROJECT_VERSION = 22;
 				DEVELOPMENT_ASSET_PATHS = "";
 				DEVELOPMENT_TEAM = P8XK3KHB48;
 				ENABLE_PREVIEWS = YES;
@@ -3251,7 +3251,7 @@
 				CODE_SIGN_ENTITLEMENTS = SFI/SFI.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 21;
+				CURRENT_PROJECT_VERSION = 22;
 				DEVELOPMENT_ASSET_PATHS = "";
 				DEVELOPMENT_TEAM = P8XK3KHB48;
 				ENABLE_PREVIEWS = YES;
@@ -3723,7 +3723,7 @@
 				CODE_SIGN_ENTITLEMENTS = ShareExtension/ShareExtension.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 21;
+				CURRENT_PROJECT_VERSION = 22;
 				DEVELOPMENT_TEAM = P8XK3KHB48;
 				ENABLE_HARDENED_RUNTIME = YES;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -3763,7 +3763,7 @@
 				CODE_SIGN_ENTITLEMENTS = ShareExtension/ShareExtension.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 21;
+				CURRENT_PROJECT_VERSION = 22;
 				DEVELOPMENT_TEAM = P8XK3KHB48;
 				ENABLE_HARDENED_RUNTIME = YES;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -3804,7 +3804,7 @@
 				CODE_SIGN_ENTITLEMENTS = ActionExtension/ActionExtension.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 21;
+				CURRENT_PROJECT_VERSION = 22;
 				DEVELOPMENT_TEAM = P8XK3KHB48;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = ActionExtension/Info.plist;
@@ -3842,7 +3842,7 @@
 				CODE_SIGN_ENTITLEMENTS = ActionExtension/ActionExtension.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 21;
+				CURRENT_PROJECT_VERSION = 22;
 				DEVELOPMENT_TEAM = P8XK3KHB48;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = ActionExtension/Info.plist;
