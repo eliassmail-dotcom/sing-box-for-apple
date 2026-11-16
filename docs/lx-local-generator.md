@@ -1,14 +1,14 @@
-# Local generator (iOS) — v1.4.48r2 migration
+# Local generator (iOS) — v1.4.48r5 migration
 
 ## Scope
 
 The iOS Settings → Local Generator panel provides an **isolated** in-app
-version of the user-provided Yandex Cloud Function generator v1.4.48r2.
+version of the user-provided Yandex Cloud Function generator v1.4.48r5.
 The original Yandex service, saved profile subscriptions, and active VPN
 connection are left intact.
 
 Inputs: a VLESS subscription source (direct HTTPS URL, SUB_URL variable or
-pasted text); all v1.4.48r2 KEY=VALUE environment variables; output variant
+pasted text); all v1.4.48r5 KEY=VALUE environment variables; output variant
 personal/corporate/guest/NB/CD; core lx/upstream, iOS/Windows platform and
 log level. An optional authorized raw-node proxy is a separate HTTPS source.
 
@@ -36,7 +36,7 @@ Two distinct Yandex endpoint roles may coexist:
 2. Optional authorized raw-node proxy only for local generator connectivity
    fallback; returns raw subscription nodes, no routing or pools.
 
-The raw proxy endpoint does NOT yet exist in the user's v1.4.48r2 Yandex
+The raw proxy endpoint does NOT yet exist in the user's v1.4.48r5 Yandex
 Function. On direct download failure, the app can use the proxy if configured
 and if the function is later updated. The app sends a long secret via
 X-Subscription-Proxy-Key and does not pass the original source URL or token.
