@@ -173,6 +173,17 @@ enum StudioDNSExplanation {
         }
     }
 
+    static func countLabel(_ count: Int, one: String, few: String, many: String) -> String {
+        let n100 = count % 100
+        let n10 = count % 10
+        let noun: String
+        if n100 >= 11 && n100 <= 14 { noun = many }
+        else if n10 == 1 { noun = one }
+        else if n10 >= 2 && n10 <= 4 { noun = few }
+        else { noun = many }
+        return "\(count) \(noun)"
+    }
+
     /// Human-readable conditions, not an independently editable address group.
     static func conditionsDescription(_ object: [String: Any]) -> String {
         let keys: [(String, String)] = [
@@ -188,7 +199,12 @@ enum StudioDNSExplanation {
         var terms: [String] = []
         for (key, description) in keys {
             if let list = object[key] as? [Any], !list.isEmpty {
-                terms.append("\(list.count) \(description)")
+                if key == "domain" {
+                    terms.append(countLabel(list.count, one: "точный домен",
+                                            few: "точных домена", many: "точных доменов"))
+                } else {
+                    terms.append("\(list.count) \(description)")
+                }
             } else if object[key] != nil {
                 terms.append("условие: \(StudioHumanFields.label(key).lowercased())")
             }
