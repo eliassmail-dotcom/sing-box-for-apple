@@ -172,6 +172,11 @@ struct StudioSemanticModel {
         for (key, noun) in labels {
             if let values = conditions[key] as? [String], !values.isEmpty {
                 if values.count == 1 { return values[0] }
+                if key == "domain" {
+                    return StudioDNSExplanation.countLabel(values.count,
+                        one: "точный домен", few: "точных домена",
+                        many: "точных доменов")
+                }
                 return "\(values.count) \(noun)"
             }
             if let value = conditions[key] as? String { return value }
