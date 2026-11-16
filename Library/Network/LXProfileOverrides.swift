@@ -451,6 +451,12 @@ public enum LXProfileOverrides {
             for index in outbounds.indices {
                 guard (outbounds[index]["type"] as? String) == "urltest",
                       let tag = outbounds[index]["tag"] as? String else { continue }
+                // This reserved Smart group must be validated and rebuilt by
+                // addWhiteFallback after the normal URLTest override pass.
+                // Changing its mode to round_robin here would strip
+                // priority_outbounds, destroy the legacy migration signature,
+                // and allow White nodes to bypass the Base tier.
+                if tag == preferredFallbackTag { continue }
                 let setting = settings.urlTests[tag] ?? settings.urlTestDefault
                 var group = outbounds[index]
                 var groupChanged = false
