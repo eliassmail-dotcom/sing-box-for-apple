@@ -85,6 +85,21 @@ open class ExtensionProvider: NEPacketTunnelProvider {
         try data.write(to: lastGoodStartOptionsURL, options: .atomic)
     }
 
+    // Never overwrite a later pending configuration during a delayed rollback.
+    private func publishDesiredStartOptions(
+        _ options: [String: NSObject], expected: [String: NSObject]?
+    ) throws {
+        guard let startOptionsURL else { return }
+        let current = try loadPersistedStartOptions()
+        let currentConfig = current?["configContent"] as? String
+        let expectedConfig = expected?["configContent"] as? String
+        let newConfig = options["configContent"] as? String
+        if currentConfig != nil && currentConfig != expectedConfig && currentConfig != newConfig {
+            throw ExtensionStartupError("A newer desired VPN configuration exists; refusing to replace it")
+        }
+        try ExtensionStartOptions.encode(options).write(to: startOptionsURL, options: .atomic)
+    }
+
     private func loadStartOptions(from url: URL?) throws -> [String: NSObject]? {
         guard let url, FileManager.default.fileExists(atPath: url.path) else {
             return nil
@@ -168,6 +183,7 @@ open class ExtensionProvider: NEPacketTunnelProvider {
 
     override open func startTunnel(options startOptions: [String: NSObject]?) async throws {
         #if os(iOS)
+            Self.logger.info("Packet Tunnel startTunnel entered")
             // The validated config is supplied by the containing app through
             // startVPNTunnel(options:). A missing App Group is NOT fatal to
             // packet-tunnel setup: use this extension's private Application
@@ -507,16 +523,17 @@ open class ExtensionProvider: NEPacketTunnelProvider {
             try applyStartOptions(options)
             do {
                 try await reloadService()
+                try publishDesiredStartOptions(options, expected: previousOptions)
                 try persistLastGoodStartOptions(options)
                 return nil
             } catch {
                 let applyError = error
-                if let previousOptions,
-                   (previousOptions["configContent"] as? String) != (options["configContent"] as? String) {
+                if let previousOptions {
                     do {
                         try validateStartOptions(previousOptions)
                         try applyStartOptions(previousOptions)
                         try await reloadService()
+                        try publishDesiredStartOptions(previousOptions, expected: options)
                         try persistLastGoodStartOptions(previousOptions)
                     } catch {
                         throw ExtensionStartupError(
