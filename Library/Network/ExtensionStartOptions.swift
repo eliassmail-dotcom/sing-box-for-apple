@@ -46,10 +46,20 @@ enum ExtensionStartOptions {
         }
         defer { _ = Darwin.close(descriptor) }
 
-        guard Darwin.flock(descriptor, LOCK_EX) == 0 else {
+        // Swift imports Darwin.flock as the POSIX lock *structure*, not the
+        // flock(2) function. Use the supported fcntl record-lock API instead.
+        var recordLock = Darwin.flock()
+        recordLock.l_type = Int16(F_WRLCK)
+        recordLock.l_whence = Int16(SEEK_SET)
+        recordLock.l_start = 0
+        recordLock.l_len = 0
+        guard Darwin.fcntl(descriptor, F_SETLKW, &recordLock) != -1 else {
             throw posixError("lock snapshot")
         }
-        defer { _ = Darwin.flock(descriptor, LOCK_UN) }
+        defer {
+            recordLock.l_type = Int16(F_UNLCK)
+            _ = Darwin.fcntl(descriptor, F_SETLK, &recordLock)
+        }
 
         let current = try readSnapshot(from: url)
         let expectedMatches: Bool
