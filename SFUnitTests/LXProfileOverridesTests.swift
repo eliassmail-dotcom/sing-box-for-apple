@@ -584,3 +584,52 @@ final class LXProfileOverridesTests: XCTestCase {
     }
 
 }
+
+
+    func testDesiredSnapshotRejectsStaleRollbackWhenOnlyNonConfigOptionChanged() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let url = directory.appendingPathComponent(ExtensionStartOptions.snapshotFileName)
+
+        let original: [String: NSObject] = [
+            "configContent": NSString(string: "{\\"outbounds\\":[]}"),
+            "systemProxyEnabled": NSNumber(value: false),
+        ]
+        let newer: [String: NSObject] = [
+            "configContent": NSString(string: "{\\"outbounds\\":[]}"),
+            "systemProxyEnabled": NSNumber(value: true),
+        ]
+
+        try ExtensionStartOptions.writeSnapshot(original, to: url, expectedCurrent: nil)
+        try ExtensionStartOptions.writeSnapshot(newer, to: url, expectedCurrent: original)
+
+        XCTAssertThrowsError(
+            try ExtensionStartOptions.writeSnapshot(original, to: url, expectedCurrent: original)
+        )
+
+        let stored = try XCTUnwrap(ExtensionStartOptions.readSnapshot(from: url))
+        XCTAssertEqual(stored["systemProxyEnabled"] as? Bool, true)
+    }
+
+    func testDesiredSnapshotAllowsIdempotentCommitButRejectsMissingExpectedSnapshot() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let url = directory.appendingPathComponent(ExtensionStartOptions.snapshotFileName)
+
+        let candidate: [String: NSObject] = [
+            "configContent": NSString(string: "{\\"outbounds\\":[]}"),
+            "includeAllNetworks": NSNumber(value: false),
+        ]
+
+        try ExtensionStartOptions.writeSnapshot(candidate, to: url, expectedCurrent: nil)
+        // Repeating the same commit is safe even if the original expected
+        // snapshot has already been replaced by this exact candidate.
+        try ExtensionStartOptions.writeSnapshot(candidate, to: url, expectedCurrent: nil)
+
+        let missingURL = directory.appendingPathComponent("missing.plist")
+        XCTAssertThrowsError(
+            try ExtensionStartOptions.writeSnapshot(candidate, to: missingURL, expectedCurrent: candidate)
+        )
+    }
