@@ -149,6 +149,30 @@ final class StudioDNSDraftModelTests: XCTestCase {
     }
 
 
+    func testObjectAndStringDomainResolversResolveIdentically() throws {
+        let document = try StudioDocument(content: """
+        {"route":{"default_domain_resolver":{"server":"bootstrap","strategy":"ipv4_only"}},
+         "dns":{"servers":[
+            {"tag":"bootstrap","type":"udp","server":"1.1.1.1"},
+            {"tag":"fallback","type":"udp","server":"8.8.8.8",
+             "domain_resolver":{"server":"missing","strategy":"prefer_ipv4"}}
+         ]},
+         "outbounds":[
+            {"tag":"first","type":"vless","domain_resolver":"bootstrap"},
+            {"tag":"second","type":"vless",
+             "domain_resolver":{"server":"bootstrap","timeout":"3s"}}
+         ]}
+        """)
+        let proxy = StudioDNSObservedProfile(document: document, role: .proxyHosts)
+        XCTAssertEqual(proxy.servers.map(\.name), ["bootstrap"])
+        XCTAssertEqual(proxy.unresolvedResolvers, [])
+        let dnsHosts = StudioDNSObservedProfile(document: document, role: .dnsHosts)
+        XCTAssertEqual(dnsHosts.unresolvedResolvers, ["missing"])
+        // Original resolver options remain available to the JSON inspector.
+        let outbounds = document.array("outbounds")
+        XCTAssertNotNil((outbounds[1]["domain_resolver"] as? [String: Any])?["timeout"])
+    }
+
     func testDNSReuseSameRealSequenceForTwoAddressGroups() throws {
         let document = try StudioDocument(content: """
         {"dns":{"servers":[
