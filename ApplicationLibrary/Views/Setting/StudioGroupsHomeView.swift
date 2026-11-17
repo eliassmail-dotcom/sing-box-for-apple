@@ -96,7 +96,7 @@ private struct StudioGroupCategoryView: View {
                         VStack(alignment: .leading, spacing: 4) {
                             Text(item.tag).font(.subheadline.weight(.medium))
                             Text(item.kind == .chain
-                                 ? "Хопы: \(item.detour.map { "\($0) → \(item.tag)" } ?? item.members.joined(separator: " → "))"
+                                 ? "Хопы: \(item.chainHopsLabel)"
                                  : "\(item.type) · участников: \(item.members.count)")
                                 .font(.caption).foregroundStyle(.secondary)
                             if item.isLegacyPool {
