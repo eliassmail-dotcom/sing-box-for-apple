@@ -58,7 +58,7 @@ class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
         do {
             _ = try requireWorkingDirectory()
         } catch {
-            NSLog("File Provider storage unavailable: \\(error)")
+            NSLog("File Provider storage unavailable: \(error)")
         }
     }
 
