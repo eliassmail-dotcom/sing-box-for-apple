@@ -235,16 +235,14 @@ public class ExtensionProfile: ObservableObject {
     private func logLastDisconnectError() async {
         guard let connection else { return }
         if #available(iOS 16.0, macOS 13.0, tvOS 17.0, *) {
+            // Swift imports fetchLastDisconnectError as async throws -> Void:
+            // the callback's Error? becomes the thrown error, not a return value.
             do {
-                if let last = try await connection.fetchLastDisconnectError() {
-                    let error = last as NSError
-                    logger.error("Last VPN disconnect: \(error.domain, privacy: .public) code=\(error.code); \(error.localizedDescription, privacy: .public)")
-                } else {
-                    logger.info("Last VPN disconnect error: none reported")
-                }
+                try await connection.fetchLastDisconnectError()
+                logger.info("Last VPN disconnect error: none reported")
             } catch {
                 let nsError = error as NSError
-                logger.error("Unable to fetch VPN disconnect error: \(nsError.domain, privacy: .public) code=\(nsError.code)")
+                logger.error("Last VPN disconnect: \(nsError.domain, privacy: .public) code=\(nsError.code); \(nsError.localizedDescription, privacy: .public)")
             }
         }
     }
