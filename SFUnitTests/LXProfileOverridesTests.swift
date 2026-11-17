@@ -583,9 +583,6 @@ final class LXProfileOverridesTests: XCTestCase {
         }
     }
 
-}
-
-
     func testDesiredSnapshotRejectsStaleRollbackWhenOnlyNonConfigOptionChanged() throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
@@ -593,11 +590,11 @@ final class LXProfileOverridesTests: XCTestCase {
         let url = directory.appendingPathComponent(ExtensionStartOptions.snapshotFileName)
 
         let original: [String: NSObject] = [
-            "configContent": NSString(string: "{\\"outbounds\\":[]}"),
+            "configContent": NSString(string: "same-config"),
             "systemProxyEnabled": NSNumber(value: false),
         ]
         let newer: [String: NSObject] = [
-            "configContent": NSString(string: "{\\"outbounds\\":[]}"),
+            "configContent": NSString(string: "same-config"),
             "systemProxyEnabled": NSNumber(value: true),
         ]
 
@@ -619,7 +616,7 @@ final class LXProfileOverridesTests: XCTestCase {
         let url = directory.appendingPathComponent(ExtensionStartOptions.snapshotFileName)
 
         let candidate: [String: NSObject] = [
-            "configContent": NSString(string: "{\\"outbounds\\":[]}"),
+            "configContent": NSString(string: "same-config"),
             "includeAllNetworks": NSNumber(value: false),
         ]
 
@@ -633,3 +630,4 @@ final class LXProfileOverridesTests: XCTestCase {
             try ExtensionStartOptions.writeSnapshot(candidate, to: missingURL, expectedCurrent: candidate)
         )
     }
+}
