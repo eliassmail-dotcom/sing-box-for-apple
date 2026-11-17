@@ -4,67 +4,62 @@ import UniformTypeIdentifiers
 class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
     let domain: NSFileProviderDomain
 
-    private static let appGroupID: String = {
-        // Same priority as the main app: prefer the build-time group when still
-        // entitled under the current signature, then the intersection with the
-        // packet-tunnel extension's signed groups, then the single remaining
-        // usable group.
-        let ownGroups = SignedEntitlements.stringArray("com.apple.security.application-groups")
-        var candidates = ownGroups
-        if let peerGroups = peerBundleGroups(), !peerGroups.isEmpty {
-            candidates = Array(Set(candidates).intersection(Set(peerGroups)))
-        }
-        let usable = candidates
-            .filter { FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: $0) != nil }
-            .sorted()
-        if let preferred = Bundle.main.object(forInfoDictionaryKey: "AppGroupIdentifier") as? String,
-           !preferred.isEmpty, usable.contains(preferred) {
-            return preferred
-        }
-        if usable.count == 1 {
-            return usable[0]
-        }
-        return ""
-    }()
-
-    /// Signed app groups of the packet-tunnel extension inside the host app.
-    private static func peerBundleGroups() -> [String]? {
-        var url = Bundle.main.bundleURL
-        var hostURL: URL?
-        while url.pathComponents.count > 1 {
-            url = url.deletingLastPathComponent()
-            if url.pathExtension == "app" {
-                hostURL = url
-                break
-            }
-        }
-        guard let hostURL, let plugins = Bundle(url: hostURL)?.builtInPlugInsURL,
-              let items = try? FileManager.default.contentsOfDirectory(at: plugins, includingPropertiesForKeys: nil) else {
+    // File Provider's document group is a signed, static Info.plist value.
+    // Never choose an arbitrary group independently from the host application.
+    private static let workingDirectoryURL: URL? = {
+        guard let extensionInfo = Bundle.main.object(forInfoDictionaryKey: "NSExtension") as? [String: Any],
+              let group = extensionInfo["NSExtensionFileProviderDocumentGroup"] as? String,
+              !group.isEmpty else {
+            NSLog("File Provider: missing NSExtensionFileProviderDocumentGroup")
             return nil
         }
-        for item in items where item.pathExtension == "appex" {
-            guard let info = Bundle(url: item)?.infoDictionary else { continue }
-            guard let ext = info["NSExtension"] as? [String: Any] else { continue }
-            guard ext["NSExtensionPointIdentifier"] as? String == "com.apple.networkextension.packet-tunnel" else { continue }
-            guard let bundle = Bundle(url: item) else { continue }
-            return SignedEntitlements.stringArray("com.apple.security.application-groups", of: bundle)
+        let signedGroups = SignedEntitlements.stringArray("com.apple.security.application-groups")
+        // Some re-signers produce DER-only entitlements. In that case the OS
+        // container access check is authoritative; XML parsing is not required.
+        if !signedGroups.isEmpty && !signedGroups.contains(group) {
+            NSLog("File Provider: document group is not in signed XML entitlements")
+            return nil
         }
-        return nil
-    }
-
-    private var workingDirectory: URL {
-        let groupURL = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: Self.appGroupID)
-            ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-        return groupURL
+        guard let container = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: group) else {
+            NSLog("File Provider: signed document group container unavailable")
+            return nil
+        }
+        return container
             .appendingPathComponent("Library", isDirectory: true)
             .appendingPathComponent("Caches", isDirectory: true)
             .appendingPathComponent("Working", isDirectory: true)
+    }()
+
+    private func requireWorkingDirectory() throws -> URL {
+        guard let directory = Self.workingDirectoryURL else {
+            throw NSError(
+                domain: "SFI.FileProvider.SigningCompatibility", code: 1,
+                userInfo: [NSLocalizedDescriptionKey:
+                    "File Provider document group is unavailable. Check the signed App Group and NSExtensionFileProviderDocumentGroup."]
+            )
+        }
+        do {
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            return directory
+        } catch {
+            throw NSError(
+                domain: "SFI.FileProvider.Storage", code: 2,
+                userInfo: [
+                    NSLocalizedDescriptionKey: "Unable to access File Provider working directory.",
+                    NSUnderlyingErrorKey: error
+                ]
+            )
+        }
     }
 
     required init(domain: NSFileProviderDomain) {
         self.domain = domain
         super.init()
-        try? FileManager.default.createDirectory(at: workingDirectory, withIntermediateDirectories: true)
+        do {
+            _ = try requireWorkingDirectory()
+        } catch {
+            NSLog("File Provider storage unavailable: \(error)")
+        }
     }
 
     func invalidate() {}
@@ -76,11 +71,18 @@ class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
               completionHandler: @escaping (NSFileProviderItem?, Error?) -> Void) -> Progress
     {
         let progress = Progress(totalUnitCount: 1)
+        let workingDirectory: URL
+        do {
+            workingDirectory = try requireWorkingDirectory()
+        } catch {
+            completionHandler(nil, error)
+            return progress
+        }
 
         if identifier == .rootContainer {
             completionHandler(FileProviderItem(rootAt: workingDirectory), nil)
         } else {
-            let url = fileURL(for: identifier)
+            let url = fileURL(for: identifier, workingDirectory: workingDirectory)
             if FileManager.default.fileExists(atPath: url.path) {
                 completionHandler(FileProviderItem(url: url, identifier: identifier, workingDirectory: workingDirectory), nil)
             } else {
@@ -98,8 +100,15 @@ class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
                        completionHandler: @escaping (URL?, NSFileProviderItem?, Error?) -> Void) -> Progress
     {
         let progress = Progress(totalUnitCount: 100)
+        let workingDirectory: URL
+        do {
+            workingDirectory = try requireWorkingDirectory()
+        } catch {
+            completionHandler(nil, nil, error)
+            return progress
+        }
 
-        let url = fileURL(for: itemIdentifier)
+        let url = fileURL(for: itemIdentifier, workingDirectory: workingDirectory)
         guard FileManager.default.fileExists(atPath: url.path) else {
             completionHandler(nil, nil, NSFileProviderError(.noSuchItem))
             return progress
@@ -120,8 +129,15 @@ class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
                     completionHandler: @escaping (NSFileProviderItem?, NSFileProviderItemFields, Bool, Error?) -> Void) -> Progress
     {
         let progress = Progress(totalUnitCount: 100)
+        let workingDirectory: URL
+        do {
+            workingDirectory = try requireWorkingDirectory()
+        } catch {
+            completionHandler(nil, [], false, error)
+            return progress
+        }
 
-        let parentURL = fileURL(for: itemTemplate.parentItemIdentifier)
+        let parentURL = fileURL(for: itemTemplate.parentItemIdentifier, workingDirectory: workingDirectory)
         let targetURL = parentURL.appendingPathComponent(itemTemplate.filename)
 
         do {
@@ -133,7 +149,7 @@ class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
                 FileManager.default.createFile(atPath: targetURL.path, contents: nil)
             }
 
-            let identifier = itemIdentifier(for: targetURL)
+            let identifier = itemIdentifier(for: targetURL, workingDirectory: workingDirectory)
             let item = FileProviderItem(url: targetURL, identifier: identifier, workingDirectory: workingDirectory)
             completionHandler(item, [], false, nil)
 
@@ -154,8 +170,15 @@ class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
                     completionHandler: @escaping (NSFileProviderItem?, NSFileProviderItemFields, Bool, Error?) -> Void) -> Progress
     {
         let progress = Progress(totalUnitCount: 100)
+        let workingDirectory: URL
+        do {
+            workingDirectory = try requireWorkingDirectory()
+        } catch {
+            completionHandler(nil, [], false, error)
+            return progress
+        }
 
-        var currentURL = fileURL(for: item.itemIdentifier)
+        var currentURL = fileURL(for: item.itemIdentifier, workingDirectory: workingDirectory)
         var newIdentifier = item.itemIdentifier
 
         do {
@@ -164,17 +187,17 @@ class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
                 if currentURL != newURL {
                     try FileManager.default.moveItem(at: currentURL, to: newURL)
                     currentURL = newURL
-                    newIdentifier = itemIdentifier(for: newURL)
+                    newIdentifier = itemIdentifier(for: newURL, workingDirectory: workingDirectory)
                 }
             }
 
             if changedFields.contains(.parentItemIdentifier) {
-                let newParentURL = fileURL(for: item.parentItemIdentifier)
+                let newParentURL = fileURL(for: item.parentItemIdentifier, workingDirectory: workingDirectory)
                 let newURL = newParentURL.appendingPathComponent(currentURL.lastPathComponent)
                 if currentURL != newURL {
                     try FileManager.default.moveItem(at: currentURL, to: newURL)
                     currentURL = newURL
-                    newIdentifier = itemIdentifier(for: newURL)
+                    newIdentifier = itemIdentifier(for: newURL, workingDirectory: workingDirectory)
                 }
             }
 
@@ -201,8 +224,15 @@ class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
                     completionHandler: @escaping (Error?) -> Void) -> Progress
     {
         let progress = Progress(totalUnitCount: 1)
+        let workingDirectory: URL
+        do {
+            workingDirectory = try requireWorkingDirectory()
+        } catch {
+            completionHandler(error)
+            return progress
+        }
 
-        let url = fileURL(for: identifier)
+        let url = fileURL(for: identifier, workingDirectory: workingDirectory)
 
         do {
             if FileManager.default.fileExists(atPath: url.path) {
@@ -220,6 +250,7 @@ class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
     func enumerator(for containerItemIdentifier: NSFileProviderItemIdentifier,
                     request _: NSFileProviderRequest) throws -> NSFileProviderEnumerator
     {
+        let workingDirectory = try requireWorkingDirectory()
         if containerItemIdentifier == .workingSet {
             return FileProviderEnumerator(workingSet: true, workingDirectory: workingDirectory)
         }
@@ -232,7 +263,7 @@ class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
         if containerItemIdentifier == .rootContainer {
             url = workingDirectory
         } else {
-            url = fileURL(for: containerItemIdentifier)
+            url = fileURL(for: containerItemIdentifier, workingDirectory: workingDirectory)
         }
 
         guard FileManager.default.fileExists(atPath: url.path) else {
@@ -244,7 +275,7 @@ class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
 
     // MARK: - Helper Methods
 
-    private func fileURL(for identifier: NSFileProviderItemIdentifier) -> URL {
+    private func fileURL(for identifier: NSFileProviderItemIdentifier, workingDirectory: URL) -> URL {
         if identifier == .rootContainer {
             return workingDirectory
         }
@@ -252,7 +283,7 @@ class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
         return workingDirectory.appendingPathComponent(relativePath)
     }
 
-    private func itemIdentifier(for url: URL) -> NSFileProviderItemIdentifier {
+    private func itemIdentifier(for url: URL, workingDirectory: URL) -> NSFileProviderItemIdentifier {
         let relativePath = url.path.replacingOccurrences(of: workingDirectory.path + "/", with: "")
         if relativePath == url.path || relativePath.isEmpty {
             return .rootContainer
