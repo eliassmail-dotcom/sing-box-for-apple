@@ -215,6 +215,9 @@ public class ExtensionProfile: ObservableObject {
                 ])
             }
         #endif
+        // Capture the current snapshot before preparing the candidate. The
+        // post-connect write is compare-and-swap: a newer concurrent change wins.
+        let expectedDesiredOptions = currentDesiredStartOptionsForWrite()
         // Build and validate the complete effective configuration before
         // asking NetworkExtension to start. Never persist an unvalidated candidate.
         let options = try await prepareStartOptions()
@@ -225,7 +228,13 @@ public class ExtensionProfile: ObservableObject {
             throw await makeStartDiagnosticError(error, fallbackStage: "start / wait for connected")
         }
         if FilePath.hasSharedContainer {
-            try persistDesiredStartOptions(options)
+            do {
+                try persistDesiredStartOptions(options, expectedCurrent: expectedDesiredOptions)
+            } catch {
+                // The tunnel is already connected. A snapshot sync failure must
+                // not turn a successful VPN start into a reported start failure.
+                logger.warning("VPN connected, but desired snapshot was not updated: \(error.localizedDescription)")
+            }
         }
     }
 
@@ -340,14 +349,33 @@ public class ExtensionProfile: ObservableObject {
                 NSLocalizedDescriptionKey: "Нет общего App Group: нельзя обновить конфигурацию для запуска из Пункта управления при выключенном VPN. Подключите VPN из приложения после изменения настроек."
             ])
         }
+        let expectedDesiredOptions = try loadDesiredStartOptions()
         let options = try await prepareStartOptions()
-        try persistDesiredStartOptions(options)
+        try persistDesiredStartOptions(options, expectedCurrent: expectedDesiredOptions)
     }
 
-    private func persistDesiredStartOptions(_ options: [String: NSObject]) throws {
+    private func loadDesiredStartOptions() throws -> [String: NSObject]? {
+        guard FilePath.hasSharedContainer else { return nil }
         let url = FilePath.sharedDirectory.appendingPathComponent(ExtensionStartOptions.snapshotFileName)
-        let data = try ExtensionStartOptions.encode(options)
-        try data.write(to: url, options: .atomic)
+        return try ExtensionStartOptions.readSnapshot(from: url)
+    }
+
+    private func currentDesiredStartOptionsForWrite() -> [String: NSObject]? {
+        do {
+            return try loadDesiredStartOptions()
+        } catch {
+            // The locked writer will reject an unreadable existing snapshot.
+            logger.warning("Unable to read current desired snapshot before VPN start: \(error.localizedDescription)")
+            return nil
+        }
+    }
+
+    private func persistDesiredStartOptions(
+        _ options: [String: NSObject],
+        expectedCurrent: [String: NSObject]?
+    ) throws {
+        let url = FilePath.sharedDirectory.appendingPathComponent(ExtensionStartOptions.snapshotFileName)
+        try ExtensionStartOptions.writeSnapshot(options, to: url, expectedCurrent: expectedCurrent)
     }
 
     private static func validateConfiguration(_ content: String) async throws {
@@ -389,10 +417,9 @@ public class ExtensionProfile: ObservableObject {
                 NSLocalizedDescriptionKey: message,
             ])
         }
-        // Only commit once the provider acknowledged the reload.
-        if FilePath.hasSharedContainer {
-            try persistDesiredStartOptions(options)
-        }
+        // The Packet Tunnel provider atomically commits the desired snapshot
+        // before acknowledging this message. Do not perform a second, unlocked
+        // host-side write that could overwrite a newer concurrent update.
     }
 
     private func prepareStartOptions() async throws -> [String: NSObject] {
@@ -489,6 +516,7 @@ public class ExtensionProfile: ObservableObject {
             return
         }
         // Keep old desired/last-good until a new connection is confirmed.
+        let expectedDesiredOptions = currentDesiredStartOptionsForWrite()
         let options = try await prepareStartOptions()
         try await stop()
         var waitSeconds = 0
@@ -506,7 +534,13 @@ public class ExtensionProfile: ObservableObject {
             throw await makeStartDiagnosticError(error, fallbackStage: "restart / wait for connected")
         }
         if FilePath.hasSharedContainer {
-            try persistDesiredStartOptions(options)
+            do {
+                try persistDesiredStartOptions(options, expectedCurrent: expectedDesiredOptions)
+            } catch {
+                // The new tunnel is already connected; do not misreport it as
+                // disconnected solely because the shared snapshot could not sync.
+                logger.warning("VPN restarted, but desired snapshot was not updated: \(error.localizedDescription)")
+            }
         }
     }
 
