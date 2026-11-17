@@ -166,17 +166,33 @@ public struct ResilienceCard: View {
                 ])
             }
 
-            // A live update uses the same guarded reload as Settings → LX:
-            // on error restore the previous JSON and attempt to restore the
-            // previous working tunnel. Do not start an inactive VPN.
-            if profile.status.isConnected {
-                do {
+            // Publish the desired snapshot for stopped tunnels too, or
+            // refuse to claim success (isolated signing has no cross-process sync).
+            do {
+                if profile.status == .connected {
                     try await profile.reloadService()
-                } catch {
-                    await SharedPreferences.lxOverridesJSON.set(original)
-                    try? await profile.reloadService()
-                    throw error
+                } else if profile.status == .disconnected {
+                    try await profile.refreshDesiredStartOptions()
+                } else {
+                    throw NSError(domain: "LXDashboard", code: 4, userInfo: [
+                        NSLocalizedDescriptionKey: "VPN меняет состояние. Повторите действие после подключения или отключения."
+                    ])
                 }
+            } catch {
+                let applyError = error
+                await SharedPreferences.lxOverridesJSON.set(original)
+                do {
+                    if profile.status == .connected {
+                        try await profile.reloadService()
+                    } else if profile.status == .disconnected && FilePath.hasSharedContainer {
+                        try await profile.refreshDesiredStartOptions()
+                    }
+                } catch {
+                    throw NSError(domain: "LXDashboard", code: 5, userInfo: [
+                        NSLocalizedDescriptionKey: "Применение не удалось: \(applyError.localizedDescription). Откат тоже не удался: \(error.localizedDescription)."
+                    ])
+                }
+                throw applyError
             }
             resiliencePreset = preset.rawValue
             NotificationCenter.default.post(name: .lxResilienceSettingsChanged, object: nil)
