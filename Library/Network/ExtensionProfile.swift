@@ -218,10 +218,34 @@ public class ExtensionProfile: ObservableObject {
         // Build and validate the complete effective configuration before
         // asking NetworkExtension to start. Never persist an unvalidated candidate.
         let options = try await prepareStartOptions()
-        try await start(with: options)
-        try await awaitConnected()
+        do {
+            try await start(with: options)
+            try await awaitConnected()
+        } catch {
+            await logLastDisconnectError()
+            throw error
+        }
         if FilePath.hasSharedContainer {
             try persistDesiredStartOptions(options)
+        }
+    }
+
+    // Preserve the underlying NetworkExtension disconnect diagnostics as well
+    // as the synchronous save/load/start NSError stage and nested NSError.
+    private func logLastDisconnectError() async {
+        guard let connection else { return }
+        if #available(iOS 16.0, macOS 13.0, tvOS 17.0, *) {
+            do {
+                if let last = try await connection.fetchLastDisconnectError() {
+                    let error = last as NSError
+                    logger.error("Last VPN disconnect: \(error.domain, privacy: .public) code=\(error.code); \(error.localizedDescription, privacy: .public)")
+                } else {
+                    logger.info("Last VPN disconnect error: none reported")
+                }
+            } catch {
+                let nsError = error as NSError
+                logger.error("Unable to fetch VPN disconnect error: \(nsError.domain, privacy: .public) code=\(nsError.code)")
+            }
         }
     }
 
@@ -453,8 +477,13 @@ public class ExtensionProfile: ObservableObject {
                 throw NSError(domain: "ExtensionProfile", code: 0, userInfo: [NSLocalizedDescriptionKey: String(localized: "Restart service timeout")])
             }
         }
-        try await start(with: options)
-        try await awaitConnected()
+        do {
+            try await start(with: options)
+            try await awaitConnected()
+        } catch {
+            await logLastDisconnectError()
+            throw error
+        }
         if FilePath.hasSharedContainer {
             try persistDesiredStartOptions(options)
         }
