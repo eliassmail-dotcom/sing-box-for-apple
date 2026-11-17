@@ -35,6 +35,9 @@ public struct StrategyModeCard: View {
                             }
                         }
 
+                        Text("Числа — последние успешные замеры URLTest; не подтверждают доступность сейчас и не учитывают карантин.")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
                         if activeMode(strategyGroup: strategyGroup) != nil {
                             Text("Повторное нажатие на активный режим — сменить узел")
                                 .font(.caption2)
@@ -125,7 +128,7 @@ public struct StrategyModeCard: View {
                         Text("\(count)")
                             .font(.caption.monospacedDigit().weight(.semibold))
                             .foregroundColor(.urlTestGood)
-                            .accessibilityLabel("Успешный URLTest: \(count) узлов")
+                            .accessibilityLabel("Последние успешные замеры URLTest: \(count) узлов, не текущая доступность")
                     } else {
                         Text("—").font(.caption).foregroundStyle(.secondary)
                     }
