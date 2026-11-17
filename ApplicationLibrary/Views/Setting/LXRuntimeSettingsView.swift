@@ -460,7 +460,13 @@ public struct LXRuntimeSettingsView: View {
                 } else {
                     // An inactive tunnel must still receive an updated desired
                     // snapshot for its next Control Center / On Demand start.
-                    guard let profile = runningProfile ?? (try await ExtensionProfile.load()) else {
+                    let profileToRefresh: ExtensionProfile?
+                    if let runningProfile {
+                        profileToRefresh = runningProfile
+                    } else {
+                        profileToRefresh = try await ExtensionProfile.load()
+                    }
+                    guard let profile = profileToRefresh else {
                         throw NSError(domain: "LXRuntimeSettings", code: 6, userInfo: [
                             NSLocalizedDescriptionKey: "VPN-профиль не установлен. Сначала установите VPN в приложении."
                         ])
@@ -473,8 +479,14 @@ public struct LXRuntimeSettingsView: View {
                 do {
                     if shouldRestart, let runningProfile {
                         try await restartVPNAndAwaitConnection(runningProfile)
-                    } else if let profile = runningProfile ?? (try await ExtensionProfile.load()) {
-                        if FilePath.hasSharedContainer {
+                    } else if FilePath.hasSharedContainer {
+                        let profileToRefresh: ExtensionProfile?
+                        if let runningProfile {
+                            profileToRefresh = runningProfile
+                        } else {
+                            profileToRefresh = try await ExtensionProfile.load()
+                        }
+                        if let profile = profileToRefresh {
                             try await profile.refreshDesiredStartOptions()
                         }
                     }
