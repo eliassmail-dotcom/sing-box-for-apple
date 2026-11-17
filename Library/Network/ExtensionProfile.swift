@@ -15,6 +15,7 @@ public class ExtensionProfile: ObservableObject {
     private let manager: NEVPNManager?
     private var connection: NEVPNConnection?
     private var observer: Any?
+    private var observesStatus = false
     private let isMock: Bool
 
     @Published public var status: NEVPNStatus
@@ -46,7 +47,21 @@ public class ExtensionProfile: ObservableObject {
     }
 
     public func register() {
+        guard !isMock else { return }
+        observesStatus = true
+        rebindConnection()
+    }
+
+    // Reloading NE preferences may replace manager.connection.
+    // Observe the reloaded session rather than a stale connection.
+    private func rebindConnection() {
         guard !isMock, let manager else { return }
+        if let observer { NotificationCenter.default.removeObserver(observer) }
+        observer = nil
+        connection = manager.connection
+        status = manager.connection.status
+        connectedDate = manager.connection.connectedDate
+        guard observesStatus else { return }
         observer = NotificationCenter.default.addObserver(
             forName: NSNotification.Name.NEVPNStatusDidChange,
             object: manager.connection,
@@ -203,8 +218,31 @@ public class ExtensionProfile: ObservableObject {
         // Build and validate the complete effective configuration before
         // asking NetworkExtension to start. Never persist an unvalidated candidate.
         let options = try await prepareStartOptions()
-        try persistDesiredStartOptions(options)
         try await start(with: options)
+        try await awaitConnected()
+        if FilePath.hasSharedContainer {
+            try persistDesiredStartOptions(options)
+        }
+    }
+
+    // startVPNTunnel returning does not prove that the extension started.
+    private func awaitConnected(timeout: TimeInterval = 20) async throws {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            guard let connection else {
+                throw NSError(domain: "ExtensionProfile.Start", code: 3, userInfo: [
+                    NSLocalizedDescriptionKey: "VPN session was lost during startup."
+                ])
+            }
+            status = connection.status
+            connectedDate = connection.connectedDate
+            if connection.status == .connected { return }
+            try await Task.sleep(nanoseconds: 250_000_000)
+        }
+        let currentStatus = connection?.status.rawValue ?? -1
+        throw NSError(domain: "ExtensionProfile.Start", code: 4, userInfo: [
+            NSLocalizedDescriptionKey: "VPN did not connect within \(Int(timeout)) seconds (status \(currentStatus))."
+        ])
     }
 
     private func start(with options: [String: NSObject]) async throws {
@@ -224,14 +262,38 @@ public class ExtensionProfile: ObservableObject {
             }
         }
         await applyProtocolConfiguration()
-        try await manager.saveToPreferences()
-        try manager.connection.startVPNTunnel(options: options)
+        var stage = "saveToPreferences"
+        do {
+            try await manager.saveToPreferences()
+            stage = "loadFromPreferences"
+            try await manager.loadFromPreferences()
+            rebindConnection()
+            stage = "startVPNTunnel"
+            guard let connection else {
+                throw NSError(domain: "ExtensionProfile.Start", code: 2, userInfo: [
+                    NSLocalizedDescriptionKey: "VPN session unavailable after reloading preferences."
+                ])
+            }
+            try connection.startVPNTunnel(options: options)
+        } catch {
+            let nsError = error as NSError
+            let nested = nsError.userInfo[NSUnderlyingErrorKey] as? NSError
+            logger.error("VPN start failed at \(stage, privacy: .public): \(nsError.domain, privacy: .public) code=\(nsError.code) underlying=\(nested?.domain ?? "none", privacy: .public)/\(nested?.code ?? 0); \(nsError.localizedDescription, privacy: .public)")
+            throw error
+        }
     }
 
     /// Refresh the widget's desired configuration while the tunnel is stopped.
     /// The extension promotes this snapshot to last-good only after a successful start.
     public func refreshDesiredStartOptions() async throws {
         guard !isMock else { return }
+        // Isolated app storage cannot feed a stopped extension's Control Center
+        // start. Never silently claim that the new snapshot is synchronized.
+        guard FilePath.hasSharedContainer else {
+            throw NSError(domain: "ExtensionProfile.ConfigSync", code: 1, userInfo: [
+                NSLocalizedDescriptionKey: "Нет общего App Group: нельзя обновить конфигурацию для запуска из Пункта управления при выключенном VPN. Подключите VPN из приложения после изменения настроек."
+            ])
+        }
         let options = try await prepareStartOptions()
         try persistDesiredStartOptions(options)
     }
@@ -260,7 +322,6 @@ public class ExtensionProfile: ObservableObject {
             return
         }
         let options = try await prepareStartOptions()
-        try persistDesiredStartOptions(options)
         let data = try ExtensionStartOptions.encode(options)
         guard let session = connection as? NETunnelProviderSession else {
             throw NSError(domain: "ExtensionStartOptions", code: -1, userInfo: [
@@ -281,6 +342,10 @@ public class ExtensionProfile: ObservableObject {
             throw NSError(domain: "ExtensionStartOptions", code: -1, userInfo: [
                 NSLocalizedDescriptionKey: message,
             ])
+        }
+        // Only commit once the provider acknowledged the reload.
+        if FilePath.hasSharedContainer {
+            try persistDesiredStartOptions(options)
         }
     }
 
@@ -377,9 +442,8 @@ public class ExtensionProfile: ObservableObject {
             try await start()
             return
         }
-        // Validate and persist the candidate before stopping the known-good tunnel.
+        // Keep old desired/last-good until a new connection is confirmed.
         let options = try await prepareStartOptions()
-        try persistDesiredStartOptions(options)
         try await stop()
         var waitSeconds = 0
         while status != .disconnected {
@@ -390,6 +454,10 @@ public class ExtensionProfile: ObservableObject {
             }
         }
         try await start(with: options)
+        try await awaitConnected()
+        if FilePath.hasSharedContainer {
+            try persistDesiredStartOptions(options)
+        }
     }
 
     public static func load() async throws -> ExtensionProfile? {
