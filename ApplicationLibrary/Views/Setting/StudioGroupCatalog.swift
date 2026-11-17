@@ -56,6 +56,13 @@ struct StudioGroupCatalog {
         let detour: String?
         let isLegacyPool: Bool
         var id: Int { index }
+
+        // For explicit type: chain the tag identifies the chain, not a hop.
+        // For detoured protocol outbounds the tag identifies the final hop.
+        var chainHopsLabel: String {
+            if let detour { return "\(detour) → \(tag)" }
+            return members.joined(separator: " → ")
+        }
     }
 
     let entries: [Item]
