@@ -130,9 +130,13 @@ class ApplicationDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCe
                   extensionInfo["NSExtensionFileProviderDocumentGroup"] as? String == group else {
                 return false
             }
-            return SignedEntitlements.stringArray(
+            let signedGroups = SignedEntitlements.stringArray(
                 "com.apple.security.application-groups", of: bundle
-            ).contains(group)
+            )
+            // DER-only signatures have no XML groups. The OS container check
+            // is authoritative if the XML signature cannot be parsed.
+            return (signedGroups.isEmpty || signedGroups.contains(group))
+                && FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: group) != nil
         }
         guard canShare else {
             NSLog("File Provider registration skipped: document group differs from signed App Group")
@@ -142,9 +146,25 @@ class ApplicationDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCe
             identifier: NSFileProviderDomainIdentifier(AppConfiguration.fileProviderDomainID),
             displayName: "sing-box"
         )
-        NSFileProviderManager.add(domain) { error in
+        // Persistent domains survive updates. Repeated add() calls are not a
+        // registration refresh and must not be used to hide a stale extension.
+        NSFileProviderManager.getDomainsWithCompletionHandler { domains, error in
             if let error {
-                NSLog("Failed to add file provider domain: \(error)")
+                let failure = error as NSError
+                NSLog("File Provider domain lookup failed: \(failure.domain) / \(failure.code): \(failure.localizedDescription)")
+                return
+            }
+            if domains.contains(where: { $0.identifier == domain.identifier }) {
+                NSLog("File Provider domain already registered: \(domain.identifier.rawValue)")
+                return
+            }
+            NSFileProviderManager.add(domain) { error in
+                if let error {
+                    let failure = error as NSError
+                    NSLog("File Provider registration failed: \(failure.domain) / \(failure.code): \(failure.localizedDescription)")
+                } else {
+                    NSLog("File Provider domain registered: \(domain.identifier.rawValue)")
+                }
             }
         }
     }
