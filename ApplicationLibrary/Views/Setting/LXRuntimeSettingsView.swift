@@ -454,17 +454,36 @@ public struct LXRuntimeSettingsView: View {
                 ])
             }
 
-            if shouldRestart, let runningProfile {
-                do {
+            do {
+                if shouldRestart, let runningProfile {
                     try await restartVPNAndAwaitConnection(runningProfile)
-                } catch {
-                    // Restore the last good configuration and attempt to bring
-                    // back the previous VPN. If the restoration also fails, the
-                    // original error remains visible; never claim success.
-                    await SharedPreferences.lxOverridesJSON.set(previousJSON)
-                    try? await restartVPNAndAwaitConnection(runningProfile)
-                    throw error
+                } else {
+                    // An inactive tunnel must still receive an updated desired
+                    // snapshot for its next Control Center / On Demand start.
+                    guard let profile = runningProfile ?? (try await ExtensionProfile.load()) else {
+                        throw NSError(domain: "LXRuntimeSettings", code: 6, userInfo: [
+                            NSLocalizedDescriptionKey: "VPN-профиль не установлен. Сначала установите VPN в приложении."
+                        ])
+                    }
+                    try await profile.refreshDesiredStartOptions()
                 }
+            } catch {
+                let applyError = error
+                await SharedPreferences.lxOverridesJSON.set(previousJSON)
+                do {
+                    if shouldRestart, let runningProfile {
+                        try await restartVPNAndAwaitConnection(runningProfile)
+                    } else if let profile = runningProfile ?? (try await ExtensionProfile.load()) {
+                        if FilePath.hasSharedContainer {
+                            try await profile.refreshDesiredStartOptions()
+                        }
+                    }
+                } catch {
+                    throw NSError(domain: "LXRuntimeSettings", code: 7, userInfo: [
+                        NSLocalizedDescriptionKey: "Применение не удалось: \(applyError.localizedDescription). Откат тоже не удался: \(error.localizedDescription)."
+                    ])
+                }
+                throw applyError
             }
             saved = draft
             NotificationCenter.default.post(name: .lxResilienceSettingsChanged, object: nil)
