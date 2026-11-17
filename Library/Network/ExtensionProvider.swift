@@ -85,19 +85,18 @@ open class ExtensionProvider: NEPacketTunnelProvider {
         try data.write(to: lastGoodStartOptionsURL, options: .atomic)
     }
 
-    // Never overwrite a later pending configuration during a delayed rollback.
+    // Compare the complete options dictionary while holding the same
+    // cross-process lock used by the containing app. Comparing only configContent
+    // misses concurrent changes to routing and NetworkExtension preferences.
     private func publishDesiredStartOptions(
         _ options: [String: NSObject], expected: [String: NSObject]?
     ) throws {
         guard let startOptionsURL else { return }
-        let current = try loadPersistedStartOptions()
-        let currentConfig = current?["configContent"] as? String
-        let expectedConfig = expected?["configContent"] as? String
-        let newConfig = options["configContent"] as? String
-        if currentConfig != nil && currentConfig != expectedConfig && currentConfig != newConfig {
-            throw ExtensionStartupError("A newer desired VPN configuration exists; refusing to replace it")
-        }
-        try ExtensionStartOptions.encode(options).write(to: startOptionsURL, options: .atomic)
+        try ExtensionStartOptions.writeSnapshot(
+            options,
+            to: startOptionsURL,
+            expectedCurrent: expected
+        )
     }
 
     private func loadStartOptions(from url: URL?) throws -> [String: NSObject]? {
