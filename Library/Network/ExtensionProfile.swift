@@ -222,29 +222,50 @@ public class ExtensionProfile: ObservableObject {
             try await start(with: options)
             try await awaitConnected()
         } catch {
-            await logLastDisconnectError()
-            throw error
+            throw await makeStartDiagnosticError(error, fallbackStage: "start / wait for connected")
         }
         if FilePath.hasSharedContainer {
             try persistDesiredStartOptions(options)
         }
     }
 
-    // Preserve the underlying NetworkExtension disconnect diagnostics as well
-    // as the synchronous save/load/start NSError stage and nested NSError.
-    private func logLastDisconnectError() async {
-        guard let connection else { return }
-        if #available(iOS 16.0, macOS 13.0, tvOS 17.0, *) {
-            // Swift imports fetchLastDisconnectError as async throws -> Void:
-            // the callback's Error? becomes the thrown error, not a return value.
+    // Surface NetworkExtension diagnostics in the app's error alert. The
+    // standard "Copy" action only copies NSError.localizedDescription, so
+    // technical fields must be included in that description explicitly.
+    private func makeStartDiagnosticError(_ error: Error, fallbackStage: String) async -> NSError {
+        let startError = error as NSError
+        let nested = startError.userInfo[NSUnderlyingErrorKey] as? NSError
+        let stage = startError.userInfo["VPNStartStage"] as? String ?? fallbackStage
+        let disconnect: String
+        if let connection, #available(iOS 16.0, macOS 13.0, tvOS 17.0, *) {
             do {
                 try await connection.fetchLastDisconnectError()
-                logger.info("Last VPN disconnect error: none reported")
+                disconnect = "none reported"
             } catch {
-                let nsError = error as NSError
-                logger.error("Last VPN disconnect: \(nsError.domain, privacy: .public) code=\(nsError.code); \(nsError.localizedDescription, privacy: .public)")
+                let value = error as NSError
+                disconnect = "\(value.domain) code=\(value.code): \(value.localizedDescription)"
             }
+        } else {
+            disconnect = "unavailable on this OS or VPN session"
         }
+        let statusValue = connection?.status.rawValue ?? -1
+        let details = [
+            "Stage: \(stage)",
+            "NSError: \(startError.domain) code=\(startError.code)",
+            "Underlying: \(nested.map { "\($0.domain) code=\($0.code): \($0.localizedDescription)" } ?? "none")",
+            "Last disconnect: \(disconnect)",
+            "VPN status: \(statusValue)",
+            "Shared App Group: \(FilePath.hasSharedContainer ? "available" : "unavailable")"
+        ].joined(separator: "\n")
+        logger.error("VPN start diagnostics: \(details, privacy: .public)")
+        return NSError(
+            domain: "ExtensionProfile.StartDiagnostics",
+            code: startError.code,
+            userInfo: [
+                NSLocalizedDescriptionKey: "\(startError.localizedDescription)\n\n--- VPN diagnostics ---\n\(details)",
+                NSUnderlyingErrorKey: error
+            ]
+        )
     }
 
     // startVPNTunnel returning does not prove that the extension started.
@@ -301,7 +322,10 @@ public class ExtensionProfile: ObservableObject {
             let nsError = error as NSError
             let nested = nsError.userInfo[NSUnderlyingErrorKey] as? NSError
             logger.error("VPN start failed at \(stage, privacy: .public): \(nsError.domain, privacy: .public) code=\(nsError.code) underlying=\(nested?.domain ?? "none", privacy: .public)/\(nested?.code ?? 0); \(nsError.localizedDescription, privacy: .public)")
-            throw error
+            var userInfo = nsError.userInfo
+            userInfo["VPNStartStage"] = stage
+            userInfo[NSUnderlyingErrorKey] = error
+            throw NSError(domain: nsError.domain, code: nsError.code, userInfo: userInfo)
         }
     }
 
@@ -479,8 +503,7 @@ public class ExtensionProfile: ObservableObject {
             try await start(with: options)
             try await awaitConnected()
         } catch {
-            await logLastDisconnectError()
-            throw error
+            throw await makeStartDiagnosticError(error, fallbackStage: "restart / wait for connected")
         }
         if FilePath.hasSharedContainer {
             try persistDesiredStartOptions(options)
