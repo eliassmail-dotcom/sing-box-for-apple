@@ -12,9 +12,10 @@ import plistlib
 import sys
 import zipfile
 from pathlib import Path
+from typing import Optional
 
 
-def analyze(ipa: Path, expected_build: str | None) -> dict:
+def analyze(ipa: Path, expected_build: Optional[str]) -> dict:
     with zipfile.ZipFile(ipa) as z:
         names = set(z.namelist())
         apps = [n for n in names if n.startswith("Payload/") and
