@@ -197,8 +197,12 @@ struct StudioDNSObservedProfile {
         func collect(_ value: Any?) {
             if let string = value as? String, !string.isEmpty {
                 namedResolvers.append(string)
-            } else if let strings = value as? [String] {
-                namedResolvers.append(contentsOf: strings.filter { !$0.isEmpty })
+            } else if let object = value as? [String: Any] {
+                // DomainResolveOptions also supports { server, strategy, timeout }.
+                // Retain the raw JSON, only extract the resolver reference.
+                collect(object["server"])
+            } else if let values = value as? [Any] {
+                for entry in values { collect(entry) }
             }
         }
 
