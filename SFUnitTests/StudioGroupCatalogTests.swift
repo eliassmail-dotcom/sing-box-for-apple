@@ -31,6 +31,20 @@ final class StudioGroupCatalogTests: XCTestCase {
         XCTAssertEqual(catalog.allCount, 7)
     }
 
+    func testExplicitChainDoesNotInventFinalHopFromGroupTag() throws {
+        let document = try StudioDocument(content: """
+        {"outbounds":[
+          {"type":"selector","tag":"Стратегия","outbounds":[]},
+          {"type":"chain","tag":"GeminiChain","outbounds":["Стратегия","Gemini"]},
+          {"type":"vless","tag":"GeminiOut","detour":"Стратегия"}
+        ]}
+        """)
+        let chains = StudioGroupCatalog(document: document).items(.chain)
+        XCTAssertEqual(chains.map(\.chainHopsLabel),
+                       ["Стратегия → Gemini", "Стратегия → GeminiOut"])
+        XCTAssertFalse(chains[0].chainHopsLabel.contains("GeminiChain"))
+    }
+
     func testCompiledPoolIsNotMisrepresentedAsDynamicFilter() throws {
         let doc = try StudioDocument(content: """
         {"outbounds":[
