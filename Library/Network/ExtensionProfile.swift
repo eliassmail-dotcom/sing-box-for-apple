@@ -269,7 +269,7 @@ public class ExtensionProfile: ObservableObject {
                     code: secondError.code,
                     userInfo: [
                         NSLocalizedDescriptionKey:
-                            "Initial start: \(firstError.domain) code=\(firstError.code): \(firstError.localizedDescription)\\n" +
+                            "Initial start: \(firstError.domain) code=\(firstError.code): \(firstError.localizedDescription)\n" +
                             "Single recovery attempt: \(secondError.domain) code=\(secondError.code): \(secondError.localizedDescription)",
                         NSUnderlyingErrorKey: secondError
                     ]
