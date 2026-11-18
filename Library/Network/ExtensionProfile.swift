@@ -222,10 +222,9 @@ public class ExtensionProfile: ObservableObject {
         // asking NetworkExtension to start. Never persist an unvalidated candidate.
         let options = try await prepareStartOptions()
         do {
-            try await start(with: options)
-            try await awaitConnected()
+            try await connectWithOneSessionRecovery(options)
         } catch {
-            throw await makeStartDiagnosticError(error, fallbackStage: "start / wait for connected")
+            throw await makeStartDiagnosticError(error, fallbackStage: "start / wait for connected / recovery")
         }
         if FilePath.hasSharedContainer {
             do {
@@ -234,6 +233,47 @@ public class ExtensionProfile: ObservableObject {
                 // The tunnel is already connected. A snapshot sync failure must
                 // not turn a successful VPN start into a reported start failure.
                 logger.warning("VPN connected, but desired snapshot was not updated: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    /// The first Packet Tunnel launch after replacing a re-signed IPA can fail
+    /// while iOS is still disposing a previous PluginKit session. Do not report
+    /// a successful session as failed, and never loop indefinitely. This only
+    /// retries once after iOS has returned to the disconnected state; a bad
+    /// entitlement or config will still surface as an error.
+    private func connectWithOneSessionRecovery(_ options: [String: NSObject]) async throws {
+        do {
+            try await start(with: options)
+            try await awaitConnected()
+            return
+        } catch {
+            let firstError = error as NSError
+            // Never reset a live or still-connecting tunnel.
+            guard let manager, connection?.status == .disconnected else {
+                throw error
+            }
+            logger.warning("Initial VPN start failed (\(firstError.domain, privacy: .public)/\(firstError.code)); reloading NetworkExtension preferences and retrying once")
+            try await Task.sleep(nanoseconds: 800_000_000)
+            do {
+                try await manager.loadFromPreferences()
+                rebindConnection()
+                // A delayed system On Demand start may have begun in the meantime.
+                if connection?.status == .connected { return }
+                try await start(with: options)
+                try await awaitConnected()
+            } catch {
+                let secondError = error as NSError
+                throw NSError(
+                    domain: "ExtensionProfile.FirstStartRecovery",
+                    code: secondError.code,
+                    userInfo: [
+                        NSLocalizedDescriptionKey:
+                            "Initial start: \(firstError.domain) code=\(firstError.code): \(firstError.localizedDescription)\\n" +
+                            "Single recovery attempt: \(secondError.domain) code=\(secondError.code): \(secondError.localizedDescription)",
+                        NSUnderlyingErrorKey: secondError
+                    ]
+                )
             }
         }
     }
@@ -326,7 +366,14 @@ public class ExtensionProfile: ObservableObject {
                     NSLocalizedDescriptionKey: "VPN session unavailable after reloading preferences."
                 ])
             }
-            try connection.startVPNTunnel(options: options)
+            // Saving an On Demand manager may already have started the tunnel.
+            // Starting it again during .connecting can cause a spurious first-launch error.
+            if connection.status == .connected || connection.status == .connecting ||
+                connection.status == .reasserting {
+                logger.info("Using existing NetworkExtension session, status=\(connection.status.rawValue)")
+            } else {
+                try connection.startVPNTunnel(options: options)
+            }
         } catch {
             let nsError = error as NSError
             let nested = nsError.userInfo[NSUnderlyingErrorKey] as? NSError
