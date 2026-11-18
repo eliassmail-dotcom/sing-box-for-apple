@@ -102,11 +102,11 @@ class ApplicationDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCe
             )
             let readme = documents.appendingPathComponent("About Files.txt")
             if !FileManager.default.fileExists(atPath: readme.path) {
-                let message = "sing-box lx++\\n\\nThis is the local Documents folder available in Files > On My iPhone.\\nFiles here are separate from the VPN working directory. VPN profiles and secrets are not exported automatically.\\n"
+                let message = "sing-box lx++\n\nThis is the local Documents folder available in Files > On My iPhone.\nFiles here are separate from the VPN working directory. VPN profiles and secrets are not exported automatically.\n"
                 try message.write(to: readme, atomically: true, encoding: .utf8)
             }
         } catch {
-            NSLog("Native Files folder initialization failed: \\(error.localizedDescription)")
+            NSLog("Native Files folder initialization failed: \(error.localizedDescription)")
         }
     }
     #endif
