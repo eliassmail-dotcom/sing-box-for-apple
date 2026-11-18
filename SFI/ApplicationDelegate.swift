@@ -71,6 +71,9 @@ class ApplicationDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCe
     }
 
     private func setup() {
+        #if os(iOS)
+            prepareNativeFilesFolder()
+        #endif
         do {
             try UIProfileUpdateTask.configure()
             NSLog("setup background task success")
@@ -84,6 +87,29 @@ class ApplicationDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCe
             await setupBackground()
         }
     }
+
+    /// The native On My iPhone folder requires no App Group and continues to
+    /// work when an on-device re-signer rewrites File Provider entitlements.
+    /// Do not mirror VPN profiles here: they may contain credentials.
+    #if os(iOS)
+    private func prepareNativeFilesFolder() {
+        guard let documents = FileManager.default.urls(
+            for: .documentDirectory, in: .userDomainMask
+        ).first else { return }
+        do {
+            try FileManager.default.createDirectory(
+                at: documents, withIntermediateDirectories: true
+            )
+            let readme = documents.appendingPathComponent("About Files.txt")
+            if !FileManager.default.fileExists(atPath: readme.path) {
+                let message = "sing-box lx++\\n\\nThis is the local Documents folder available in Files > On My iPhone.\\nFiles here are separate from the VPN working directory. VPN profiles and secrets are not exported automatically.\\n"
+                try message.write(to: readme, atomically: true, encoding: .utf8)
+            }
+        } catch {
+            NSLog("Native Files folder initialization failed: \\(error.localizedDescription)")
+        }
+    }
+    #endif
 
     private nonisolated func setupBackground() async {
         if #available(iOS 16.0, *) {
