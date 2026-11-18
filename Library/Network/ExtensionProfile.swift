@@ -185,6 +185,14 @@ public class ExtensionProfile: ObservableObject {
             connectedDate = Date()
             return
         }
+        // Build and validate the complete effective configuration before
+        // asking NetworkExtension to start. Never persist an unvalidated candidate.
+        let options = try await prepareStartOptions()
+        try persistDesiredStartOptions(options)
+        try await start(with: options)
+    }
+
+    private func start(with options: [String: NSObject]) async throws {
         guard let manager else { return }
         try await fetchProfile()
         manager.isEnabled = true
@@ -202,8 +210,34 @@ public class ExtensionProfile: ObservableObject {
         }
         await applyProtocolConfiguration()
         try await manager.saveToPreferences()
-        let options = try await prepareStartOptions()
         try manager.connection.startVPNTunnel(options: options)
+    }
+
+    /// Refresh the widget's desired configuration while the tunnel is stopped.
+    /// The extension promotes this snapshot to last-good only after a successful start.
+    public func refreshDesiredStartOptions() async throws {
+        guard !isMock else { return }
+        let options = try await prepareStartOptions()
+        try persistDesiredStartOptions(options)
+    }
+
+    private func persistDesiredStartOptions(_ options: [String: NSObject]) throws {
+        let url = FilePath.sharedDirectory.appendingPathComponent(ExtensionStartOptions.snapshotFileName)
+        let data = try ExtensionStartOptions.encode(options)
+        try data.write(to: url, options: .atomic)
+    }
+
+    private static func validateConfiguration(_ content: String) async throws {
+        let errorMessage = await Task.detached(priority: .utility) {
+            var error: NSError?
+            LibboxCheckConfig(content, &error)
+            return error?.localizedDescription
+        }.value
+        if let errorMessage {
+            throw NSError(domain: "ExtensionProfile.ConfigValidation", code: 1, userInfo: [
+                NSLocalizedDescriptionKey: errorMessage,
+            ])
+        }
     }
 
     public func reloadService() async throws {
@@ -211,6 +245,7 @@ public class ExtensionProfile: ObservableObject {
             return
         }
         let options = try await prepareStartOptions()
+        try persistDesiredStartOptions(options)
         let data = try ExtensionStartOptions.encode(options)
         guard let session = connection as? NETunnelProviderSession else {
             throw NSError(domain: "ExtensionStartOptions", code: -1, userInfo: [
@@ -250,6 +285,8 @@ public class ExtensionProfile: ObservableObject {
         let originalContent = try await profile.readAsync()
         let lxSettings = await SharedPreferences.lxOverridesJSON.get()
         let configContent = try LXProfileOverrides.apply(originalContent, profileID: profileID, storedJSON: lxSettings)
+        try await Self.validateConfiguration(configContent)
+        options["profileID"] = NSNumber(value: profileID)
         options["configContent"] = NSString(string: configContent)
 
         #if os(macOS)
@@ -311,6 +348,14 @@ public class ExtensionProfile: ObservableObject {
     }
 
     public func restart() async throws {
+        if isMock {
+            try await stop()
+            try await start()
+            return
+        }
+        // Validate and persist the candidate before stopping the known-good tunnel.
+        let options = try await prepareStartOptions()
+        try persistDesiredStartOptions(options)
         try await stop()
         var waitSeconds = 0
         while status != .disconnected {
@@ -320,7 +365,7 @@ public class ExtensionProfile: ObservableObject {
                 throw NSError(domain: "ExtensionProfile", code: 0, userInfo: [NSLocalizedDescriptionKey: String(localized: "Restart service timeout")])
             }
         }
-        try await start()
+        try await start(with: options)
     }
 
     public static func load() async throws -> ExtensionProfile? {

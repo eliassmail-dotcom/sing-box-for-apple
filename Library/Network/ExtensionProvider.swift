@@ -24,6 +24,7 @@ open class ExtensionProvider: NEPacketTunnelProvider {
     private lazy var platformInterface = ExtensionPlatformInterface(self)
     public var tunnelOptions: [String: NSObject]?
     private var startOptionsURL: URL?
+    private var lastGoodStartOptionsURL: URL?
 
     public struct OverridePreferences {
         public var includeAllNetworks: Bool = false
@@ -78,39 +79,59 @@ open class ExtensionProvider: NEPacketTunnelProvider {
         return PlatformMetadata.json(metadata)
     }
 
-    private func persistStartOptions(_ options: [String: NSObject]) throws {
-        guard let startOptionsURL else {
-            return
-        }
+    private func persistLastGoodStartOptions(_ options: [String: NSObject]) throws {
+        guard let lastGoodStartOptionsURL else { return }
         let data = try ExtensionStartOptions.encode(options)
-        try data.write(to: startOptionsURL, options: .atomic)
+        try data.write(to: lastGoodStartOptionsURL, options: .atomic)
+    }
+
+    private func loadStartOptions(from url: URL?) throws -> [String: NSObject]? {
+        guard let url, FileManager.default.fileExists(atPath: url.path) else {
+            return nil
+        }
+        let data = try Data(contentsOf: url)
+        return try ExtensionStartOptions.decode(data)
     }
 
     private func loadPersistedStartOptions() throws -> [String: NSObject]? {
-        guard let startOptionsURL, FileManager.default.fileExists(atPath: startOptionsURL.path) else {
-            return nil
+        try loadStartOptions(from: startOptionsURL)
+    }
+
+    private func loadLastGoodStartOptions() throws -> [String: NSObject]? {
+        try loadStartOptions(from: lastGoodStartOptionsURL)
+    }
+
+    private func validateStartOptions(_ options: [String: NSObject]) throws {
+        guard let configContent = options["configContent"] as? String else {
+            throw ExtensionStartupError("(packet-tunnel) error: missing configContent in tunnel options")
         }
-        let data = try Data(contentsOf: startOptionsURL)
-        return try ExtensionStartOptions.decode(data)
+        var error: NSError?
+        LibboxCheckConfig(configContent, &error)
+        if let error {
+            throw ExtensionStartupError("(packet-tunnel) error: validate config: \(error.localizedDescription)")
+        }
     }
 
     private func resolveStartOptions(_ startOptions: [String: NSObject]?) throws -> [String: NSObject] {
         if let startOptions, startOptions["configContent"] as? String != nil {
             return startOptions
         }
-        let persistedOptions: [String: NSObject]?
-        do {
-            persistedOptions = try loadPersistedStartOptions()
-        } catch {
-            throw ExtensionStartupError("(packet-tunnel) error: load start options: \(error.localizedDescription)")
-        }
-        if let persistedOptions {
-            if let startOptions {
-                return persistedOptions.merging(startOptions) { _, new in new }
+        // The desired snapshot is refreshed by the app whenever the selected
+        // profile or its overrides change. If it is damaged or no longer valid,
+        // retain the last successfully started configuration.
+        if let desired = try? loadPersistedStartOptions() {
+            do {
+                try validateStartOptions(desired)
+                return desired
+            } catch {
+                Self.logger.error("Desired start snapshot rejected: \(error.localizedDescription)")
             }
-            return persistedOptions
         }
-        throw ExtensionStartupError("(packet-tunnel) error: missing start options")
+        if let lastGood = try? loadLastGoodStartOptions() {
+            try validateStartOptions(lastGood)
+            return lastGood
+        }
+        throw ExtensionStartupError("(packet-tunnel) error: missing valid start options")
     }
 
     #if os(macOS)
@@ -161,6 +182,7 @@ open class ExtensionProvider: NEPacketTunnelProvider {
         #endif
 
         startOptionsURL = URL(fileURLWithPath: basePath).appendingPathComponent(ExtensionStartOptions.snapshotFileName)
+        lastGoodStartOptionsURL = URL(fileURLWithPath: basePath).appendingPathComponent(ExtensionStartOptions.lastGoodSnapshotFileName)
 
         #if os(macOS)
             if Variant.useSystemExtension {
@@ -173,15 +195,8 @@ open class ExtensionProvider: NEPacketTunnelProvider {
         #endif
 
         let effectiveOptions = try resolveStartOptions(startOptions)
+        try validateStartOptions(effectiveOptions)
         try applyStartOptions(effectiveOptions)
-        if effectiveOptions["configContent"] == nil {
-            throw ExtensionStartupError("(packet-tunnel) error: missing configContent in tunnel options")
-        }
-        do {
-            try persistStartOptions(effectiveOptions)
-        } catch {
-            throw ExtensionStartupError("(packet-tunnel) error: persist start options: \(error.localizedDescription)")
-        }
         let options = LibboxSetupOptions()
         options.basePath = basePath
         options.workingPath = workingPath
@@ -249,6 +264,13 @@ open class ExtensionProvider: NEPacketTunnelProvider {
                 }
             #endif
             throw error
+        }
+        // Promote only after the service has actually started. A failed candidate
+        // must never replace the previous last-known-good configuration.
+        do {
+            try persistLastGoodStartOptions(effectiveOptions)
+        } catch {
+            Self.logger.error("Unable to persist last-good start options: \(error.localizedDescription)")
         }
         writeMessage("(packet-tunnel): Here I stand")
         #if os(iOS)
@@ -447,10 +469,30 @@ open class ExtensionProvider: NEPacketTunnelProvider {
         }
         do {
             let options = try ExtensionStartOptions.decode(messageData)
+            try validateStartOptions(options)
+            let previousOptions = try? loadLastGoodStartOptions()
             try applyStartOptions(options)
-            try persistStartOptions(options)
-            try await reloadService()
-            return nil
+            do {
+                try await reloadService()
+                try persistLastGoodStartOptions(options)
+                return nil
+            } catch {
+                let applyError = error
+                if let previousOptions,
+                   (previousOptions["configContent"] as? String) != (options["configContent"] as? String) {
+                    do {
+                        try validateStartOptions(previousOptions)
+                        try applyStartOptions(previousOptions)
+                        try await reloadService()
+                        try persistLastGoodStartOptions(previousOptions)
+                    } catch {
+                        throw ExtensionStartupError(
+                            "Apply failed: \(applyError.localizedDescription); rollback failed: \(error.localizedDescription)"
+                        )
+                    }
+                }
+                throw applyError
+            }
         } catch {
             return error.localizedDescription.data(using: .utf8)
         }

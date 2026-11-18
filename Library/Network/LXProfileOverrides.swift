@@ -26,16 +26,35 @@ public struct LXProfileSettings: Codable, Equatable {
     public var urlTests: [String: LXURLTestOverride] = [:]
     public var dnsGroups: [String: String] = [:]
     public var wgIdle: String = "profile"
-    // Global reliability controls. Zero/empty means inherit the source profile.
+
+    // Optional overrides distinguish "inherit from source profile" from an
+    // explicit on/off. Numeric values remain separate from the enable policy.
     public var adaptiveTolerancePercent: Int = 0
+    public var adaptiveToleranceOverride: Bool? = nil
     public var minHoldSeconds: Int = 0
+    public var minHoldOverride: Bool? = nil
     public var probeURLs: String = ""
-    // Experimental: passive watchdog/quarantine; off until explicitly enabled.
-    public var passiveGuardEnabled: Bool = false
-    /// Off by default: source Gemini+ still provides ordinary Gemini nodes.
-    public var geminiChainsEnabled: Bool = false
-    /// Existing saved settings are treated as Custom, never silently migrated.
-    public var resiliencePreset: String = LXResiliencePreset.custom.rawValue
+    public var passiveGuardOverride: Bool? = nil
+    public var geminiChainsOverride: Bool? = nil
+
+    // Source-compatible convenience properties for existing call sites.
+    // Setting either to false is an explicit opt-out; a fresh profile remains nil.
+    public var adaptiveToleranceEnabled: Bool {
+        get { adaptiveToleranceOverride ?? (adaptiveTolerancePercent > 0) }
+        set { adaptiveToleranceOverride = newValue }
+    }
+    public var minHoldEnabled: Bool {
+        get { minHoldOverride ?? (minHoldSeconds > 0) }
+        set { minHoldOverride = newValue }
+    }
+    public var passiveGuardEnabled: Bool {
+        get { passiveGuardOverride ?? false }
+        set { passiveGuardOverride = newValue }
+    }
+    public var geminiChainsEnabled: Bool {
+        get { geminiChainsOverride ?? false }
+        set { geminiChainsOverride = newValue }
+    }
 
     public mutating func applyResiliencePreset(_ name: String) {
         resiliencePreset = name
@@ -44,25 +63,37 @@ public struct LXProfileSettings: Codable, Equatable {
             break
         case .economy:
             adaptiveTolerancePercent = 0
+            adaptiveToleranceOverride = false
             minHoldSeconds = 60
-            passiveGuardEnabled = false
+            minHoldOverride = true
+            passiveGuardOverride = false
         case .balance:
             adaptiveTolerancePercent = 20
+            adaptiveToleranceOverride = true
             minHoldSeconds = 30
-            passiveGuardEnabled = false
+            minHoldOverride = true
+            passiveGuardOverride = false
         case .antiblock:
             adaptiveTolerancePercent = 35
+            adaptiveToleranceOverride = true
             minHoldSeconds = 10
-            passiveGuardEnabled = true
+            minHoldOverride = true
+            passiveGuardOverride = true
         }
-        // Preserve probeURLs, URLTest mode, DNS, priorities and interrupt flag.
+        // Preserve Gemini Chains, probeURLs, URLTest mode, DNS, priorities and interrupt flag.
     }
+
+    /// Existing saved settings are treated as Custom, never silently migrated.
+    public var resiliencePreset: String = LXResiliencePreset.custom.rawValue
 
     public init() {}
 
-    // Backward-compatible with previously saved LX settings that lack urlTestDefault.
     private enum CodingKeys: String, CodingKey {
-        case urlTestDefault, urlTests, dnsGroups, wgIdle, adaptiveTolerancePercent, minHoldSeconds, probeURLs, passiveGuardEnabled, geminiChainsEnabled, resiliencePreset
+        case urlTestDefault, urlTests, dnsGroups, wgIdle
+        case adaptiveTolerancePercent, minHoldSeconds, probeURLs, resiliencePreset
+        case adaptiveToleranceOverride, minHoldOverride, passiveGuardOverride, geminiChainsOverride
+        // Legacy keys from builds before tri-state inheritance.
+        case passiveGuardEnabled, geminiChainsEnabled
     }
 
     public init(from decoder: Decoder) throws {
@@ -74,21 +105,57 @@ public struct LXProfileSettings: Codable, Equatable {
         adaptiveTolerancePercent = try container.decodeIfPresent(Int.self, forKey: .adaptiveTolerancePercent) ?? 0
         minHoldSeconds = try container.decodeIfPresent(Int.self, forKey: .minHoldSeconds) ?? 0
         probeURLs = try container.decodeIfPresent(String.self, forKey: .probeURLs) ?? ""
-        passiveGuardEnabled = try container.decodeIfPresent(Bool.self, forKey: .passiveGuardEnabled) ?? false
-        geminiChainsEnabled = try container.decodeIfPresent(Bool.self, forKey: .geminiChainsEnabled) ?? false
         resiliencePreset = try container.decodeIfPresent(String.self, forKey: .resiliencePreset) ?? LXResiliencePreset.custom.rawValue
+
+        if container.contains(.adaptiveToleranceOverride) {
+            adaptiveToleranceOverride = try container.decodeIfPresent(Bool.self, forKey: .adaptiveToleranceOverride)
+        } else {
+            adaptiveToleranceOverride = adaptiveTolerancePercent > 0 ? true : nil
+        }
+        if container.contains(.minHoldOverride) {
+            minHoldOverride = try container.decodeIfPresent(Bool.self, forKey: .minHoldOverride)
+        } else {
+            minHoldOverride = minHoldSeconds > 0 ? true : nil
+        }
+        if container.contains(.passiveGuardOverride) {
+            passiveGuardOverride = try container.decodeIfPresent(Bool.self, forKey: .passiveGuardOverride)
+        } else {
+            passiveGuardOverride = (try container.decodeIfPresent(Bool.self, forKey: .passiveGuardEnabled) ?? false) ? true : nil
+        }
+        if container.contains(.geminiChainsOverride) {
+            geminiChainsOverride = try container.decodeIfPresent(Bool.self, forKey: .geminiChainsOverride)
+        } else {
+            geminiChainsOverride = (try container.decodeIfPresent(Bool.self, forKey: .geminiChainsEnabled) ?? false) ? true : nil
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(urlTestDefault, forKey: .urlTestDefault)
+        try container.encode(urlTests, forKey: .urlTests)
+        try container.encode(dnsGroups, forKey: .dnsGroups)
+        try container.encode(wgIdle, forKey: .wgIdle)
+        try container.encode(adaptiveTolerancePercent, forKey: .adaptiveTolerancePercent)
+        try container.encode(minHoldSeconds, forKey: .minHoldSeconds)
+        try container.encode(probeURLs, forKey: .probeURLs)
+        try container.encode(resiliencePreset, forKey: .resiliencePreset)
+        try container.encodeIfPresent(adaptiveToleranceOverride, forKey: .adaptiveToleranceOverride)
+        try container.encodeIfPresent(minHoldOverride, forKey: .minHoldOverride)
+        try container.encodeIfPresent(passiveGuardOverride, forKey: .passiveGuardOverride)
+        try container.encodeIfPresent(geminiChainsOverride, forKey: .geminiChainsOverride)
     }
 
     public var isEmpty: Bool {
         urlTestDefault.mode == "profile" &&
         urlTests.isEmpty &&
         dnsGroups.values.allSatisfy { $0 == "profile" } && wgIdle == "profile" &&
-        adaptiveTolerancePercent == 0 && minHoldSeconds == 0 && !passiveGuardEnabled &&
-        !geminiChainsEnabled && resiliencePreset == LXResiliencePreset.custom.rawValue &&
+        adaptiveTolerancePercent == 0 && adaptiveToleranceOverride == nil &&
+        minHoldSeconds == 0 && minHoldOverride == nil &&
+        passiveGuardOverride == nil && geminiChainsOverride == nil &&
+        resiliencePreset == LXResiliencePreset.custom.rawValue &&
         probeURLs.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 }
-
 public struct LXOverridesStore: Codable, Equatable {
     public var profiles: [String: LXProfileSettings] = [:]
     public init() {}
@@ -359,7 +426,8 @@ public enum LXProfileOverrides {
         var changed = false
         // Build on-device BEFORE applying URLTest health overrides so the
         // locally created Gemini groups inherit the same resilience settings.
-        if try LXGeminiBuilder.apply(to: &root, chainsEnabled: settings.geminiChainsEnabled) {
+        if let chainsEnabled = settings.geminiChainsOverride,
+           try LXGeminiBuilder.apply(to: &root, chainsEnabled: chainsEnabled) {
             changed = true
         }
 
@@ -400,27 +468,53 @@ public enum LXProfileOverrides {
                             "pool_tolerance": setting.poolTolerance,
                             "sticky_hash": setting.sticky ? ["process", "domain"] : ["none"],
                         ] as [String: Any]
+                        // Adaptive URLTest and Smart priority options are not
+                        // valid in round_robin. Strip them when changing modes.
+                        for key in ["tolerance", "tolerance_percent", "min_hold", "priority_outbounds", "passive_guard"] {
+                            group.removeValue(forKey: key)
+                        }
                     } else {
                         group.removeValue(forKey: "balancer")
-                        if setting.mode == "failover" { group.removeValue(forKey: "tolerance") }
+                        if setting.mode == "failover" {
+                            for key in ["tolerance", "tolerance_percent", "min_hold", "priority_outbounds"] {
+                                group.removeValue(forKey: key)
+                            }
+                        }
                     }
                     groupChanged = true
                 }
                 let effectiveMode = group["mode"] as? String ?? "least_test"
                 if effectiveMode == "least_test" {
-                    if settings.adaptiveTolerancePercent > 0 {
+                    if settings.adaptiveToleranceOverride == true ||
+                        (settings.adaptiveToleranceOverride == nil && settings.adaptiveTolerancePercent > 0) {
+                        guard (5...100).contains(settings.adaptiveTolerancePercent) else {
+                            throw OverrideError.invalidOption("urltest \(tag): tolerance_percent")
+                        }
                         group["tolerance_percent"] = settings.adaptiveTolerancePercent
                         groupChanged = true
+                    } else if settings.adaptiveToleranceOverride == false {
+                        group.removeValue(forKey: "tolerance_percent")
+                        groupChanged = true
                     }
-                    if settings.minHoldSeconds > 0 {
+                    if settings.minHoldOverride == true ||
+                        (settings.minHoldOverride == nil && settings.minHoldSeconds > 0) {
+                        guard (1...600).contains(settings.minHoldSeconds) else {
+                            throw OverrideError.invalidOption("urltest \(tag): min_hold")
+                        }
                         group["min_hold"] = "\(settings.minHoldSeconds)s"
+                        groupChanged = true
+                    } else if settings.minHoldOverride == false {
+                        group.removeValue(forKey: "min_hold")
                         groupChanged = true
                     }
                 }
-                // Passport of the feature follows the actual effective mode;
-                // round_robin has per-flow selection and rejects passive_guard.
-                if settings.passiveGuardEnabled && effectiveMode != "round_robin" {
-                    group["passive_guard"] = true
+                // nil = inherit the source profile; false = explicitly remove.
+                if let passiveGuard = settings.passiveGuardOverride {
+                    if passiveGuard && effectiveMode != "round_robin" {
+                        group["passive_guard"] = true
+                    } else {
+                        group.removeValue(forKey: "passive_guard")
+                    }
                     groupChanged = true
                 }
                 if effectiveMode == "round_robin" && group["passive_guard"] != nil {
@@ -485,14 +579,21 @@ public enum LXProfileOverrides {
             // URLTest override pass. Apply the same reliability controls to it.
             if var outbounds = root["outbounds"] as? [[String: Any]],
                let index = outbounds.firstIndex(where: { ($0["tag"] as? String) == preferredFallbackTag }) {
-                if settings.adaptiveTolerancePercent > 0 {
+                if settings.adaptiveToleranceOverride == true ||
+                    (settings.adaptiveToleranceOverride == nil && settings.adaptiveTolerancePercent > 0) {
                     outbounds[index]["tolerance_percent"] = settings.adaptiveTolerancePercent
+                } else if settings.adaptiveToleranceOverride == false {
+                    outbounds[index].removeValue(forKey: "tolerance_percent")
                 }
-                if settings.minHoldSeconds > 0 {
+                if settings.minHoldOverride == true ||
+                    (settings.minHoldOverride == nil && settings.minHoldSeconds > 0) {
                     outbounds[index]["min_hold"] = "\(settings.minHoldSeconds)s"
+                } else if settings.minHoldOverride == false {
+                    outbounds[index].removeValue(forKey: "min_hold")
                 }
-                if settings.passiveGuardEnabled {
-                    outbounds[index]["passive_guard"] = true
+                if let passiveGuard = settings.passiveGuardOverride {
+                    if passiveGuard { outbounds[index]["passive_guard"] = true }
+                    else { outbounds[index].removeValue(forKey: "passive_guard") }
                 }
                 if !healthURLs.isEmpty {
                     outbounds[index].removeValue(forKey: "url")

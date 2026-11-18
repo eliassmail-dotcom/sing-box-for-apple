@@ -432,4 +432,91 @@ final class LXProfileOverridesTests: XCTestCase {
     }
 
 
+
+    func testLegacyFalsePoliciesInheritSourceConfiguration() throws {
+        let source = """
+        {"outbounds":[
+          {"type":"urltest","tag":"Auto","outbounds":["a"],"mode":"least_test","tolerance_percent":25,"min_hold":"20s","passive_guard":true},
+          {"type":"urltest","tag":"Gemini+","outbounds":["a"]},
+          {"type":"selector","tag":"Gemini","outbounds":["Gemini • Chain • A"]},
+          {"type":"chain","tag":"Gemini • Chain • A","outbounds":["a","a"]},
+          {"type":"vless","tag":"a"}
+        ]}
+        """
+        let legacy = #"{"profiles":{"42":{"adaptiveTolerancePercent":0,"minHoldSeconds":0,"passiveGuardEnabled":false,"geminiChainsEnabled":false}}}"#
+        let settings = try XCTUnwrap(LXOverridesStore.decode(legacy).profiles["42"])
+        XCTAssertNil(settings.adaptiveToleranceOverride)
+        XCTAssertNil(settings.minHoldOverride)
+        XCTAssertNil(settings.passiveGuardOverride)
+        XCTAssertNil(settings.geminiChainsOverride)
+        XCTAssertEqual(try LXProfileOverrides.apply(source, profileID: 42, storedJSON: legacy), source)
+    }
+
+    func testExplicitOffPoliciesArePersistedAndRemoveSourceFields() throws {
+        let source = """
+        {"outbounds":[
+          {"type":"urltest","tag":"Auto","outbounds":["a"],"mode":"least_test","tolerance_percent":25,"min_hold":"20s","passive_guard":true},
+          {"type":"selector","tag":"Стратегия","outbounds":["Auto"]},
+          {"type":"urltest","tag":"Gemini+","outbounds":["a"]},
+          {"type":"selector","tag":"Gemini","outbounds":["Gemini • Chain • A"]},
+          {"type":"chain","tag":"Gemini • Chain • A","outbounds":["a","a"]},
+          {"type":"vless","tag":"a"}
+        ],"route":{"final":"Стратегия"}}
+        """
+        var settings = LXProfileSettings()
+        settings.adaptiveToleranceOverride = false
+        settings.minHoldOverride = false
+        settings.passiveGuardOverride = false
+        settings.geminiChainsOverride = false
+        var store = LXOverridesStore()
+        store.profiles["42"] = settings
+        let saved = try LXOverridesStore.decode(store.encode()).profiles["42"]
+        XCTAssertEqual(saved?.adaptiveToleranceOverride, false)
+        XCTAssertEqual(saved?.minHoldOverride, false)
+        XCTAssertEqual(saved?.passiveGuardOverride, false)
+        XCTAssertEqual(saved?.geminiChainsOverride, false)
+
+        let root = try parsed(LXProfileOverrides.apply(source, profileID: 42, storedJSON: store.encode()))
+        let outbounds = try XCTUnwrap(root["outbounds"] as? [[String: Any]])
+        let auto = try XCTUnwrap(outbounds.first { ($0["tag"] as? String) == "Auto" })
+        XCTAssertNil(auto["tolerance_percent"])
+        XCTAssertNil(auto["min_hold"])
+        XCTAssertNil(auto["passive_guard"])
+        let geminiRoot = try XCTUnwrap(outbounds.first { ($0["tag"] as? String) == "Gemini" })
+        XCTAssertFalse((geminiRoot["outbounds"] as? [String] ?? []).contains("Gemini • Chain • A"))
+        XCTAssertFalse(outbounds.contains { ($0["tag"] as? String) == "Gemini • Chain • A" })
+    }
+
+    func testModeSwitchStripsIncompatibleURLTestOptions() throws {
+        let source = """
+        {"outbounds":[
+          {"type":"urltest","tag":"Auto","outbounds":["a"],"mode":"least_test",
+           "tolerance":50,"tolerance_percent":25,"min_hold":"20s",
+           "priority_outbounds":["a"],"passive_guard":true},
+          {"type":"vless","tag":"a"}
+        ]}
+        """
+        for mode in ["failover", "round_robin"] {
+            var settings = LXProfileSettings()
+            var override = LXURLTestOverride()
+            override.mode = mode
+            settings.urlTests["Auto"] = override
+            var store = LXOverridesStore()
+            store.profiles["42"] = settings
+            let root = try parsed(LXProfileOverrides.apply(source, profileID: 42, storedJSON: store.encode()))
+            let group = try XCTUnwrap((root["outbounds"] as? [[String: Any]])?.first)
+            XCTAssertEqual(group["mode"] as? String, mode)
+            for key in ["tolerance", "tolerance_percent", "min_hold", "priority_outbounds"] {
+                XCTAssertNil(group[key], "\(mode) must remove incompatible \(key)")
+            }
+            if mode == "round_robin" {
+                XCTAssertNil(group["passive_guard"])
+                XCTAssertNotNil(group["balancer"])
+            } else {
+                XCTAssertEqual(group["passive_guard"] as? Bool, true)
+                XCTAssertNil(group["balancer"])
+            }
+        }
+    }
+
 }
