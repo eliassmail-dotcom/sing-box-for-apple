@@ -71,7 +71,7 @@ public enum StrategyModeCatalog {
         ),
         StrategyModeSpec(
             title: "Авто • Умный",
-            strategyCandidates: ["Авто · База → Белые"],
+            strategyCandidates: ["Авто · Умный", "Авто · База → Белые"],
             geminiCandidates: ["Gemini • Super • A", "Gemini • Авто"]
         ),
     ]

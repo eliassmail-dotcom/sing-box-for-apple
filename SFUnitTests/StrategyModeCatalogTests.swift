@@ -46,6 +46,9 @@ final class StrategyModeCatalogTests: XCTestCase {
     func testOptionalPriorityStrategy() {
         let mode = try! XCTUnwrap(StrategyModeCatalog.modes.first { $0.title == "Авто • Умный" })
         XCTAssertFalse(StrategyModeCatalog.isAvailable(mode, strategyTags: corporateStrategy, geminiTags: corporateGemini))
+        let current = corporateStrategy + ["Авто · Умный"]
+        XCTAssertEqual(StrategyModeCatalog.strategyTarget(mode, strategyTags: current), "Авто · Умный")
+        XCTAssertEqual(StrategyModeCatalog.activeMode(strategySelected: "Авто · Умный", geminiSelected: "Gemini • Super • A", strategyTags: current, geminiTags: corporateGemini)?.title, mode.title)
         let withPriority = corporateStrategy + ["Авто · База → Белые"]
         XCTAssertTrue(StrategyModeCatalog.isAvailable(mode, strategyTags: withPriority, geminiTags: corporateGemini))
         XCTAssertEqual(StrategyModeCatalog.strategyTarget(mode, strategyTags: withPriority), "Авто · База → Белые")

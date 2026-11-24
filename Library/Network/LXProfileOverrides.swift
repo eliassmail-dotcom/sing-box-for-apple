@@ -237,7 +237,8 @@ public enum LXProfileOverrides {
         )
     }
 
-    public static let preferredFallbackTag = "Авто · База → Белые"
+    public static let preferredFallbackTag = "Авто · Умный"
+    private static let legacyFallbackTag = "Авто · База → Белые"
     private static let baseTags = ["Авто · Базовая", "Авто"]
     private static let whiteTags = ["Авто · Белые", "Авто · Только белые"]
     private static let chainTags = ["Ru 🔗 Авто"]
@@ -252,7 +253,7 @@ public enum LXProfileOverrides {
     // that is not an aggregate health view of the child's full pool. In particular,
     // a stale selected leaf can make Smart fall back to White while other Base nodes
     // have successful probes. Flattening gives the Smart group direct health history
-    // for every candidate and lets the core enforce Base -> White -> Base recovery.
+    // for every candidate and lets the core enforce Base -> Chains -> White recovery.
     //
     // The source subscription and its original groups remain unchanged. The generated
     // Smart group is only selected when the user chooses it from the Dashboard.
@@ -369,7 +370,11 @@ public enum LXProfileOverrides {
         // generated shape from earlier app versions, not a user-authored group.
         // Always rebuild it AFTER the ordinary URLTest override pass, so a global
         // round_robin/failover preference can never make this priority group invalid.
-        if let existingIndex = outbounds.firstIndex(where: { ($0["tag"] as? String) == preferredFallbackTag }) {
+        let existingIndices = outbounds.indices.filter {
+            let tag = outbounds[$0]["tag"] as? String
+            return tag == preferredFallbackTag || tag == legacyFallbackTag
+        }
+        for existingIndex in existingIndices.reversed() {
             let existing = outbounds[existingIndex]
             let oldGeneratedShape =
                 (existing["type"] as? String) == "urltest" &&
@@ -396,6 +401,13 @@ public enum LXProfileOverrides {
             ($0["type"] as? String) == "selector"
         }), var rootTags = outbounds[rootIndex]["outbounds"] as? [String] else {
             throw OverrideError.invalidOption("Стратегия не содержит список outbounds")
+        }
+        // Migrate the old generated tag without duplicating the Smart group.
+        var seen = Set<String>()
+        rootTags = rootTags.map { $0 == legacyFallbackTag ? preferredFallbackTag : $0 }
+            .filter { seen.insert($0).inserted }
+        if (outbounds[rootIndex]["default"] as? String) == legacyFallbackTag {
+            outbounds[rootIndex]["default"] = preferredFallbackTag
         }
         if !rootTags.contains(preferredFallbackTag) {
             rootTags.append(preferredFallbackTag)
@@ -476,7 +488,7 @@ public enum LXProfileOverrides {
                 // Changing its mode to round_robin here would strip
                 // priority_outbounds, destroy the legacy migration signature,
                 // and allow White nodes to bypass the Base tier.
-                if tag == preferredFallbackTag { continue }
+                if tag == preferredFallbackTag || tag == legacyFallbackTag { continue }
                 let setting = settings.urlTests[tag] ?? settings.urlTestDefault
                 var group = outbounds[index]
                 var groupChanged = false

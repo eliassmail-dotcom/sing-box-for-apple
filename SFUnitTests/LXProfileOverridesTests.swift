@@ -218,7 +218,7 @@ final class LXProfileOverridesTests: XCTestCase {
     func testSmartThreeTierChainAndLegacyMigration() throws {
         let source = #"""
         {"outbounds":[
-          {"type":"selector","tag":"Стратегия","outbounds":["Авто · Базовая","Авто · Белые","Ru 🔗 Авто","Авто · База → Белые"]},
+          {"type":"selector","tag":"Стратегия","outbounds":["Авто · Базовая","Авто · Белые","Ru 🔗 Авто","Авто · База → Белые"],"default":"Авто · База → Белые"},
           {"type":"urltest","tag":"Авто · Базовая","outbounds":["a"]},
           {"type":"urltest","tag":"Авто · Белые","outbounds":["w"]},
           {"type":"urltest","tag":"Ru 🔗 Авто","outbounds":["c"]},
@@ -236,6 +236,11 @@ final class LXProfileOverridesTests: XCTestCase {
         XCTAssertEqual(smart["outbounds"] as? [String], ["a", "c", "w"])
         XCTAssertEqual(smart["priority_outbounds"] as? [String], ["a"])
         XCTAssertEqual(smart["secondary_priority_outbounds"] as? [String], ["c"])
+        XCTAssertEqual(smart["tag"] as? String, "Авто · Умный")
+        XCTAssertFalse(outbounds.contains { ($0["tag"] as? String) == "Авто · База → Белые" })
+        let strategy = try XCTUnwrap(outbounds.first { ($0["tag"] as? String) == "Стратегия" })
+        XCTAssertEqual(strategy["default"] as? String, "Авто · Умный")
+        XCTAssertEqual(strategy["outbounds"] as? [String], ["Авто · Базовая", "Авто · Белые", "Ru 🔗 Авто", "Авто · Умный"])
         let result = try LXProfileOverrides.apply(output, profileID: 42, storedJSON: "")
         XCTAssertEqual(result, output)
     }
