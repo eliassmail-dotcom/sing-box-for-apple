@@ -229,14 +229,14 @@ final class LXProfileOverridesTests: XCTestCase {
           {"type":"urltest","tag":"Авто · База → Белые","outbounds":["a","w"],"priority_outbounds":["a"],"mode":"least_test"}
         ]}
         """#
-        let output = try LXProfileOverrides.apply(source, profileID: 42, storedJSON: "{}")
+        let output = try LXProfileOverrides.apply(source, profileID: 42, storedJSON: "")
         let root = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(output.utf8)) as? [String: Any])
         let outbounds = try XCTUnwrap(root["outbounds"] as? [[String: Any]])
         let smart = try XCTUnwrap(outbounds.first { ($0["tag"] as? String) == LXProfileOverrides.preferredFallbackTag })
         XCTAssertEqual(smart["outbounds"] as? [String], ["a", "c", "w"])
         XCTAssertEqual(smart["priority_outbounds"] as? [String], ["a"])
         XCTAssertEqual(smart["secondary_priority_outbounds"] as? [String], ["c"])
-        let result = try LXProfileOverrides.apply(output, profileID: 42, storedJSON: "{}")
+        let result = try LXProfileOverrides.apply(output, profileID: 42, storedJSON: "")
         XCTAssertEqual(result, output)
     }
 
