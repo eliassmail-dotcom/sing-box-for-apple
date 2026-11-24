@@ -171,7 +171,7 @@ public struct StrategyModeCard: View {
             Text(title)
             Text(count.map { String($0) } ?? "—")
         }
-        .fontWeight(isCurrent ? .semibold : .regular)
+        .font(.caption.monospacedDigit().weight(isCurrent ? .semibold : .regular))
         .foregroundColor(isCurrent ? Color.accentColor : .secondary)
     }
 
