@@ -97,6 +97,13 @@ public struct StrategyModeCard: View {
                             Text("—").foregroundStyle(.secondary)
                         }
                         Text("·").foregroundStyle(.secondary)
+                        if let chainTag = availableChainTag {
+                            Text("🔗").foregroundStyle(.secondary)
+                            if let count = respondingCount(rootTag: chainTag) {
+                                Text("\(count)").foregroundColor(.urlTestGood)
+                            }
+                            Text("·").foregroundStyle(.secondary)
+                        }
                         Text("Белые")
                             .foregroundStyle(.secondary)
                         if let count = respondingCount(rootTag: availableWhiteTag) {
@@ -165,6 +172,11 @@ public struct StrategyModeCard: View {
     private var availableBaseTag: String? {
         guard let tags = commandClient.groups?.map(\.tag) else { return nil }
         return ["Авто · Базовая", "Авто"].first { tags.contains($0) }
+    }
+
+    private var availableChainTag: String? {
+        guard let tags = commandClient.groups?.map(\.tag) else { return nil }
+        return ["Ru 🔗 Авто"].first { tags.contains($0) }
     }
 
     private var availableWhiteTag: String? {
@@ -259,7 +271,7 @@ public struct StrategyModeCard: View {
                 try await selectNodeOffMainThread(groupTag: target, outboundTag: next)
             } else if targetGroup.type == "urltest" {
                 // LX recognizes the reserved command in SelectOutbound and
-                // rotates within the effective policy. Smart base > white
+                // rotates within the effective policy. Smart base > chains > white
                 // priority and live connections are preserved by the core.
                 try await selectNodeOffMainThread(
                     groupTag: target, outboundTag: StrategyNodeChange.nextNodeCommand

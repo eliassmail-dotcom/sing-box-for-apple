@@ -240,10 +240,12 @@ public enum LXProfileOverrides {
     public static let preferredFallbackTag = "Авто · База → Белые"
     private static let baseTags = ["Авто · Базовая", "Авто"]
     private static let whiteTags = ["Авто · Белые", "Авто · Только белые"]
+    private static let chainTags = ["Ru 🔗 Авто"]
 
     // This feature requires an LX kernel implementing priority_outbounds.
     // Smart is built as ONE flat URLTest pool: direct members from the Base tier
-    // followed by White-only members. The Base leaf tags are the preferred tier.
+    // followed by complete Russia-chain leaves, then White-only members.
+    // The first and second tier are explicitly encoded in the LX core.
     //
     // Do not nest the two source URLTest groups here. A parent priority group that
     // wraps URLTest children can see only each child's currently selected leaf;
@@ -310,18 +312,25 @@ public enum LXProfileOverrides {
         base: String,
         white: String,
         in outbounds: [[String: Any]]
-    ) throws -> (all: [String], preferred: [String], probeURLs: [String]) {
+    ) throws -> (all: [String], preferred: [String], secondary: [String], legacy: [String], probeURLs: [String]) {
         let preferred = try flattenedURLTestMembers(base, in: outbounds)
         let whiteMembers = try flattenedURLTestMembers(white, in: outbounds)
+        let chainTag = chainTags.first { tag in
+            outbounds.contains { ($0["tag"] as? String) == tag && ($0["type"] as? String) == "urltest" }
+        }
+        let chainMembers = try chainTag.map { try flattenedURLTestMembers($0, in: outbounds) }
         let preferredSet = Set(preferred.tags)
-        let fallbackOnly = whiteMembers.tags.filter { !preferredSet.contains($0) }
-        guard !preferred.tags.isEmpty, !fallbackOnly.isEmpty else {
+        let legacyWhite = whiteMembers.tags.filter { !preferredSet.contains($0) }
+        let secondary = (chainMembers?.tags ?? []).filter { !preferredSet.contains($0) }
+        let used = preferredSet.union(secondary)
+        let fallbackOnly = whiteMembers.tags.filter { !used.contains($0) }
+        guard !preferred.tags.isEmpty, !legacyWhite.isEmpty else {
             throw OverrideError.invalidOption("группы Базовая и Белые не содержат отдельных узлов для резервирования")
         }
-        let probeURLs = Array((preferred.probeURLs + whiteMembers.probeURLs).reduce(into: [String]()) {
+        let probeURLs = (preferred.probeURLs + (chainMembers?.probeURLs ?? []) + whiteMembers.probeURLs).reduce(into: [String]()) {
             if !$0.contains($1) && $0.count < 3 { $0.append($1) }
-        })
-        return (preferred.tags + fallbackOnly, preferred.tags, probeURLs)
+        }
+        return (preferred.tags + secondary + fallbackOnly, preferred.tags, secondary, preferred.tags + legacyWhite, probeURLs)
     }
 
     // Every compatible profile gets a dormant Smart group automatically.
@@ -354,6 +363,7 @@ public enum LXProfileOverrides {
         let members = try smartMembers(base: base, white: white, in: outbounds)
         let expectedMembers = members.all
         let expectedPreferred = members.preferred
+        let expectedSecondary = members.secondary
 
         // Rebuild the previous nested implementation in-place. This is a known
         // generated shape from earlier app versions, not a user-authored group.
@@ -368,8 +378,14 @@ public enum LXProfileOverrides {
             let newGeneratedShape =
                 (existing["type"] as? String) == "urltest" &&
                 (existing["outbounds"] as? [String]) == expectedMembers &&
-                (existing["priority_outbounds"] as? [String]) == expectedPreferred
-            guard oldGeneratedShape || newGeneratedShape else {
+                (existing["priority_outbounds"] as? [String]) == expectedPreferred &&
+                (existing["secondary_priority_outbounds"] as? [String] ?? []) == expectedSecondary
+            let legacyFlatShape =
+                (existing["type"] as? String) == "urltest" &&
+                (existing["outbounds"] as? [String]) == members.legacy &&
+                (existing["priority_outbounds"] as? [String]) == expectedPreferred &&
+                (existing["secondary_priority_outbounds"] as? [String] ?? []).isEmpty
+            guard oldGeneratedShape || legacyFlatShape || newGeneratedShape else {
                 throw OverrideError.invalidOption("существующая резервная группа имеет несовместимую конфигурацию")
             }
             outbounds.remove(at: existingIndex)
@@ -396,7 +412,11 @@ public enum LXProfileOverrides {
             "interrupt_exist_connections": false,
         ]
 
-        // Use the Base group's timing and thresholds. Probe URLs from both tiers
+        if !expectedSecondary.isEmpty {
+            fallback["secondary_priority_outbounds"] = expectedSecondary
+        }
+
+        // Use the Base group's timing and thresholds. Probe URLs from all tiers
         // are merged (up to the core's three-endpoint limit) so neither tier is
         // judged by an endpoint that existed only in the other tier.
         for field in ["interval", "idle_timeout", "tolerance", "tolerance_percent", "min_hold", "passive_guard"] {
@@ -476,13 +496,13 @@ public enum LXProfileOverrides {
                         ] as [String: Any]
                         // Adaptive URLTest and Smart priority options are not
                         // valid in round_robin. Strip them when changing modes.
-                        for key in ["tolerance", "tolerance_percent", "min_hold", "priority_outbounds", "passive_guard"] {
+                        for key in ["tolerance", "tolerance_percent", "min_hold", "priority_outbounds", "secondary_priority_outbounds", "passive_guard"] {
                             group.removeValue(forKey: key)
                         }
                     } else {
                         group.removeValue(forKey: "balancer")
                         if setting.mode == "failover" {
-                            for key in ["tolerance", "tolerance_percent", "min_hold", "priority_outbounds"] {
+                            for key in ["tolerance", "tolerance_percent", "min_hold", "priority_outbounds", "secondary_priority_outbounds"] {
                                 group.removeValue(forKey: key)
                             }
                         }
@@ -498,9 +518,9 @@ public enum LXProfileOverrides {
                 let disallowedFields: [String]
                 switch effectiveMode {
                 case "round_robin":
-                    disallowedFields = ["tolerance", "tolerance_percent", "min_hold", "priority_outbounds", "passive_guard"]
+                    disallowedFields = ["tolerance", "tolerance_percent", "min_hold", "priority_outbounds", "secondary_priority_outbounds", "passive_guard"]
                 case "failover":
-                    disallowedFields = ["tolerance", "tolerance_percent", "min_hold", "priority_outbounds", "balancer"]
+                    disallowedFields = ["tolerance", "tolerance_percent", "min_hold", "priority_outbounds", "secondary_priority_outbounds", "balancer"]
                 case "least_test":
                     disallowedFields = ["balancer"]
                 default:

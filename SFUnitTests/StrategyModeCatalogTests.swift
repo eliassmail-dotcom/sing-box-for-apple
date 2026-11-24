@@ -22,7 +22,7 @@ final class StrategyModeCatalogTests: XCTestCase {
     private let nbStrategy = ["Пулы", "Авто · Базовая", "Авто · Полная", "Ручной выбор"]
 
     func testAllModesAvailableInCorporateProfile() {
-        for mode in StrategyModeCatalog.modes where mode.title != "Авто • Умный" {
+        for mode in StrategyModeCatalog.modes where mode.title != "Авто • Умный" && mode.title != "Авто • 🔗 Цепочки" {
             XCTAssertTrue(StrategyModeCatalog.isAvailable(mode, strategyTags: corporateStrategy, geminiTags: corporateGemini), mode.title)
         }
         XCTAssertEqual(StrategyModeCatalog.strategyTarget(StrategyModeCatalog.modes[0], strategyTags: corporateStrategy), "Авто · Базовая")
@@ -32,6 +32,15 @@ final class StrategyModeCatalogTests: XCTestCase {
         // User decision: auto modes prefer Super-A for Gemini.
         XCTAssertEqual(StrategyModeCatalog.geminiTarget(StrategyModeCatalog.modes[0], geminiTags: corporateGemini), "Gemini • Super • A")
         XCTAssertEqual(StrategyModeCatalog.geminiTarget(StrategyModeCatalog.modes[3], geminiTags: corporateGemini), "Gemini • Выбор")
+    }
+
+    func testOptionalChainStrategy() throws {
+        let mode = try XCTUnwrap(StrategyModeCatalog.modes.first { $0.title == "Авто • 🔗 Цепочки" })
+        XCTAssertFalse(StrategyModeCatalog.isAvailable(mode, strategyTags: corporateStrategy, geminiTags: nil))
+        let withChains = corporateStrategy + ["Ru 🔗 Авто"]
+        XCTAssertTrue(StrategyModeCatalog.isAvailable(mode, strategyTags: withChains, geminiTags: corporateGemini))
+        XCTAssertEqual(StrategyModeCatalog.strategyTarget(mode, strategyTags: withChains), "Ru 🔗 Авто")
+        XCTAssertEqual(StrategyModeCatalog.activeMode(strategySelected: "Ru 🔗 Авто", geminiSelected: nil, strategyTags: withChains, geminiTags: nil)?.title, mode.title)
     }
 
     func testOptionalPriorityStrategy() {
