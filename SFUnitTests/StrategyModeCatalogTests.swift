@@ -55,6 +55,20 @@ final class StrategyModeCatalogTests: XCTestCase {
         XCTAssertEqual(StrategyModeCatalog.activeMode(strategySelected: "Авто · База → Белые", geminiSelected: "Gemini • Super • A", strategyTags: withPriority, geminiTags: corporateGemini)?.title, "Авто • Умный")
     }
 
+    func testSmartTierResolvesFlatLeafAndLegacyNestedSelection() {
+        let tiers = ["base", "chains", "white"]
+        let members = ["base": ["b", "nested"], "nested": ["b2", "base"],
+                       "chains": ["c", "shared"], "white": ["w", "shared"]]
+        XCTAssertEqual(StrategyModeCatalog.smartTier(selected: "b", tiers: tiers, members: members), "base")
+        XCTAssertEqual(StrategyModeCatalog.smartTier(selected: "b2", tiers: tiers, members: members), "base")
+        XCTAssertEqual(StrategyModeCatalog.smartTier(selected: "c", tiers: tiers, members: members), "chains")
+        XCTAssertEqual(StrategyModeCatalog.smartTier(selected: "w", tiers: tiers, members: members), "white")
+        XCTAssertEqual(StrategyModeCatalog.smartTier(selected: "shared", tiers: tiers, members: members), "chains")
+        XCTAssertEqual(StrategyModeCatalog.smartTier(selected: "white", tiers: tiers, members: members), "white")
+        XCTAssertNil(StrategyModeCatalog.smartTier(selected: "unknown", tiers: tiers, members: members))
+        XCTAssertNil(StrategyModeCatalog.smartTier(selected: "", tiers: tiers, members: members))
+    }
+
     func testRenamedWhiteGroupMatchesBothNames() {
         XCTAssertEqual(StrategyModeCatalog.strategyTarget(StrategyModeCatalog.modes[1], strategyTags: renamedStrategy), "Авто · Белые")
         XCTAssertEqual(StrategyModeCatalog.strategyTarget(StrategyModeCatalog.modes[1], strategyTags: corporateStrategy), "Авто · Только белые")

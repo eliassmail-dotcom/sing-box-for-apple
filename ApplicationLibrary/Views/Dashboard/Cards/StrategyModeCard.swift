@@ -9,6 +9,10 @@ public struct StrategyModeCard: View {
     @EnvironmentObject private var commandClient: CommandClient
     @State private var alert: AlertState?
     @State private var switchingMode: StrategyModeSpec?
+    @ScaledMetric(relativeTo: .body) private var smartHeight = 84.0
+    @ScaledMetric(relativeTo: .body) private var tileHeight = 76.0
+    @ScaledMetric(relativeTo: .title2) private var counterSize = 28.0
+    @ScaledMetric(relativeTo: .subheadline) private var tileLabelSize = 14.0
 
     public init() {}
 
@@ -16,7 +20,7 @@ public struct StrategyModeCard: View {
         Group {
             if let strategyGroup {
                 DashboardCardView(title: "") {
-                    VStack(alignment: .leading, spacing: 10) {
+                    VStack(alignment: .leading, spacing: 8) {
                         HStack {
                             DashboardCardHeader(icon: "wand.and.stars", title: "Выбор узлов")
                             Spacer(minLength: 4)
@@ -81,10 +85,10 @@ public struct StrategyModeCard: View {
             Task { await handleModeTap(mode) }
         } label: {
             if isWide {
-                VStack(alignment: .leading, spacing: 5) {
+                VStack(alignment: .leading, spacing: 8) {
                     HStack(spacing: 6) {
                         Text(mode.title)
-                            .font(.subheadline.weight(.semibold))
+                            .font(.headline.weight(.semibold))
                             .foregroundStyle(.primary)
                         Spacer(minLength: 4)
                         if switchingMode == mode {
@@ -92,48 +96,50 @@ public struct StrategyModeCard: View {
                         } else if isActive {
                             Image(systemName: "arrow.clockwise")
                                 .foregroundStyle(Color.accentColor)
-                                .font(.caption)
+                                .font(.subheadline)
                                 .accessibilityLabel("Сменить узел")
                         }
                     }
+                    let activeTier = activeSmartTier(strategyGroup: strategyGroup)
                     HStack(spacing: 5) {
-                        smartTier("Базовые", tag: availableBaseTag, strategyGroup: strategyGroup)
+                        smartTier("Базовые", tag: availableBaseTag, activeTier: activeTier)
                         if availableChainTag != nil {
-                            Image(systemName: "chevron.right").font(.caption2).foregroundStyle(.secondary)
-                            smartTier("🔗", tag: availableChainTag, strategyGroup: strategyGroup)
+                            Image(systemName: "chevron.right").font(.caption2).foregroundStyle(.tertiary)
+                            smartTier("Цепочки", icon: "link", tag: availableChainTag, activeTier: activeTier)
                         }
-                        Image(systemName: "chevron.right").font(.caption2).foregroundStyle(.secondary)
-                        smartTier("Белые", tag: availableWhiteTag, strategyGroup: strategyGroup)
+                        if availableWhiteTag != nil {
+                            Image(systemName: "chevron.right").font(.caption2).foregroundStyle(.tertiary)
+                            smartTier("Белые", tag: availableWhiteTag, activeTier: activeTier)
+                        }
                     }
-                    .font(.caption.monospacedDigit())
                     .frame(maxWidth: .infinity)
                     .accessibilityElement(children: .combine)
                 }
-                .frame(maxWidth: .infinity, minHeight: 36, alignment: .leading)
                 .padding(.horizontal, 12)
-                .padding(.vertical, 6)
+                .padding(.vertical, 8)
+                .frame(maxWidth: .infinity, minHeight: smartHeight, alignment: .leading)
                 .contentShape(Rectangle())
             } else {
-                VStack(spacing: 3) {
+                VStack(spacing: 4) {
                     if switchingMode == mode {
                         ProgressView().controlSize(.small)
-                            .frame(height: 24)
+                            .frame(height: counterSize + 6)
                     } else {
                         let count = respondingCount(mode, strategyGroup: strategyGroup)
                         Text(count.map { String($0) } ?? "—")
-                            .font(.title3.monospacedDigit().weight(.semibold))
+                            .font(.system(size: counterSize, weight: .semibold).monospacedDigit())
                             .foregroundColor((count ?? 0) > 0 ? .urlTestGood : .secondary)
                             .accessibilityLabel("Последние успешные замеры URLTest: " + (count.map { String($0) } ?? "нет данных"))
                     }
                     Text(shortTitle(mode))
-                        .font(.caption.weight(.medium))
+                        .font(.system(size: tileLabelSize, weight: .medium))
                         .foregroundStyle(.primary)
                         .lineLimit(1)
                         .minimumScaleFactor(0.75)
                 }
-                .frame(maxWidth: .infinity, minHeight: 44)
                 .padding(.horizontal, 4)
                 .padding(.vertical, 6)
+                .frame(maxWidth: .infinity, minHeight: tileHeight)
                 .contentShape(Rectangle())
             }
         }
@@ -142,11 +148,11 @@ public struct StrategyModeCard: View {
         .opacity(isAvailable || isActive ? 1 : 0.45)
         .disabled(!isAvailable || switchingMode != nil)
         .background(
-            RoundedRectangle(cornerRadius: 12)
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
                 .fill(isActive ? Color.accentColor.opacity(0.12) : modeTileBackground)
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 12)
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
                 .strokeBorder(isActive ? Color.accentColor : Color.urlTestNeutral, lineWidth: isActive ? 2 : 1)
         )
         .animation(.easeOut(duration: 0.12), value: isActive)
@@ -161,18 +167,40 @@ public struct StrategyModeCard: View {
         }
     }
 
-    private func smartTier(_ title: String, tag: String?, strategyGroup: OutboundGroup) -> some View {
-        let count = respondingCount(rootTag: tag)
-        let smart = StrategyModeCatalog.modes.first { $0.title == "Авто • Умный" }
-        let smartTag = smart.flatMap { StrategyModeCatalog.strategyTarget($0, strategyTags: strategyTags(strategyGroup)) }
-        let currentTier = commandClient.groups?.first { $0.tag == smartTag }?.selected
-        let isCurrent = tag != nil && tag == currentTier && smartTag != nil && strategyGroup.selected == smartTag
+    private func activeSmartTier(strategyGroup: OutboundGroup) -> String? {
+        guard let smart = StrategyModeCatalog.modes.first(where: { $0.title == "Авто • Умный" }),
+              let smartTag = StrategyModeCatalog.strategyTarget(smart, strategyTags: strategyTags(strategyGroup)),
+              strategyGroup.selected == smartTag,
+              let groups = commandClient.groups,
+              let selected = groups.first(where: { $0.tag == smartTag })?.selected else { return nil }
+        let members = Dictionary(groups.map { ($0.tag, $0.items.map(\.tag)) },
+                                 uniquingKeysWith: { first, _ in first })
+        return StrategyModeCatalog.smartTier(
+            selected: selected,
+            tiers: [availableBaseTag, availableChainTag, availableWhiteTag].compactMap { $0 },
+            members: members
+        )
+    }
+
+    private func smartTier(_ title: String, icon: String? = nil, tag: String?, activeTier: String?) -> some View {
+        let isCurrent = tag != nil && tag == activeTier
         return HStack(spacing: 3) {
+            if let icon {
+                Image(systemName: icon)
+            }
             Text(title)
-            Text(count.map { String($0) } ?? "—")
+                .lineLimit(1)
+                .minimumScaleFactor(0.75)
         }
-        .font(.caption.monospacedDigit().weight(isCurrent ? .semibold : .regular))
+        .font(.caption.weight(isCurrent ? .semibold : .regular))
         .foregroundColor(isCurrent ? Color.accentColor : .secondary)
+        .padding(.horizontal, 5)
+        .padding(.vertical, 4)
+        .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(isCurrent ? Color.accentColor.opacity(0.15) : Color.clear)
+        )
+        .accessibilityAddTraits(isCurrent ? .isSelected : [])
     }
 
     private var strategyGroup: OutboundGroup? {

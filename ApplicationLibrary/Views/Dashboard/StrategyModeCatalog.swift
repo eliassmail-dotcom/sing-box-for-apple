@@ -78,6 +78,25 @@ public enum StrategyModeCatalog {
 
     /// The outbound the mode would actually select inside «Стратегия» for the
     /// given group membership, or nil when the profile lacks the group.
+    // Smart is a flat URLTest pool. Its selection is usually a leaf, not
+    // the source URLTest tag. Resolve membership in the same priority order
+    // as the generated pool, including legacy nested URLTest profiles.
+    public static func smartTier(selected: String, tiers: [String], members: [String: [String]]) -> String? {
+        guard !selected.isEmpty else { return nil }
+        // Explicit nested group selection takes precedence over leaf lookup.
+        if tiers.contains(selected) { return selected }
+        for tier in tiers {
+            var pending = [tier]
+            var visited = Set<String>()
+            while let tag = pending.popLast() {
+                guard visited.insert(tag).inserted else { continue }
+                if tag == selected { return tier }
+                pending.append(contentsOf: members[tag] ?? [])
+            }
+        }
+        return nil
+    }
+
     public static func strategyTarget(_ mode: StrategyModeSpec, strategyTags: [String]) -> String? {
         mode.strategyCandidates.first { strategyTags.contains($0) }
     }
