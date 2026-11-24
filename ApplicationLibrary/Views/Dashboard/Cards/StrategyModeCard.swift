@@ -17,7 +17,18 @@ public struct StrategyModeCard: View {
             if let strategyGroup {
                 DashboardCardView(title: "") {
                     VStack(alignment: .leading, spacing: 10) {
-                        DashboardCardHeader(icon: "wand.and.stars", title: "Выбор узлов")
+                        HStack {
+                            DashboardCardHeader(icon: "wand.and.stars", title: "Выбор узлов")
+                            Spacer(minLength: 4)
+                            Button {
+                                alert = AlertState(title: "URLTest", message: "Числа — последние успешные замеры URLTest; не подтверждают доступность сейчас и не учитывают карантин.")
+                            } label: {
+                                Image(systemName: "info.circle")
+                                    .foregroundStyle(.secondary)
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel("Что означают числа")
+                        }
 
                         // Primary strategy first: full width and separate Base/White
                         // availability, instead of a misleading aggregate count.
@@ -25,9 +36,9 @@ public struct StrategyModeCard: View {
                             modeButton(smartMode, strategyGroup: strategyGroup, isWide: true)
                         }
 
-                        // Alternative modes retain their existing two-column layout.
+                        // Three equal tiles, in Smart fallback priority order.
                         LazyVGrid(
-                            columns: [GridItem(.flexible(), spacing: 8), GridItem(.flexible(), spacing: 8)],
+                            columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 3),
                             spacing: 8
                         ) {
                             ForEach(dashboardModes.filter { $0.title != "Авто • Умный" }) { mode in
@@ -35,13 +46,11 @@ public struct StrategyModeCard: View {
                             }
                         }
 
-                        Text("Числа — последние успешные замеры URLTest; не подтверждают доступность сейчас и не учитывают карантин.")
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
                         if let active = activeMode(strategyGroup: strategyGroup), dashboardModes.contains(active) {
-                            Text("Повторное нажатие на активный режим — сменить узел")
+                            Text("Повторное нажатие — сменить узел")
                                 .font(.caption2)
                                 .foregroundStyle(.secondary)
+                                .frame(maxWidth: .infinity)
                         }
 
                         if let unavailable = unavailableModes(strategyGroup: strategyGroup), !unavailable.isEmpty {
@@ -88,33 +97,16 @@ public struct StrategyModeCard: View {
                         }
                     }
                     HStack(spacing: 5) {
-                        Text("Базовые")
-                            .foregroundStyle(.secondary)
-                        if let count = respondingCount(rootTag: availableBaseTag) {
-                            Text("\(count)")
-                                .foregroundColor(.urlTestGood)
-                        } else {
-                            Text("—").foregroundStyle(.secondary)
+                        smartTier("Базовые", tag: availableBaseTag, strategyGroup: strategyGroup)
+                        if availableChainTag != nil {
+                            Image(systemName: "chevron.right").font(.caption2).foregroundStyle(.secondary)
+                            smartTier("🔗", tag: availableChainTag, strategyGroup: strategyGroup)
                         }
-                        Text("·").foregroundStyle(.secondary)
-                        if let chainTag = availableChainTag {
-                            Text("🔗").foregroundStyle(.secondary)
-                            if let count = respondingCount(rootTag: chainTag) {
-                                Text("\(count)").foregroundColor(.urlTestGood)
-                            }
-                            Text("·").foregroundStyle(.secondary)
-                        }
-                        Text("Белые")
-                            .foregroundStyle(.secondary)
-                        if let count = respondingCount(rootTag: availableWhiteTag) {
-                            Text("\(count)")
-                                .foregroundColor(.urlTestGood)
-                        } else {
-                            Text("—").foregroundStyle(.secondary)
-                        }
-                        Spacer(minLength: 0)
+                        Image(systemName: "chevron.right").font(.caption2).foregroundStyle(.secondary)
+                        smartTier("Белые", tag: availableWhiteTag, strategyGroup: strategyGroup)
                     }
                     .font(.caption.monospacedDigit())
+                    .frame(maxWidth: .infinity)
                     .accessibilityElement(children: .combine)
                 }
                 .frame(maxWidth: .infinity, minHeight: 36, alignment: .leading)
@@ -122,26 +114,25 @@ public struct StrategyModeCard: View {
                 .padding(.vertical, 6)
                 .contentShape(Rectangle())
             } else {
-                HStack(spacing: 6) {
-                    Text(mode.title)
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(.primary)
-                        .lineLimit(2)
-                        .minimumScaleFactor(0.8)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                VStack(spacing: 3) {
                     if switchingMode == mode {
                         ProgressView().controlSize(.small)
-                    } else if let count = respondingCount(mode, strategyGroup: strategyGroup) {
-                        Text("\(count)")
-                            .font(.caption.monospacedDigit().weight(.semibold))
-                            .foregroundColor(.urlTestGood)
-                            .accessibilityLabel("Последние успешные замеры URLTest: \(count) узлов, не текущая доступность")
+                            .frame(height: 24)
                     } else {
-                        Text("—").font(.caption).foregroundStyle(.secondary)
+                        let count = respondingCount(mode, strategyGroup: strategyGroup)
+                        Text(count.map { String($0) } ?? "—")
+                            .font(.title3.monospacedDigit().weight(.semibold))
+                            .foregroundColor((count ?? 0) > 0 ? .urlTestGood : .secondary)
+                            .accessibilityLabel("Последние успешные замеры URLTest: " + (count.map { String($0) } ?? "нет данных"))
                     }
+                    Text(shortTitle(mode))
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(.primary)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.75)
                 }
-                .frame(maxWidth: .infinity, minHeight: 36, alignment: .leading)
-                .padding(.horizontal, 10)
+                .frame(maxWidth: .infinity, minHeight: 44)
+                .padding(.horizontal, 4)
                 .padding(.vertical, 6)
                 .contentShape(Rectangle())
             }
@@ -159,6 +150,29 @@ public struct StrategyModeCard: View {
                 .strokeBorder(isActive ? Color.accentColor : Color.urlTestNeutral, lineWidth: isActive ? 2 : 1)
         )
         .animation(.easeOut(duration: 0.12), value: isActive)
+    }
+
+    private func shortTitle(_ mode: StrategyModeSpec) -> String {
+        switch mode.title {
+        case "Авто • Базовая": return "Базовые"
+        case "Авто • 🔗 Цепочки": return "Цепочки"
+        case "Авто • Белые": return "Белые"
+        default: return mode.title
+        }
+    }
+
+    private func smartTier(_ title: String, tag: String?, strategyGroup: OutboundGroup) -> some View {
+        let count = respondingCount(rootTag: tag)
+        let smart = StrategyModeCatalog.modes.first { $0.title == "Авто • Умный" }
+        let smartTag = smart.flatMap { StrategyModeCatalog.strategyTarget($0, strategyTags: strategyTags(strategyGroup)) }
+        let currentTier = commandClient.groups?.first { $0.tag == smartTag }?.selected
+        let isCurrent = tag != nil && tag == currentTier && smartTag != nil && strategyGroup.selected == smartTag
+        return HStack(spacing: 3) {
+            Text(title)
+            Text(count.map { String($0) } ?? "—")
+        }
+        .fontWeight(isCurrent ? .semibold : .regular)
+        .foregroundColor(isCurrent ? Color.accentColor : .secondary)
     }
 
     private var strategyGroup: OutboundGroup? {
@@ -218,8 +232,8 @@ public struct StrategyModeCard: View {
     // Keep legacy modes in the catalog for existing profile detection, but
     // do not expose Full or Manual as dashboard shortcuts.
     private var dashboardModes: [StrategyModeSpec] {
-        StrategyModeCatalog.modes.filter { mode in
-            mode.title != "Авто • Полная" && mode.title != "Ручной режим"
+        ["Авто • Умный", "Авто • Базовая", "Авто • 🔗 Цепочки", "Авто • Белые"].compactMap { title in
+            StrategyModeCatalog.modes.first { $0.title == title }
         }
     }
 
