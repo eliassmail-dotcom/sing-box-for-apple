@@ -21,7 +21,7 @@ public struct StrategyModeCard: View {
 
                         // Primary strategy first: full width and separate Base/White
                         // availability, instead of a misleading aggregate count.
-                        if let smartMode = StrategyModeCatalog.modes.first(where: { $0.title == "Авто • Умный" }) {
+                        if let smartMode = dashboardModes.first(where: { $0.title == "Авто • Умный" }) {
                             modeButton(smartMode, strategyGroup: strategyGroup, isWide: true)
                         }
 
@@ -30,7 +30,7 @@ public struct StrategyModeCard: View {
                             columns: [GridItem(.flexible(), spacing: 8), GridItem(.flexible(), spacing: 8)],
                             spacing: 8
                         ) {
-                            ForEach(StrategyModeCatalog.modes.filter { $0.title != "Авто • Умный" }) { mode in
+                            ForEach(dashboardModes.filter { $0.title != "Авто • Умный" }) { mode in
                                 modeButton(mode, strategyGroup: strategyGroup, isWide: false)
                             }
                         }
@@ -38,7 +38,7 @@ public struct StrategyModeCard: View {
                         Text("Числа — последние успешные замеры URLTest; не подтверждают доступность сейчас и не учитывают карантин.")
                             .font(.caption2)
                             .foregroundStyle(.secondary)
-                        if activeMode(strategyGroup: strategyGroup) != nil {
+                        if let active = activeMode(strategyGroup: strategyGroup), dashboardModes.contains(active) {
                             Text("Повторное нажатие на активный режим — сменить узел")
                                 .font(.caption2)
                                 .foregroundStyle(.secondary)
@@ -215,8 +215,16 @@ public struct StrategyModeCard: View {
         )
     }
 
+    // Keep legacy modes in the catalog for existing profile detection, but
+    // do not expose Full or Manual as dashboard shortcuts.
+    private var dashboardModes: [StrategyModeSpec] {
+        StrategyModeCatalog.modes.filter { mode in
+            mode.title != "Авто • Полная" && mode.title != "Ручной режим"
+        }
+    }
+
     private func unavailableModes(strategyGroup: OutboundGroup) -> [StrategyModeSpec]? {
-        let modes = StrategyModeCatalog.modes.filter { !availability($0, strategyGroup: strategyGroup) }
+        let modes = dashboardModes.filter { !availability($0, strategyGroup: strategyGroup) }
         return modes.isEmpty ? nil : modes
     }
 
