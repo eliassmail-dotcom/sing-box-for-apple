@@ -445,6 +445,45 @@ public enum LXProfileOverrides {
         root["outbounds"] = outbounds
     }
 
+    // LX.36 rejects the old flat WireGuard idle keys. Normalize only the
+    // effective configuration, without rewriting the stored source profile.
+    private static let legacyWireGuardIdleKeys: [(String, String)] = [
+        ("idle_suspend", "suspend"),
+        ("idle_suspend_reachable", "suspend_reachable"),
+        ("idle_teardown", "teardown"),
+        ("lazy_build", "lazy_build"),
+        ("build_max", "build_max"),
+        ("build_overflow", "build_overflow"),
+    ]
+
+    private static func migrateWireGuardIdle(_ root: inout [String: Any]) throws -> Bool {
+        guard var lx = root["lx"] as? [String: Any],
+              var wg = lx["wg"] as? [String: Any],
+              legacyWireGuardIdleKeys.contains(where: { wg[$0.0] != nil }) else { return false }
+        guard wg["idle"] == nil || wg["idle"] is [String: Any] else {
+            throw OverrideError.invalidOption("lx.wg.idle")
+        }
+        var idle = wg["idle"] as? [String: Any] ?? [:]
+        for (oldKey, newKey) in legacyWireGuardIdleKeys {
+            if let value = wg.removeValue(forKey: oldKey), idle[newKey] == nil {
+                idle[newKey] = value
+            }
+        }
+        wg["idle"] = idle
+        lx["wg"] = wg
+        root["lx"] = lx
+        return true
+    }
+
+    private static func encodeDocument(_ root: [String: Any]) throws -> String {
+        guard JSONSerialization.isValidJSONObject(root),
+              let data = try? JSONSerialization.data(withJSONObject: root, options: [.sortedKeys]),
+              let transformed = String(data: data, encoding: .utf8) else {
+            throw OverrideError.invalidJSON
+        }
+        return transformed
+    }
+
     public static func apply(_ source: String, profileID: Int64, storedJSON: String) throws -> String {
         let store = try LXOverridesStore.decode(storedJSON)
         let settings = store.profiles[String(profileID)] ?? LXProfileSettings()
@@ -452,10 +491,15 @@ public enum LXProfileOverrides {
         // The fallback group's presence no longer depends on a separate toggle.
         let injectFallback = supportsWhiteFallback(source)
         let injectGemini = LXGeminiBuilder.hasSource(source)
-        guard !settings.isEmpty || injectFallback || injectGemini else { return source }
+        if settings.isEmpty && !injectFallback && !injectGemini {
+            // Preserve the exact bytes of already compatible profiles.
+            guard var root = try? document(source) else { return source }
+            guard try migrateWireGuardIdle(&root) else { return source }
+            return try encodeDocument(root)
+        }
 
         var root = try document(source)
-        var changed = false
+        var changed = try migrateWireGuardIdle(&root)
         // Build on-device BEFORE applying URLTest health overrides so the
         // locally created Gemini groups inherit the same resilience settings.
         if let chainsEnabled = settings.geminiChainsOverride,
@@ -617,13 +661,16 @@ public enum LXProfileOverrides {
                 var lx = root["lx"] as? [String: Any] ?? [:]
                 var wg = lx["wg"] as? [String: Any] ?? [:]
                 if settings.wgIdle == "on" {
-                    wg["idle_suspend"] = "30s"
-                    wg["idle_suspend_reachable"] = "5m"
-                    wg["idle_teardown"] = "10m"
-                } else {
-                    for key in ["idle_suspend", "idle_suspend_reachable", "idle_teardown", "lazy_build", "build_max", "build_overflow"] {
-                        wg.removeValue(forKey: key)
+                    guard wg["idle"] == nil || wg["idle"] is [String: Any] else {
+                        throw OverrideError.invalidOption("lx.wg.idle")
                     }
+                    var idle = wg["idle"] as? [String: Any] ?? [:]
+                    idle["suspend"] = "30s"
+                    idle["suspend_reachable"] = "5m"
+                    idle["teardown"] = "10m"
+                    wg["idle"] = idle
+                } else {
+                    wg.removeValue(forKey: "idle")
                 }
                 if wg.isEmpty { lx.removeValue(forKey: "wg") } else { lx["wg"] = wg }
                 if lx.isEmpty { root.removeValue(forKey: "lx") } else { root["lx"] = lx }
@@ -663,11 +710,6 @@ public enum LXProfileOverrides {
         }
 
         guard changed else { return source }
-        guard JSONSerialization.isValidJSONObject(root),
-              let data = try? JSONSerialization.data(withJSONObject: root, options: [.sortedKeys]),
-              let transformed = String(data: data, encoding: .utf8) else {
-            throw OverrideError.invalidJSON
-        }
-        return transformed
+        return try encodeDocument(root)
     }
 }
