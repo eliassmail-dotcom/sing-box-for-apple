@@ -12,7 +12,7 @@ final class LXProfileOverridesTests: XCTestCase {
       ],
       "endpoints":[{"type":"wireguard","tag":"wg"}],
       "dns":{"servers":[{"type":"group","tag":"dns","servers":["a","b"],"mode":"stable"}]},
-      "lx":{"mtu_align":"clamp","wg":{"idle_suspend":"45s","lazy_build":true}}
+      "lx":{"mtu_align":"clamp","wg":{"idle":{"suspend":"45s","lazy_build":true}}}
     }
     """
 
@@ -29,6 +29,50 @@ final class LXProfileOverridesTests: XCTestCase {
         profile.urlTests["Auto"] = item
         store.profiles["999"] = profile
         XCTAssertEqual(try LXProfileOverrides.apply(config, profileID: 42, storedJSON: store.encode()), config)
+    }
+
+    func testLegacyWireGuardIdleMigratesWithoutUserOverrides() throws {
+        let legacy = """
+        {"endpoints":[{"type":"wireguard","tag":"wg"}],"lx":{"mtu_align":"clamp","wg":{"idle_suspend":"45s","idle_suspend_reachable":"5m","idle_teardown":"10m","lazy_build":true,"build_max":2,"build_overflow":"reject","buffers":{"read_datagram_count":8}}}}
+        """
+        let result = try LXProfileOverrides.apply(legacy, profileID: 42, storedJSON: "")
+        let lx = try XCTUnwrap(try parsed(result)["lx"] as? [String: Any])
+        let wg = try XCTUnwrap(lx["wg"] as? [String: Any])
+        let idle = try XCTUnwrap(wg["idle"] as? [String: Any])
+        XCTAssertEqual(idle["suspend"] as? String, "45s")
+        XCTAssertEqual(idle["suspend_reachable"] as? String, "5m")
+        XCTAssertEqual(idle["teardown"] as? String, "10m")
+        XCTAssertEqual(idle["lazy_build"] as? Bool, true)
+        XCTAssertEqual(idle["build_max"] as? Int, 2)
+        XCTAssertEqual(idle["build_overflow"] as? String, "reject")
+        for key in ["idle_suspend", "idle_suspend_reachable", "idle_teardown", "lazy_build", "build_max", "build_overflow"] {
+            XCTAssertNil(wg[key])
+        }
+        XCTAssertEqual((wg["buffers"] as? [String: Any])?["read_datagram_count"] as? Int, 8)
+        XCTAssertEqual(try LXProfileOverrides.apply(result, profileID: 42, storedJSON: ""), result)
+    }
+
+    func testWireGuardIdleModernValueWinsAndOffPreservesOtherSettings() throws {
+        let mixed = """
+        {"endpoints":[{"type":"wireguard","tag":"wg"}],"lx":{"wg":{"idle_suspend":"45s","lazy_build":true,"idle":{"suspend":"60s"},"connected_socket":false,"buffers":{"read_datagram_count":8}}}}
+        """
+        let inherited = try LXProfileOverrides.apply(mixed, profileID: 42, storedJSON: "")
+        let inheritedLX = try XCTUnwrap(try parsed(inherited)["lx"] as? [String: Any])
+        let inheritedWG = try XCTUnwrap(inheritedLX["wg"] as? [String: Any])
+        let idle = try XCTUnwrap(inheritedWG["idle"] as? [String: Any])
+        XCTAssertEqual(idle["suspend"] as? String, "60s")
+        XCTAssertEqual(idle["lazy_build"] as? Bool, true)
+        var store = LXOverridesStore()
+        var profile = LXProfileSettings()
+        profile.wgIdle = "off"
+        store.profiles["42"] = profile
+        let disabled = try LXProfileOverrides.apply(mixed, profileID: 42, storedJSON: store.encode())
+        let lx = try XCTUnwrap(try parsed(disabled)["lx"] as? [String: Any])
+        let wg = try XCTUnwrap(lx["wg"] as? [String: Any])
+        XCTAssertNil(wg["idle"])
+        XCTAssertNil(wg["idle_suspend"])
+        XCTAssertEqual(wg["connected_socket"] as? Bool, false)
+        XCTAssertEqual((wg["buffers"] as? [String: Any])?["read_datagram_count"] as? Int, 8)
     }
 
     func testFailoverRemovesBalancerAndPreservesOtherFields() throws {
@@ -138,7 +182,7 @@ final class LXProfileOverridesTests: XCTestCase {
         var root = try parsed(LXProfileOverrides.apply(config, profileID: 42, storedJSON: store.encode()))
         var lx = try XCTUnwrap(root["lx"] as? [String: Any])
         XCTAssertEqual(lx["mtu_align"] as? String, "clamp")
-        XCTAssertEqual((lx["wg"] as? [String: Any])?["idle_suspend"] as? String, "30s")
+        XCTAssertEqual(((lx["wg"] as? [String: Any])?["idle"] as? [String: Any])?["suspend"] as? String, "30s")
         profile.wgIdle = "off"
         store.profiles["42"] = profile
         root = try parsed(LXProfileOverrides.apply(config, profileID: 42, storedJSON: store.encode()))
