@@ -484,6 +484,13 @@ public enum LXProfileOverrides {
         return transformed
     }
 
+    /// Validate an LX.35 profile on LX.36 without mutating the source file.
+    public static func normalizeWireGuardIdleForLX36(_ source: String) throws -> String {
+        guard var root = try? document(source) else { return source }
+        guard try migrateWireGuardIdle(&root) else { return source }
+        return try encodeDocument(root)
+    }
+
     public static func apply(_ source: String, profileID: Int64, storedJSON: String) throws -> String {
         let store = try LXOverridesStore.decode(storedJSON)
         let settings = store.profiles[String(profileID)] ?? LXProfileSettings()
@@ -493,9 +500,7 @@ public enum LXProfileOverrides {
         let injectGemini = LXGeminiBuilder.hasSource(source)
         if settings.isEmpty && !injectFallback && !injectGemini {
             // Preserve the exact bytes of already compatible profiles.
-            guard var root = try? document(source) else { return source }
-            guard try migrateWireGuardIdle(&root) else { return source }
-            return try encodeDocument(root)
+            return try normalizeWireGuardIdleForLX36(source)
         }
 
         var root = try document(source)

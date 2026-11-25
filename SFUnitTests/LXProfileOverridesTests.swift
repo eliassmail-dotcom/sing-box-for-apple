@@ -33,9 +33,10 @@ final class LXProfileOverridesTests: XCTestCase {
 
     func testLegacyWireGuardIdleMigratesWithoutUserOverrides() throws {
         let legacy = """
-        {"endpoints":[{"type":"wireguard","tag":"wg"}],"lx":{"mtu_align":"clamp","wg":{"idle_suspend":"45s","idle_suspend_reachable":"5m","idle_teardown":"10m","lazy_build":true,"build_max":2,"build_overflow":"reject","buffers":{"read_datagram_count":8}}}}
+        {"endpoints":[{"type":"wireguard","tag":"wg"}],"lx":{"mtu_align":"clamp","wg":{"idle_suspend":"45s","idle_suspend_reachable":"5m","idle_teardown":"10m","lazy_build":true,"build_max":2,"build_overflow":"wait","buffers":{"read_datagram_count":8}}}}
         """
         let result = try LXProfileOverrides.apply(legacy, profileID: 42, storedJSON: "")
+        XCTAssertEqual(try LXProfileOverrides.normalizeWireGuardIdleForLX36(legacy), result)
         let lx = try XCTUnwrap(try parsed(result)["lx"] as? [String: Any])
         let wg = try XCTUnwrap(lx["wg"] as? [String: Any])
         let idle = try XCTUnwrap(wg["idle"] as? [String: Any])
@@ -44,7 +45,7 @@ final class LXProfileOverridesTests: XCTestCase {
         XCTAssertEqual(idle["teardown"] as? String, "10m")
         XCTAssertEqual(idle["lazy_build"] as? Bool, true)
         XCTAssertEqual(idle["build_max"] as? Int, 2)
-        XCTAssertEqual(idle["build_overflow"] as? String, "reject")
+        XCTAssertEqual(idle["build_overflow"] as? String, "wait")
         for key in ["idle_suspend", "idle_suspend_reachable", "idle_teardown", "lazy_build", "build_max", "build_overflow"] {
             XCTAssertNil(wg[key])
         }

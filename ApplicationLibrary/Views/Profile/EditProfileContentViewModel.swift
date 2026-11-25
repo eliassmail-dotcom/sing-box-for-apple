@@ -51,9 +51,14 @@ public final class EditProfileContentViewModel: BaseViewModel {
             return
         }
         let errorDescription: String? = await BlockingIO.run {
-            var error: NSError?
-            LibboxCheckConfig(content, &error)
-            return error?.localizedDescription
+            do {
+                let effective = try LXProfileOverrides.normalizeWireGuardIdleForLX36(content)
+                var error: NSError?
+                LibboxCheckConfig(effective, &error)
+                return error?.localizedDescription
+            } catch {
+                return error.localizedDescription
+            }
         }
         configurationError = errorDescription
     }
@@ -66,7 +71,7 @@ public final class EditProfileContentViewModel: BaseViewModel {
         do {
             let formatted: String? = try await BlockingIO.run {
                 var error: NSError?
-                let result = LibboxFormatConfig(content, &error)
+                let result = LibboxFormatConfig(try LXProfileOverrides.normalizeWireGuardIdleForLX36(content), &error)
                 if let error {
                     throw error
                 }

@@ -123,7 +123,7 @@ public final class NewProfileViewModel: BaseViewModel {
                     configContent = "{}"
                 }
                 var error: NSError?
-                LibboxCheckConfig(configContent, &error)
+                LibboxCheckConfig(try LXProfileOverrides.normalizeWireGuardIdleForLX36(configContent), &error)
                 if let error {
                     throw error
                 }
@@ -149,7 +149,7 @@ public final class NewProfileViewModel: BaseViewModel {
             let remoteContent = try await HTTPClient.getStringAsync(remotePath)
             try await BlockingIO.run {
                 var error: NSError?
-                LibboxCheckConfig(remoteContent, &error)
+                LibboxCheckConfig(try LXProfileOverrides.normalizeWireGuardIdleForLX36(remoteContent), &error)
                 if let error {
                     throw error
                 }

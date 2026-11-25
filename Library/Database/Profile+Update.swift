@@ -8,7 +8,7 @@ public extension Profile {
         let remoteContent = try await HTTPClient.getStringAsync(remoteURL)
         try await BlockingIO.run {
             var error: NSError?
-            LibboxCheckConfig(remoteContent, &error)
+            LibboxCheckConfig(try LXProfileOverrides.normalizeWireGuardIdleForLX36(remoteContent), &error)
             if let error { throw error }
         }
         // Save the source too: a syntactically valid profile may fail to start.
