@@ -229,43 +229,78 @@ public enum AppConfiguration {
         return [hostConfigured]
     }
 
-    private static let usableAppGroups: [String] = {
-        guard let peerBundle else { return [] }
-        let own = SignedEntitlements.stringArray("com.apple.security.application-groups")
-        let peer = SignedEntitlements.stringArray(
-            "com.apple.security.application-groups", of: peerBundle
-        )
-        let hostDeclared = hostBundle?.object(forInfoDictionaryKey: "AppGroupIdentifier") as? String
-        let tunnelDeclared = packetTunnelBundle?.object(forInfoDictionaryKey: "AppGroupIdentifier") as? String
+    /// Select from the SAME signed candidate set in every process, before the
+    /// process-local container check. Never resolve ambiguous rights by ordering.
+    static func selectDeclaredAppGroup(
+        candidates: [String], hostConfigured: String?, tunnelConfigured: String?,
+        documentConfigured: String?
+    ) -> String? {
+        let candidates = Set(candidates.filter { !$0.isEmpty })
+        if candidates.count == 1 { return candidates.first }
+        if let hostConfigured, hostConfigured == tunnelConfigured,
+           candidates.contains(hostConfigured) { return hostConfigured }
+        let declared = Set([hostConfigured, tunnelConfigured, documentConfigured]
+            .compactMap { $0 }.filter { candidates.contains($0) })
+        return declared.count == 1 ? declared.first : nil
+    }
+
+    private static let hostDeclaredGroup = hostBundle?.object(forInfoDictionaryKey: "AppGroupIdentifier") as? String
+    private static let tunnelDeclaredGroup = packetTunnelBundle?.object(forInfoDictionaryKey: "AppGroupIdentifier") as? String
+
+    // File Provider's explicit document group is meaningful only if the
+    // embedded extension is signed for it. It cannot grant a new entitlement.
+    private static let documentDeclaredGroup: String? = {
+        #if os(iOS)
+            guard let plugins = hostBundle?.builtInPlugInsURL,
+                  let items = try? FileManager.default.contentsOfDirectory(at: plugins, includingPropertiesForKeys: nil)
+            else { return nil }
+            let declarations = items.compactMap { item -> String? in
+                guard item.pathExtension == "appex", let bundle = Bundle(url: item),
+                      let ext = bundle.infoDictionary?["NSExtension"] as? [String: Any],
+                      ext["NSExtensionPointIdentifier"] as? String == "com.apple.fileprovider-nonui",
+                      let group = ext["NSExtensionFileProviderDocumentGroup"] as? String,
+                      SignedEntitlements.stringArray("com.apple.security.application-groups", of: bundle).contains(group)
+                else { return nil }
+                return group
+            }
+            let unique = Set(declarations)
+            return unique.count == 1 ? unique.first : nil
+        #else
+            return nil
+        #endif
+    }()
+
+    private static let signedCandidateGroups: [String] = {
+        guard let hostBundle, let packetTunnelBundle else { return [] }
         return candidateAppGroups(
-            ownSigned: own, peerSigned: peer,
-            hostConfigured: hostDeclared, tunnelConfigured: tunnelDeclared,
-            hostProvisioned: hostBundle.map { SignedEntitlements.provisionedAppGroups(of: $0) } ?? [],
-            tunnelProvisioned: packetTunnelBundle.map {
-                SignedEntitlements.provisionedAppGroups(of: $0)
-            } ?? []
-        ).filter {
-            FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: $0) != nil
-        }
+            ownSigned: SignedEntitlements.stringArray("com.apple.security.application-groups", of: hostBundle),
+            peerSigned: SignedEntitlements.stringArray("com.apple.security.application-groups", of: packetTunnelBundle),
+            hostConfigured: hostDeclaredGroup, tunnelConfigured: tunnelDeclaredGroup,
+            hostProvisioned: SignedEntitlements.provisionedAppGroups(of: hostBundle),
+            tunnelProvisioned: SignedEntitlements.provisionedAppGroups(of: packetTunnelBundle)
+        )
     }()
 
-    private static let preferredAppGroup: String? = {
-        // Prefer the same group in both bundle declarations, if permitted.
-        let host = hostBundle?.object(forInfoDictionaryKey: "AppGroupIdentifier") as? String
-        let tunnel = packetTunnelBundle?.object(forInfoDictionaryKey: "AppGroupIdentifier") as? String
-        guard let host, host == tunnel, usableAppGroups.contains(host) else { return nil }
-        return host
-    }()
+    private static let usableAppGroups = signedCandidateGroups.filter {
+        FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: $0) != nil
+    }
 
-    /// A selected shared group is validated by containerURL in EACH process.
-    /// With several valid, non-preferred groups, ambiguity is a real error.
+    private static let selectedCandidateGroup: String? = selectDeclaredAppGroup(
+        candidates: signedCandidateGroups,
+        hostConfigured: hostDeclaredGroup,
+        tunnelConfigured: tunnelDeclaredGroup,
+        documentConfigured: documentDeclaredGroup
+    )
+
     public static let resolvedAppGroupID: String? = {
-        if let preferredAppGroup { return preferredAppGroup }
-        return usableAppGroups.count == 1 ? usableAppGroups[0] : nil
+        // A different set of live-accessible groups must never cause the app
+        // and tunnel to pick different containers.
+        guard let group = selectedCandidateGroup, usableAppGroups.contains(group) else { return nil }
+        return group
     }()
 
     public static var appGroupSelectionAmbiguous: Bool {
-        preferredAppGroup == nil && usableAppGroups.count > 1
+        selectedCandidateGroup == nil && signedCandidateGroups.count > 1
     }
 
     /// Non-sensitive diagnostics for GBox/other re-signing tools.
@@ -286,6 +321,9 @@ public enum AppConfiguration {
             "selected:\(ownSources.selectedSource.rawValue) match:\(ownSources.xmlDERMatch.rawValue); " +
             "peerSources=xml:\(peerSources?.xmlStatus.rawValue ?? "unknown")/der:\(peerSources?.derStatus.rawValue ?? "unknown") " +
             "selected:\(peerSources?.selectedSource.rawValue ?? "unknown") match:\(peerSources?.xmlDERMatch.rawValue ?? "unknown"); " +
+            "hostDeclared=\(hostDeclaredGroup ?? "none"); tunnelDeclared=\(tunnelDeclaredGroup ?? "none"); " +
+            "documentDeclaredAuthorized=\(documentDeclaredGroup ?? "none"); " +
+            "candidateGroups=\(signedCandidateGroups.joined(separator: ",")); " +
             "usableGroups=\(usableAppGroups.count); " +
             "resolved=\(resolvedAppGroupID ?? "none"); " +
             "ambiguous=\(appGroupSelectionAmbiguous)"

@@ -12,39 +12,98 @@ enum WidgetAppConfiguration {
         return Bundle.main.object(forInfoDictionaryKey: "BasePackageIdentifier") as? String ?? Bundle.main.bundleIdentifier ?? ""
     }()
 
+    static func candidateAppGroups(
+        ownSigned: [String],
+        peerSigned: [String],
+        hostConfigured: String?,
+        tunnelConfigured: String?,
+        hostProvisioned: [String] = [],
+        tunnelProvisioned: [String] = []
+    ) -> [String] {
+        let own = Set(ownSigned.filter { !$0.isEmpty })
+        let peer = Set(peerSigned.filter { !$0.isEmpty })
+        if !own.isEmpty && !peer.isEmpty {
+            return own.intersection(peer).sorted()
+        }
+        if !own.isEmpty { return own.sorted() }
+        if !peer.isEmpty { return peer.sorted() }
+
+        // DER-only signatures do not give us XML names. Discover candidate
+        // names from the two embedded provisioning profiles, when available.
+        // This does not grant any rights: containerURL remains the gate.
+        let hostNames = Set(hostProvisioned)
+        let tunnelNames = Set(tunnelProvisioned)
+        if !hostNames.isEmpty && !tunnelNames.isEmpty {
+            return hostNames.intersection(tunnelNames).sorted()
+        }
+        if !hostNames.isEmpty { return hostNames.sorted() }
+        if !tunnelNames.isEmpty { return tunnelNames.sorted() }
+
+        // No readable signing metadata. Try a common declared group only,
+        // rather than manufacture an identifier from the signing Team ID.
+        guard let hostConfigured, !hostConfigured.isEmpty,
+              let tunnelConfigured, hostConfigured == tunnelConfigured else {
+            return []
+        }
+        return [hostConfigured]
+    }
+
+    /// Select from the SAME signed candidate set in every process, before the
+    /// process-local container check. Never resolve ambiguous rights by ordering.
+    static func selectDeclaredAppGroup(
+        candidates: [String], hostConfigured: String?, tunnelConfigured: String?,
+        documentConfigured: String?
+    ) -> String? {
+        let candidates = Set(candidates.filter { !$0.isEmpty })
+        if candidates.count == 1 { return candidates.first }
+        if let hostConfigured, hostConfigured == tunnelConfigured,
+           candidates.contains(hostConfigured) { return hostConfigured }
+        let declared = Set([hostConfigured, tunnelConfigured, documentConfigured]
+            .compactMap { $0 }.filter { candidates.contains($0) })
+        return declared.count == 1 ? declared.first : nil
+    }
+
     static let appGroupID: String = {
-        // Same priority as the main app: prefer the build-time group when still
-        // entitled under the current signature, then the intersection of the
-        // host app / packet-tunnel extension signed groups, then the single
-        // remaining usable group. The widget, the app and the tunnel must all
-        // resolve the same group.
-        // DER-only re-signatures can omit the XML slot entirely. Treat
-        // provisioning groups only as candidate *names* and require a live
-        // App Group container to confirm actual entitlement in this process.
-        let ownXML = SignedEntitlements.stringArray("com.apple.security.application-groups")
-        let ownGroups = ownXML.isEmpty
-            ? SignedEntitlements.provisionedAppGroups(of: Bundle.main) : ownXML
-        let peerGroups = peerBundleGroups() ?? []
-        var candidates = ownGroups
-        if !peerGroups.isEmpty {
-            candidates = candidates.isEmpty ? peerGroups
-                : Array(Set(candidates).intersection(Set(peerGroups)))
+        // Mirror the host/tunnel negotiation; the widget may validate only
+        // the selected common group, never independently choose another.
+        var url = Bundle.main.bundleURL
+        while url.pathComponents.count > 1 && url.pathExtension != "app" {
+            url = url.deletingLastPathComponent()
         }
-        if candidates.isEmpty && ownGroups.isEmpty && peerGroups.isEmpty,
-           let preferred = Bundle.main.object(forInfoDictionaryKey: "AppGroupIdentifier") as? String {
-            candidates = [preferred]
-        }
-        let usable = candidates
-            .filter { FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: $0) != nil }
-            .sorted()
-        if let preferred = Bundle.main.object(forInfoDictionaryKey: "AppGroupIdentifier") as? String,
-           !preferred.isEmpty, usable.contains(preferred) {
-            return preferred
-        }
-        if usable.count == 1 {
-            return usable[0]
-        }
-        return ""
+        guard url.pathExtension == "app", let host = Bundle(url: url),
+              let plugins = host.builtInPlugInsURL,
+              let items = try? FileManager.default.contentsOfDirectory(at: plugins, includingPropertiesForKeys: nil)
+        else { return "" }
+        let bundles = items.filter { $0.pathExtension == "appex" }.compactMap { Bundle(url: $0) }
+        guard let tunnel = bundles.first(where: {
+            ($0.infoDictionary?["NSExtension"] as? [String: Any])?["NSExtensionPointIdentifier"] as? String == "com.apple.networkextension.packet-tunnel"
+        }) else { return "" }
+        let hostDeclared = host.object(forInfoDictionaryKey: "AppGroupIdentifier") as? String
+        let tunnelDeclared = tunnel.object(forInfoDictionaryKey: "AppGroupIdentifier") as? String
+        let documents = Set(bundles.compactMap { bundle -> String? in
+            guard let ext = bundle.infoDictionary?["NSExtension"] as? [String: Any],
+                  ext["NSExtensionPointIdentifier"] as? String == "com.apple.fileprovider-nonui",
+                  let group = ext["NSExtensionFileProviderDocumentGroup"] as? String,
+                  SignedEntitlements.stringArray("com.apple.security.application-groups", of: bundle).contains(group)
+            else { return nil }
+            return group
+        })
+        let candidates = candidateAppGroups(
+            ownSigned: SignedEntitlements.stringArray("com.apple.security.application-groups", of: host),
+            peerSigned: SignedEntitlements.stringArray("com.apple.security.application-groups", of: tunnel),
+            hostConfigured: hostDeclared, tunnelConfigured: tunnelDeclared,
+            hostProvisioned: SignedEntitlements.provisionedAppGroups(of: host),
+            tunnelProvisioned: SignedEntitlements.provisionedAppGroups(of: tunnel)
+        )
+        guard let group = selectDeclaredAppGroup(candidates: candidates,
+                    hostConfigured: hostDeclared, tunnelConfigured: tunnelDeclared,
+                    documentConfigured: documents.count == 1 ? documents.first : nil)
+        else { return "" }
+        let own = SignedEntitlements.stringArray("com.apple.security.application-groups")
+        guard own.isEmpty || own.contains(group),
+              FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: group) != nil
+        else { return "" }
+        return group
     }()
 
     static var widgetControlKind: String {
@@ -66,34 +125,6 @@ enum WidgetAppConfiguration {
                   let ext = bundle.infoDictionary?["NSExtension"] as? [String: Any],
                   ext["NSExtensionPointIdentifier"] as? String == "com.apple.networkextension.packet-tunnel" else { continue }
             return bundle.bundleIdentifier
-        }
-        return nil
-    }
-
-    /// Signed app groups of the packet-tunnel extension inside the host app
-    /// (the widget is an .appex inside PlugIns, so the host is reachable by
-    /// walking up the bundle tree).
-    private static func peerBundleGroups() -> [String]? {
-        var url = Bundle.main.bundleURL
-        var hostURL: URL?
-        while url.pathComponents.count > 1 {
-            url = url.deletingLastPathComponent()
-            if url.pathExtension == "app" {
-                hostURL = url
-                break
-            }
-        }
-        guard let hostURL, let plugins = Bundle(url: hostURL)?.builtInPlugInsURL,
-              let items = try? FileManager.default.contentsOfDirectory(at: plugins, includingPropertiesForKeys: nil) else {
-            return nil
-        }
-        for item in items where item.pathExtension == "appex" {
-            guard let info = Bundle(url: item)?.infoDictionary else { continue }
-            guard let ext = info["NSExtension"] as? [String: Any] else { continue }
-            guard ext["NSExtensionPointIdentifier"] as? String == "com.apple.networkextension.packet-tunnel" else { continue }
-            guard let bundle = Bundle(url: item) else { continue }
-            let xml = SignedEntitlements.stringArray("com.apple.security.application-groups", of: bundle)
-            return xml.isEmpty ? SignedEntitlements.provisionedAppGroups(of: bundle) : xml
         }
         return nil
     }

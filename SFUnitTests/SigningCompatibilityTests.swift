@@ -541,3 +541,74 @@ final class VPNStartupWaitPolicyTests: XCTestCase {
         XCTAssertFalse(policy.shouldFail(status: .connected, now: 107.5))
     }
 }
+
+
+final class AppGroupSelectionTests: XCTestCase {
+    func testCommonDeclarationPreservesExistingGroup() {
+        XCTAssertEqual(AppConfiguration.selectDeclaredAppGroup(
+            candidates: ["group.a", "group.b"], hostConfigured: "group.b",
+            tunnelConfigured: "group.b", documentConfigured: "group.a"), "group.b")
+    }
+
+    func testAuthorizedDocumentDeclarationResolvesStaleHostAndTunnel() {
+        XCTAssertEqual(AppConfiguration.selectDeclaredAppGroup(
+            candidates: ["group.a", "group.b"], hostConfigured: "group.stale",
+            tunnelConfigured: "group.stale", documentConfigured: "group.b"), "group.b")
+    }
+
+    func testUniqueValidDeclarationCanResolveOneRewrittenPlist() {
+        XCTAssertEqual(AppConfiguration.selectDeclaredAppGroup(
+            candidates: ["group.b", "group.a"], hostConfigured: "group.stale",
+            tunnelConfigured: "group.a", documentConfigured: nil), "group.a")
+    }
+
+    func testConflictingValidDeclarationsFailClosed() {
+        XCTAssertNil(AppConfiguration.selectDeclaredAppGroup(
+            candidates: ["group.a", "group.b"], hostConfigured: "group.a",
+            tunnelConfigured: "group.b", documentConfigured: "group.b"))
+    }
+
+    func testNoValidDeclarationNeverPicksFirst() {
+        for candidates in [["group.a", "group.b"], ["group.b", "group.a"]] {
+            XCTAssertNil(AppConfiguration.selectDeclaredAppGroup(
+                candidates: candidates, hostConfigured: "group.stale",
+                tunnelConfigured: "group.stale", documentConfigured: nil))
+        }
+    }
+
+    func testOnlyCandidateIsSelectedRegardlessOfStaleDeclaration() {
+        XCTAssertEqual(AppConfiguration.selectDeclaredAppGroup(
+            candidates: ["group.a"], hostConfigured: "group.stale",
+            tunnelConfigured: "group.stale", documentConfigured: nil), "group.a")
+    }
+}
+
+final class VPNPreferencesComparisonTests: XCTestCase {
+    func testEquivalentDefaultRulesDoNotRequireSave() {
+        let a = NEOnDemandRuleConnect()
+        let b = NEOnDemandRuleConnect()
+        a.probeURL = URL(string: "http://captive.apple.com")
+        b.probeURL = a.probeURL
+        XCTAssertTrue(ExtensionProfile.sameOnDemandRules([a], [b]))
+        b.probeURL = URL(string: "https://example.com")
+        XCTAssertFalse(ExtensionProfile.sameOnDemandRules([a], [b]))
+    }
+
+    func testRuleTypeAndOrderRequireSave() {
+        let a = NEOnDemandRuleConnect()
+        let b = NEOnDemandRuleIgnore()
+        XCTAssertFalse(ExtensionProfile.sameOnDemandRules([a], [b]))
+        XCTAssertFalse(ExtensionProfile.sameOnDemandRules([a, b], [b, a]))
+        XCTAssertTrue(ExtensionProfile.sameOnDemandRules([], []))
+    }
+
+    func testEvaluateConnectionRulesCompareActionAndDomains() {
+        let a = NEOnDemandRuleEvaluateConnection()
+        let b = NEOnDemandRuleEvaluateConnection()
+        a.connectionRules = [NEEvaluateConnectionRule(matchDomains: ["example.com"], andAction: .connectIfNeeded)]
+        b.connectionRules = [NEEvaluateConnectionRule(matchDomains: ["example.com"], andAction: .connectIfNeeded)]
+        XCTAssertTrue(ExtensionProfile.sameOnDemandRules([a], [b]))
+        b.connectionRules = [NEEvaluateConnectionRule(matchDomains: ["example.com"], andAction: .neverConnect)]
+        XCTAssertFalse(ExtensionProfile.sameOnDemandRules([a], [b]))
+    }
+}

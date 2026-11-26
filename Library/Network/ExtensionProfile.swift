@@ -184,14 +184,44 @@ public class ExtensionProfile: ObservableObject {
         return [rule]
     }
 
-    private func setOnDemandRules(useDefaultRules: Bool) async {
-        guard let manager else { return }
+    // Compare all fields emitted by OnDemandRule.toNERule(). Unknown rule
+    // classes are conservatively treated as different.
+    nonisolated static func sameOnDemandRules(_ lhs: [NEOnDemandRule], _ rhs: [NEOnDemandRule]) -> Bool {
+        guard lhs.count == rhs.count else { return false }
+        return zip(lhs, rhs).allSatisfy { left, right in
+            guard type(of: left) == type(of: right),
+                  left.action == right.action,
+                  left.interfaceTypeMatch == right.interfaceTypeMatch,
+                  left.ssidMatch == right.ssidMatch,
+                  left.dnsSearchDomainMatch == right.dnsSearchDomainMatch,
+                  left.dnsServerAddressMatch == right.dnsServerAddressMatch,
+                  left.probeURL == right.probeURL else { return false }
+            if let l = left as? NEOnDemandRuleEvaluateConnection,
+               let r = right as? NEOnDemandRuleEvaluateConnection {
+                let lr = l.connectionRules ?? []
+                let rr = r.connectionRules ?? []
+                return lr.count == rr.count && zip(lr, rr).allSatisfy { x, y in
+                    x.action == y.action && x.matchDomains == y.matchDomains &&
+                    x.useDNSServers == y.useDNSServers && x.probeURL == y.probeURL
+                }
+            }
+            return left is NEOnDemandRuleConnect || left is NEOnDemandRuleDisconnect || left is NEOnDemandRuleIgnore
+        }
+    }
+
+    @discardableResult
+    private func setOnDemandRules(useDefaultRules: Bool) async -> Bool {
+        guard let manager else { return false }
+        let desired: [NEOnDemandRule]
         if useDefaultRules {
-            manager.onDemandRules = Self.makeDefaultOnDemandRules()
+            desired = Self.makeDefaultOnDemandRules()
         } else {
             let rules = await SharedPreferences.onDemandRules.get()
-            manager.onDemandRules = rules.isEmpty ? Self.makeDefaultOnDemandRules() : rules.map { $0.toNERule() }
+            desired = rules.isEmpty ? Self.makeDefaultOnDemandRules() : rules.map { $0.toNERule() }
         }
+        guard !Self.sameOnDemandRules(manager.onDemandRules ?? [], desired) else { return false }
+        manager.onDemandRules = desired
+        return true
     }
 
     public func updateOnDemand(enabled: Bool, useDefaultRules: Bool) async throws {
@@ -209,19 +239,29 @@ public class ExtensionProfile: ObservableObject {
         try await manager.saveToPreferences()
     }
 
-    private func applyProtocolConfiguration() async {
+    @discardableResult
+    private func applyProtocolConfiguration() async -> Bool {
         #if !os(tvOS)
-            guard let protocolConfiguration = manager?.protocolConfiguration else { return }
-            protocolConfiguration.includeAllNetworks = await SharedPreferences.includeAllNetworks.get()
-            protocolConfiguration.excludeLocalNetworks = await SharedPreferences.excludeLocalNetworks.get()
-            protocolConfiguration.enforceRoutes = await SharedPreferences.enforceRoutes.get()
+            guard let protocolConfiguration = manager?.protocolConfiguration else { return false }
+            var changed = false
+            func apply(_ keyPath: ReferenceWritableKeyPath<NEVPNProtocol, Bool>, _ value: Bool) {
+                guard protocolConfiguration[keyPath: keyPath] != value else { return }
+                protocolConfiguration[keyPath: keyPath] = value
+                changed = true
+            }
+            apply(\.includeAllNetworks, await SharedPreferences.includeAllNetworks.get())
+            apply(\.excludeLocalNetworks, await SharedPreferences.excludeLocalNetworks.get())
+            apply(\.enforceRoutes, await SharedPreferences.enforceRoutes.get())
             if #available(iOS 16.4, macOS 13.3, *) {
-                protocolConfiguration.excludeAPNs = await SharedPreferences.excludeAPNs.get()
-                protocolConfiguration.excludeCellularServices = await SharedPreferences.excludeCellularServices.get()
+                apply(\.excludeAPNs, await SharedPreferences.excludeAPNs.get())
+                apply(\.excludeCellularServices, await SharedPreferences.excludeCellularServices.get())
             }
             if #available(iOS 17.4, macOS 14.4, *) {
-                protocolConfiguration.excludeDeviceCommunication = await SharedPreferences.excludeDeviceCommunication.get()
+                apply(\.excludeDeviceCommunication, await SharedPreferences.excludeDeviceCommunication.get())
             }
+            return changed
+        #else
+            return false
         #endif
     }
 
@@ -522,32 +562,55 @@ public class ExtensionProfile: ObservableObject {
         try await recorded("vpn.fetchProfile") {
             try await fetchProfile()
         }
-        manager.isEnabled = true
-        let alwaysOn = await SharedPreferences.alwaysOn.get()
-        let onDemandEnabled = await SharedPreferences.onDemandEnabled.get()
-        manager.isOnDemandEnabled = alwaysOn || onDemandEnabled
-        if manager.isOnDemandEnabled {
-            await setOnDemandRules(useDefaultRules: alwaysOn)
-        }
-        if let proto = manager.protocolConfiguration as? NETunnelProviderProtocol {
-            var config = proto.providerConfiguration ?? [:]
-            if config.removeValue(forKey: "wasOnDemandEnabled") != nil {
-                proto.providerConfiguration = config
-            }
-        }
-        try await recorded("vpn.applyProtocolConfiguration") {
-            await applyProtocolConfiguration()
-        }
-        var stage = "saveToPreferences"
+        // Reload the actual preferences before deciding whether to mutate them.
+        // Avoid a needless save/reload cycle at the first start after an IPA update.
+        var stage = "loadFromPreferences"
         do {
-            try await recorded("vpn.saveToPreferences") {
-                try await manager.saveToPreferences()
-            }
-            stage = "loadFromPreferences"
             try await recorded("vpn.loadFromPreferences") {
                 try await manager.loadFromPreferences()
             }
             rebindConnection()
+            var changed = false
+            if !manager.isEnabled {
+                manager.isEnabled = true
+                changed = true
+            }
+            let alwaysOn = await SharedPreferences.alwaysOn.get()
+            let onDemandEnabled = await SharedPreferences.onDemandEnabled.get()
+            let desiredOnDemand = alwaysOn || onDemandEnabled
+            if manager.isOnDemandEnabled != desiredOnDemand {
+                manager.isOnDemandEnabled = desiredOnDemand
+                changed = true
+            }
+            if desiredOnDemand {
+                if await setOnDemandRules(useDefaultRules: alwaysOn) { changed = true }
+            }
+            if let proto = manager.protocolConfiguration as? NETunnelProviderProtocol {
+                var config = proto.providerConfiguration ?? [:]
+                if config.removeValue(forKey: "wasOnDemandEnabled") != nil {
+                    proto.providerConfiguration = config
+                    changed = true
+                }
+            }
+            let protocolChanged = try await recorded("vpn.applyProtocolConfiguration") {
+                await applyProtocolConfiguration()
+            }
+            if protocolChanged { changed = true }
+            if changed {
+                stage = "saveToPreferences"
+                try await recorded("vpn.saveToPreferences") {
+                    try await manager.saveToPreferences()
+                }
+                stage = "loadFromPreferences"
+                try await recorded("vpn.loadFromPreferences") {
+                    try await manager.loadFromPreferences()
+                }
+                rebindConnection()
+            } else {
+                DiagnosticsLog.record("vpn.saveToPreferences.skipped", result: .pass,
+                                      operation: operationID, attempt: attemptID,
+                                      details: "settings unchanged")
+            }
             DiagnosticsLog.record("vpn.rebindConnection", operation: operationID, attempt: attemptID)
             stage = "startVPNTunnel"
             guard let connection else {
@@ -582,11 +645,19 @@ public class ExtensionProfile: ObservableObject {
 
     /// Refresh the widget's desired configuration while the tunnel is stopped.
     /// The extension promotes this snapshot to last-good only after a successful start.
-    public func refreshDesiredStartOptions() async throws {
+    public func refreshDesiredStartOptions(allowDeferredWhenIsolated: Bool = false) async throws {
         guard !isMock else { return }
         // Isolated app storage cannot feed a stopped extension's Control Center
         // start. Never silently claim that the new snapshot is synchronized.
         guard FilePath.hasSharedContainer else {
+            if allowDeferredWhenIsolated {
+                // Validate the effective config including overrides; the next
+                // in-app start passes it directly to the packet tunnel.
+                _ = try await prepareStartOptions()
+                DiagnosticsLog.record("vpn.snapshot.deferred", result: .unknown,
+                                      details: "isolated storage; next in-app start required")
+                return
+            }
             throw NSError(domain: "ExtensionProfile.ConfigSync", code: 1, userInfo: [
                 NSLocalizedDescriptionKey: "Нет общего App Group: нельзя обновить конфигурацию для запуска из Пункта управления при выключенном VPN. Подключите VPN из приложения после изменения настроек."
             ])

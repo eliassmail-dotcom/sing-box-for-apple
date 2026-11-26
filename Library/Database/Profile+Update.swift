@@ -38,6 +38,13 @@ public extension Profile {
     nonisolated func onProfileUpdated() async throws {
         guard await SharedPreferences.selectedProfileID.get() == id else { return }
         guard let profile = try await ExtensionProfile.load() else {
+            #if os(iOS)
+                if !FilePath.hasSharedContainer {
+                    DiagnosticsLog.record("vpn.snapshot.deferred", result: .unknown,
+                                          details: "isolated storage; VPN manager not installed")
+                    return
+                }
+            #endif
             throw NSError(domain: "Profile.Update", code: 1, userInfo: [
                 NSLocalizedDescriptionKey: "VPN manager unavailable while updating the active profile."
             ])
@@ -46,7 +53,11 @@ public extension Profile {
         case .connected:
             try await profile.reloadService()
         case .disconnected, .invalid:
-            try await profile.refreshDesiredStartOptions()
+            #if os(iOS)
+                try await profile.refreshDesiredStartOptions(allowDeferredWhenIsolated: true)
+            #else
+                try await profile.refreshDesiredStartOptions()
+            #endif
         default:
             throw NSError(domain: "Profile.Update", code: 2, userInfo: [
                 NSLocalizedDescriptionKey: "VPN is transitioning; retry profile update after it connects or disconnects."
