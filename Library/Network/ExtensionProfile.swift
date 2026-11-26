@@ -8,6 +8,28 @@ import os
 
 private let logger = Logger(category: "ExtensionProfile")
 
+// Pure observation policy: a transient disconnected status immediately after
+// startVPNTunnel is not a failure. No network or background timer is introduced.
+struct VPNStartupWaitPolicy {
+    private var disconnectedSince: TimeInterval?
+    private var sawProgress = false
+
+    mutating func shouldFail(status: NEVPNStatus, now: TimeInterval) -> Bool {
+        switch status {
+        case .connecting, .reasserting, .connected:
+            sawProgress = true
+            disconnectedSince = nil
+            return false
+        case .disconnected:
+            if disconnectedSince == nil { disconnectedSince = now }
+            return now - (disconnectedSince ?? now) >= (sawProgress ? 0.75 : 6.0)
+        default:
+            disconnectedSince = nil
+            return false
+        }
+    }
+}
+
 @MainActor
 public class ExtensionProfile: ObservableObject {
     public static let controlKind = AppConfiguration.widgetControlKind
@@ -20,6 +42,23 @@ public class ExtensionProfile: ObservableObject {
 
     @Published public var status: NEVPNStatus
     @Published public var connectedDate: Date?
+    @Published public private(set) var isTransitioning = false
+    private static var transitionInProgress = false
+
+    private func beginTransition() throws {
+        guard !Self.transitionInProgress else {
+            throw NSError(domain: "ExtensionProfile.Transition", code: 1, userInfo: [
+                NSLocalizedDescriptionKey: "A VPN start, stop or restart is already in progress."
+            ])
+        }
+        Self.transitionInProgress = true
+        isTransitioning = true
+    }
+
+    private func endTransition() {
+        isTransitioning = false
+        Self.transitionInProgress = false
+    }
 
     public init(_ manager: NEVPNManager) {
         self.manager = manager
@@ -71,10 +110,8 @@ public class ExtensionProfile: ObservableObject {
                 return
             }
             Task { @MainActor in
-                guard let self else {
-                    return
-                }
-                self.connection = connection
+                // Ignore notifications queued before a preferences reload rebound the session.
+                guard let self, self.connection === connection else { return }
                 self.status = connection.status
                 self.connectedDate = connection.connectedDate
                 if connection.status == .disconnected {
@@ -201,6 +238,12 @@ public class ExtensionProfile: ObservableObject {
     }
 
     public func start() async throws {
+        try beginTransition()
+        defer { endTransition() }
+        try await startImpl()
+    }
+
+    private func startImpl() async throws {
         if isMock {
             status = .connecting
             try await Task.sleep(nanoseconds: 500_000_000)
@@ -298,6 +341,7 @@ public class ExtensionProfile: ObservableObject {
             try await awaitConnected(operationID: operationID, attemptID: attemptID)
             return issued ? attemptID : nil
         } catch {
+            if error is CancellationError { throw error }
             let firstError = error as NSError
             DiagnosticsLog.record("vpn.attempt.failed", result: .fail, operation: operationID, attempt: attemptID,
                                   errorDomain: firstError.domain, errorCode: firstError.code)
@@ -318,10 +362,12 @@ public class ExtensionProfile: ObservableObject {
                 DiagnosticsLog.record("vpn.recovery.reload", result: .pass, operation: operationID,
                                        durationMs: Int(Date().timeIntervalSince(reloadBegan) * 1000))
                 // A delayed system On Demand start may have begun in the meantime.
-                if connection?.status == .connected {
+                if connection?.status.isStarted == true {
+                    try await awaitConnected(operationID: operationID, attemptID: nil)
                     DiagnosticsLog.record("vpn.recovery.externalConnected", result: .pass, operation: operationID)
                     return nil
                 }
+                guard connection?.status == .disconnected else { throw error }
                 var retryOptions = options
                 let retryAttemptID = UUID().uuidString
                 retryOptions["diagnosticAttemptID"] = NSString(string: retryAttemptID)
@@ -397,9 +443,11 @@ public class ExtensionProfile: ObservableObject {
 
     // startVPNTunnel returning does not prove that the extension started.
     private func awaitConnected(timeout: TimeInterval = 20, operationID: String?, attemptID: String?) async throws {
-        let deadline = Date().addingTimeInterval(timeout)
+        let deadline = ProcessInfo.processInfo.systemUptime + timeout
         var lastReportedStatus: Int?
-        while Date() < deadline {
+        var observation = VPNStartupWaitPolicy()
+        while ProcessInfo.processInfo.systemUptime < deadline {
+            try Task.checkCancellation()
             guard let connection else {
                 throw NSError(domain: "ExtensionProfile.Start", code: 3, userInfo: [
                     NSLocalizedDescriptionKey: "VPN session was lost during startup."
@@ -413,6 +461,37 @@ public class ExtensionProfile: ObservableObject {
             status = connection.status
             connectedDate = connection.connectedDate
             if connection.status == .connected { return }
+            if connection.status == .invalid {
+                throw NSError(domain: "ExtensionProfile.Start", code: 6, userInfo: [
+                    NSLocalizedDescriptionKey: "VPN configuration became invalid during startup."
+                ])
+            }
+            if observation.shouldFail(status: connection.status, now: ProcessInfo.processInfo.systemUptime) {
+                var disconnectError: NSError?
+                if #available(iOS 16.0, macOS 13.0, tvOS 17.0, *) {
+                    do {
+                        try await connection.fetchLastDisconnectError()
+                    } catch {
+                        disconnectError = error as NSError
+                    }
+                }
+                // The status can change during the asynchronous system query.
+                // Never retry a connection that has started in the meantime.
+                guard self.connection === connection, connection.status == .disconnected else {
+                    observation = VPNStartupWaitPolicy()
+                    continue
+                }
+                DiagnosticsLog.record("vpn.await.disconnected", result: .fail, operation: operationID,
+                                      attempt: attemptID, errorDomain: disconnectError?.domain,
+                                      errorCode: disconnectError?.code,
+                                      details: "stable disconnected before connection")
+                var info: [String: Any] = [
+                    NSLocalizedDescriptionKey: "VPN remained disconnected during startup.",
+                    "VPNStartStage": "awaitConnected"
+                ]
+                if let disconnectError { info[NSUnderlyingErrorKey] = disconnectError }
+                throw NSError(domain: "ExtensionProfile.Start", code: 5, userInfo: info)
+            }
             try await Task.sleep(nanoseconds: 250_000_000)
         }
         let currentStatus = connection?.status.rawValue ?? -1
@@ -645,6 +724,12 @@ public class ExtensionProfile: ObservableObject {
     }
 
     public func stop() async throws {
+        try beginTransition()
+        defer { endTransition() }
+        try await stopImpl()
+    }
+
+    private func stopImpl() async throws {
         if isMock {
             status = .disconnecting
             try await Task.sleep(nanoseconds: 300_000_000)
@@ -673,15 +758,17 @@ public class ExtensionProfile: ObservableObject {
     }
 
     public func restart() async throws {
+        try beginTransition()
+        defer { endTransition() }
         if isMock {
-            try await stop()
-            try await start()
+            try await stopImpl()
+            try await startImpl()
             return
         }
         // Keep old desired/last-good until a new connection is confirmed.
         let expectedDesiredOptions = currentDesiredStartOptionsForWrite()
         let options = try await prepareStartOptions()
-        try await stop()
+        try await stopImpl()
         var waitSeconds = 0
         while status != .disconnected {
             try await Task.sleep(nanoseconds: NSEC_PER_SEC)

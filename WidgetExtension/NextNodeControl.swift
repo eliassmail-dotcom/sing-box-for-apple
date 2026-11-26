@@ -7,11 +7,10 @@ import WidgetKit
 struct NextNodeControl: ControlWidget {
     var body: some ControlWidgetConfiguration {
         StaticControlConfiguration(
-            kind: WidgetAppConfiguration.widgetNextNodeKind
+            kind: "sing-box.lx.control.NextNode.v2"
         ) {
             ControlWidgetButton(action: NextNodeControlIntent()) {
-                Label("Сменить узел", systemImage: "arrow.triangle.2.circlepath")
-                    .controlWidgetActionHint("Сменить узел")
+                Label("Сменить узел", systemImage: "arrow.clockwise")
             }
         }
         .displayName("Сменить узел")
@@ -26,6 +25,8 @@ struct NextNodeControlIntent: AppIntent {
     )
 
     func perform() async throws -> some IntentResult {
+        WidgetTunnelControl.configureDiagnostics()
+        DiagnosticsLog.record("widget.node.entered", result: .unknown)
         do {
             try await WidgetTunnelControl.changeNode()
             DiagnosticsLog.record("widget.node.command", result: .pass)

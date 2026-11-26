@@ -43,8 +43,11 @@ public struct StartStopButton: View {
 
         var body: some View {
             Button {
-                Task {
-                    await switchProfile(!profile.status.isConnected)
+                guard !isStarting, !profile.isTransitioning else { return }
+                let shouldStart = !profile.status.isConnected
+                isStarting = true
+                Task { @MainActor in
+                    await switchProfile(shouldStart)
                 }
             } label: {
                 #if os(iOS)
@@ -86,36 +89,26 @@ public struct StartStopButton: View {
             #if os(iOS)
                 .modifier(PrimaryTintModifier())
             #endif
-                .disabled(!profile.status.isEnabled)
+                .disabled(!profile.status.isEnabled || isStarting || profile.isTransitioning)
                 .alert($alert)
-                .onChangeCompat(of: profile.status) { status in
-                    Task { @MainActor in
-                        if isStarting {
-                            if status == .disconnected {
-                                isStarting = false
-                            } else if status.isConnectedStrict {
-                                isStarting = false
-                                environments.commandClient.connect()
-                            }
-                        }
-                    }
-                }
+
         }
 
-        private nonisolated func switchProfile(_ isEnabled: Bool) async {
+        @MainActor
+        private func switchProfile(_ isEnabled: Bool) async {
+            defer { isStarting = false }
             do {
                 if isEnabled {
-                    await MainActor.run { isStarting = true }
                     try await profile.start()
+                    if profile.status.isConnectedStrict {
+                        environments.connect()
+                    }
                 } else {
                     try await profile.stop()
                 }
             } catch {
-                await MainActor.run {
-                    isStarting = false
-                    let action = isEnabled ? "start service" : "stop service"
-                    alert = AlertState(action: action, error: error)
-                }
+                let action = isEnabled ? "start service" : "stop service"
+                alert = AlertState(action: action, error: error)
             }
         }
     }

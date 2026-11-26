@@ -1,4 +1,5 @@
 import Foundation
+import NetworkExtension
 import XCTest
 @testable import Library
 
@@ -511,4 +512,32 @@ final class SigningCompatibilityTests: XCTestCase {
     }
     #endif
 
+}
+
+
+final class VPNStartupWaitPolicyTests: XCTestCase {
+    func testInitialDisconnectedAllowsGraceThenFails() {
+        var policy = VPNStartupWaitPolicy()
+        XCTAssertFalse(policy.shouldFail(status: .disconnected, now: 100))
+        XCTAssertFalse(policy.shouldFail(status: .disconnected, now: 105.99))
+        XCTAssertTrue(policy.shouldFail(status: .disconnected, now: 106))
+    }
+
+    func testBriefConnectingThenDisconnectedAllowsRecoveryGrace() {
+        var policy = VPNStartupWaitPolicy()
+        XCTAssertFalse(policy.shouldFail(status: .connecting, now: 100))
+        XCTAssertFalse(policy.shouldFail(status: .disconnected, now: 101))
+        XCTAssertFalse(policy.shouldFail(status: .disconnected, now: 101.5))
+        XCTAssertTrue(policy.shouldFail(status: .disconnected, now: 101.75))
+    }
+
+    func testProgressResetsDisconnectedWindow() {
+        var policy = VPNStartupWaitPolicy()
+        XCTAssertFalse(policy.shouldFail(status: .disconnected, now: 100))
+        XCTAssertFalse(policy.shouldFail(status: .connecting, now: 105))
+        XCTAssertFalse(policy.shouldFail(status: .disconnected, now: 106))
+        XCTAssertFalse(policy.shouldFail(status: .connecting, now: 106.5))
+        XCTAssertFalse(policy.shouldFail(status: .disconnected, now: 107))
+        XCTAssertFalse(policy.shouldFail(status: .connected, now: 107.5))
+    }
 }

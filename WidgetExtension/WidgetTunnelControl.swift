@@ -51,10 +51,6 @@ enum WidgetAppConfiguration {
         "\(packageName).widget.ServiceToggle"
     }
 
-    static var widgetNextNodeKind: String {
-        "\(packageName).widget.NextNode"
-    }
-
     /// Locate the actual signed tunnel extension after re-signing.
     static var packetTunnelBundleID: String? {
         var url = Bundle.main.bundleURL
@@ -133,7 +129,7 @@ enum WidgetTunnelControl {
     /// Widget/Control Center process diagnostics. The control is a separate
     /// start path for the tunnel (no app process, snapshot-only options), so
     /// its outcomes must be visible in the shared diagnostics log.
-    private static func configureDiagnostics() {
+    static func configureDiagnostics() {
         let group = WidgetAppConfiguration.appGroupID
         DiagnosticsLog.configureSharedDirectory(
             group.isEmpty ? nil : FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: group)
@@ -220,6 +216,7 @@ enum WidgetTunnelControl {
     /// sendProviderMessage avoids importing Libbox into the widget target,
     /// starting a second VPN session, or modifying subscription settings.
     static func changeNode() async throws {
+        configureDiagnostics()
         guard let manager = try await loadManager(connectedOnly: true) else {
             throw nodeError("Подключённый туннель sing-box не найден")
         }
@@ -232,6 +229,7 @@ enum WidgetTunnelControl {
             "version": 1,
         ])
 
+        DiagnosticsLog.record("widget.node.ipc.send", result: .unknown)
         let response: Data = try await withCheckedThrowingContinuation { continuation in
             do {
                 try session.sendProviderMessage(command) { data in
@@ -246,6 +244,7 @@ enum WidgetTunnelControl {
             }
         }
 
+        DiagnosticsLog.record("widget.node.ipc.reply", result: .pass)
         guard let reply = try JSONSerialization.jsonObject(with: response) as? [String: Any] else {
             throw nodeError("Получен некорректный ответ туннеля")
         }
