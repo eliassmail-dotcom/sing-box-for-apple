@@ -73,27 +73,34 @@ public enum SignedEntitlements {
     /// Prefers the XML blob; falls back to the DER blob when XML is absent,
     /// so a DER-only signature is read rather than reported as "no rights".
     public static func parse(_ data: Data) -> [String: Any]? {
-        var slice = data
-        if let universal = arm64Slice(data) {
-            slice = universal
-        }
+        let slice = arm64Slice(data) ?? data
         if let blob = entitlementsBlob(slice), blob.count > 8,
            let dict = (try? PropertyListSerialization.propertyList(
                from: blob.subdata(in: 8..<blob.count), options: [], format: nil
            )) as? [String: Any] {
             return dict
         }
-        return parseDEREntitlements(data)
+        return derEntitlements(in: slice)
     }
 
     /// Entitlements decoded from the DER blob (slot 7) of a Mach-O image,
     /// or nil when the blob is absent or malformed. Never invents values:
     /// a key the signer did not encode stays absent from the result.
     public static func parseDEREntitlements(_ data: Data) -> [String: Any]? {
-        let slice = arm64Slice(data) ?? data
+        derEntitlements(in: arm64Slice(data) ?? data)
+    }
+
+    private static func derEntitlements(in slice: Data) -> [String: Any]? {
         guard let blob = signatureBlob(slice, slot: 7), // CS_SLOT_DER_ENTITLEMENTS
               blob.count > 8 else { return nil }
-        return derPlist(Array(blob.subdata(in: 8..<blob.count)))
+        guard let canonical = DERPlist.parse(Array(blob.subdata(in: 8..<blob.count))) else {
+            return nil
+        }
+        var result: [String: Any] = [:]
+        for (key, value) in canonical {
+            result[key] = DERPlist.box(value)
+        }
+        return result
     }
 
     /// Semantic comparison of the XML and DER entitlements of a Mach-O image.
@@ -102,24 +109,15 @@ public enum SignedEntitlements {
     public static func xmlDEREntitlementsMatch(_ data: Data) -> Bool? {
         let slice = arm64Slice(data) ?? data
         guard let xmlBlob = entitlementsBlob(slice), xmlBlob.count > 8,
-              let xml = (try? PropertyListSerialization.propertyList(
+              let xmlAny = (try? PropertyListSerialization.propertyList(
                   from: xmlBlob.subdata(in: 8..<xmlBlob.count), options: [], format: nil
               )) as? [String: Any] else { return nil }
-        guard let der = parseDEREntitlements(data) else { return nil }
-        return normalizedPlist(xml) == normalizedPlist(der)
-    }
-
-    /// Round-trips a dictionary through a binary plist so values from
-    /// different decoders (PropertyListSerialization vs DER) compare with
-    /// identical types.
-    private static func normalizedPlist(_ dict: [String: Any]) -> [String: Any] {
-        guard let data = try? PropertyListSerialization.data(
-                fromPropertyList: dict, format: .binary, options: 0),
-              let normalized = (try? PropertyListSerialization.propertyList(
-                  from: data, options: [], format: nil)) as? [String: Any] else {
-            return [:]
+        guard let derBlob = signatureBlob(slice, slot: 7), derBlob.count > 8,
+              let der = DERPlist.parse(Array(derBlob.subdata(in: 8..<derBlob.count))) else {
+            return nil
         }
-        return normalized
+        guard let xml = DERPlist.canonicalize(xmlAny) else { return nil }
+        return xml == der
     }
 
     // MARK: - Apple plist-in-DER entitlements
@@ -129,102 +127,187 @@ public enum SignedEntitlements {
     //  Feather:     root 0x31 [ pair* ]
     //  pair := 0x30 [ key(0x0C string), value ]
     //  value := 0x0C string | 0x01 bool | 0x02 integer | 0x30 array
+    //
+    // The parser is strict: any malformed, truncated, duplicated or unsupported
+    // construct yields nil (UNKNOWN) instead of a partially decoded set of
+    // rights, and bounded work protects the Network Extension process.
 
-    private struct DERRange {
-        let tag: UInt8
-        let start: Int
-        let end: Int
+    /// Typed plist value for lossless comparison of XML and DER decodings.
+    /// Bool and Int are distinct on purpose: `true` must not equal `1`.
+    indirect enum PListValue: Equatable {
+        case string(String)
+        case bool(Bool)
+        case int(Int)
+        case data(Data)
+        case array([PListValue])
+        case dictionary([String: PListValue])
     }
 
-    /// Reads one tag-length-value element at `offset`; long-form lengths supported.
-    private static func derTLV(_ bytes: [UInt8], _ offset: Int) -> DERRange? {
-        guard offset >= 0, offset + 2 <= bytes.count else { return nil }
-        let tag = bytes[offset]
-        var off = offset + 1
-        let first = bytes[off]
-        var length = 0
-        if first < 0x80 {
-            length = Int(first)
-            off += 1
-        } else {
-            let num = Int(first & 0x7f)
-            guard num > 0, num <= 4, off + 1 + num <= bytes.count else { return nil }
-            for i in 0..<num {
-                length = (length << 8) | Int(bytes[off + 1 + i])
-            }
-            off += 1 + num
+    private enum DERPlist {
+        static let maxPayloadBytes = 256 * 1024
+        static let maxElements = 8192
+        static let maxDepth = 16
+
+        struct Range {
+            let tag: UInt8
+            let start: Int
+            let end: Int
         }
-        guard length >= 0, off + length <= bytes.count else { return nil }
-        return DERRange(tag: tag, start: off, end: off + length)
-    }
 
-    private static func derPlist(_ payload: [UInt8]) -> [String: Any]? {
-        guard let root = derTLV(payload, 0) else { return nil }
-        let pairs: [UInt8]
-        switch root.tag {
-        case 0x70: // zsign-class: version integer + dict container
-            var dict: DERRange? = nil
-            var sawVersion = false
-            var off = root.start
-            while off < root.end {
-                guard let member = derTLV(payload, off), member.end <= root.end else { return nil }
-                if member.tag == 0x02, !sawVersion {
-                    sawVersion = true // version, value ignored
-                } else if member.tag == 0xB0, dict == nil {
-                    dict = member
+        struct Decoder {
+            let bytes: [UInt8]
+            var elements = 0
+
+            /// Reads one tag-length-value element fully inside `limit`.
+            mutating func tlv(at offset: Int, limit: Int) -> Range? {
+                guard offset >= 0, offset + 2 <= limit, limit <= bytes.count else { return nil }
+                let tag = bytes[offset]
+                var off = offset + 1
+                let first = bytes[off]
+                var length = 0
+                if first < 0x80 {
+                    length = Int(first)
+                    off += 1
                 } else {
-                    return nil
+                    let num = Int(first & 0x7f)
+                    guard num > 0, num <= 4, off + 1 + num <= limit else { return nil }
+                    for i in 0..<num {
+                        length = (length << 8) | Int(bytes[off + 1 + i])
+                    }
+                    off += 1 + num
                 }
-                off = member.end
+                guard off + length <= limit else { return nil }
+                elements += 1
+                guard elements <= maxElements else { return nil }
+                return Range(tag: tag, start: off, end: off + length)
             }
-            guard let dict else { return nil }
-            pairs = Array(payload[dict.start..<dict.end])
-        case 0x31, 0x30: // Feather: pairs directly under the root
-            pairs = Array(payload[root.start..<root.end])
-        default:
-            return nil
         }
-        var result: [String: Any] = [:]
-        var off = 0
-        while off < pairs.count {
-            guard let pair = derTLV(pairs, off), pair.tag == 0x30 else { return nil }
-            guard let key = derTLV(pairs, pair.start), key.tag == 0x0C,
-                  let keyString = String(bytes: pairs[key.start..<key.end], encoding: .utf8) else {
+
+        /// Boxes a typed value back into the plain plist types used by callers.
+        static func box(_ value: PListValue) -> Any {
+            switch value {
+            case .string(let s): return s
+            case .bool(let b): return b
+            case .int(let i): return i
+            case .data(let d): return d
+            case .array(let items): return items.map { box($0) }
+            case .dictionary(let dict):
+                var result: [String: Any] = [:]
+                for (key, item) in dict { result[key] = box(item) }
+                return result
+            }
+        }
+
+        /// Converts a PropertyListSerialization result into comparable values.
+        /// Returns nil for types with no plist-in-DER representation.
+        static func canonicalize(_ any: [String: Any]) -> [String: PListValue]? {
+            var result: [String: PListValue] = [:]
+            for (key, value) in any {
+                guard let canonical = canonicalize(value) else { return nil }
+                result[key] = canonical
+            }
+            return result
+        }
+
+        private static func canonicalize(_ value: Any) -> PListValue? {
+            switch value {
+            case let v as String:
+                return .string(v)
+            case let v as Data:
+                return .data(v)
+            case let v as [Any]:
+                var items: [PListValue] = []
+                for item in v {
+                    guard let canonical = canonicalize(item) else { return nil }
+                    items.append(canonical)
+                }
+                return .array(items)
+            case let v as [String: Any]:
+                guard let dict = canonicalize(v) else { return nil }
+                return .dictionary(dict)
+            case let v as NSNumber:
+                // A plist bool arrives as an NSNumber backed by CFBoolean;
+                // distinguish it from real numbers so true != 1.
+                if CFGetTypeID(v) == CFBooleanGetTypeID() {
+                    return .bool(v.boolValue)
+                }
+                guard let i = v as? Int else { return nil } // no double support
+                return .int(i)
+            default:
                 return nil
             }
-            if key.end < pair.end, let value = derTLV(pairs, key.end) {
-                result[keyString] = derValue(pairs, value)
-            } else {
-                result[keyString] = nil // key with no value
-            }
-            off = pair.end
         }
-        return result
-    }
 
-    private static func derValue(_ bytes: [UInt8], _ tlv: DERRange) -> Any {
-        switch tlv.tag {
-        case 0x0C:
-            return String(bytes: bytes[tlv.start..<tlv.end], encoding: .utf8) as Any
-        case 0x01:
-            return (tlv.end > tlv.start && bytes[tlv.start] != 0) as Any
-        case 0x02:
-            var value = 0
-            for i in tlv.start..<tlv.end {
-                value = (value << 8) | Int(bytes[i])
+        static func parse(_ payload: [UInt8]) -> [String: PListValue]? {
+            guard payload.count > 0, payload.count <= maxPayloadBytes else { return nil }
+            var decoder = Decoder(bytes: payload)
+            guard let root = decoder.tlv(at: 0, limit: payload.count),
+                  root.end == payload.count else { return nil }
+            let pairs: Range
+            switch root.tag {
+            case 0x70: // zsign-class: version integer + dict container
+                guard let version = decoder.tlv(at: root.start, limit: root.end),
+                      version.tag == 0x02, version.end - version.start == 1,
+                      payload[version.start] == 1 else { return nil }
+                guard let dict = decoder.tlv(at: version.end, limit: root.end),
+                      dict.tag == 0xB0, dict.end == root.end else { return nil }
+                pairs = dict
+            case 0x31, 0x30: // Feather: pairs directly under the root
+                pairs = Range(tag: 0x30, start: root.start, end: root.end)
+            default:
+                return nil
             }
-            return value as Any
-        case 0x30:
-            var items: [Any] = []
-            var off = tlv.start
-            while off < tlv.end {
-                guard let item = derTLV(bytes, off), item.end <= tlv.end else { break }
-                items.append(derValue(bytes, item))
-                off = item.end
+            var result: [String: PListValue] = [:]
+            var off = pairs.start
+            while off < pairs.end {
+                guard let pair = decoder.tlv(at: off, limit: pairs.end),
+                      pair.tag == 0x30 else { return nil }
+                guard let key = decoder.tlv(at: pair.start, limit: pair.end),
+                      key.tag == 0x0C, key.end < pair.end,
+                      let keyString = String(bytes: payload[key.start..<key.end], encoding: .utf8),
+                      result[keyString] == nil else { return nil }
+                guard let valueTLV = decoder.tlv(at: key.end, limit: pair.end),
+                      valueTLV.end == pair.end else { return nil }
+                guard let decoded = value(payload: payload, decoder: &decoder, tlv: valueTLV, depth: 1) else { return nil }
+                result[keyString] = decoded
+                off = pair.end
             }
-            return items as Any
-        default:
-            return Data(bytes[tlv.start..<tlv.end]) as Any
+            return result
+        }
+
+        /// Strict value decoding: rejects unsupported tags, non-canonical
+        /// booleans/integers and arrays that do not fully parse.
+        private static func value(payload: [UInt8], decoder: inout Decoder, tlv: Range, depth: Int) -> PListValue? {
+            guard depth <= maxDepth else { return nil }
+            switch tlv.tag {
+            case 0x0C:
+                guard let string = String(bytes: payload[tlv.start..<tlv.end], encoding: .utf8) else { return nil }
+                return .string(string)
+            case 0x01:
+                guard tlv.end - tlv.start == 1 else { return nil }
+                return .bool(payload[tlv.start] != 0)
+            case 0x02:
+                let length = tlv.end - tlv.start
+                guard length > 0, length <= 8 else { return nil }
+                // Sign-extend from the first byte (DER INTEGER is two's complement).
+                var number = Int(truncatingIfNeeded: Int8(bitPattern: payload[tlv.start]))
+                for i in (tlv.start + 1)..<tlv.end {
+                    number = (number << 8) | Int(payload[i])
+                }
+                return .int(number)
+            case 0x30:
+                var items: [PListValue] = []
+                var off = tlv.start
+                while off < tlv.end {
+                    guard let item = decoder.tlv(at: off, limit: tlv.end) else { return nil }
+                    guard let decoded = value(payload: payload, decoder: &decoder, tlv: item, depth: depth + 1) else { return nil }
+                    items.append(decoded)
+                    off = item.end
+                }
+                return .array(items)
+            default:
+                return nil // unsupported tag: no partial interpretation
+            }
         }
     }
 
