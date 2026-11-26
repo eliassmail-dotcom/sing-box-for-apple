@@ -250,6 +250,100 @@ final class SigningCompatibilityTests: XCTestCase {
         XCTAssertTrue(entitlements.isEmpty)
     }
 
+    // MARK: - Typed entitlement read results (Peer Review №12, D02)
+
+    private func outcomeString(_ result: SignedEntitlements.EntitlementReadResult) -> String {
+        switch result {
+            case .present: return "present"
+            case .absentKey: return "absentKey"
+            case .emptyValue: return "emptyValue"
+            case .unexpectedType: return "unexpectedType"
+            case .unknown: return "unknown"
+        }
+    }
+
+    func testEntitlementReadResultDistinguishesStates() throws {
+        let present = try sampleMachO(xmlDict: ["groups": ["group.a", "group.b"]])
+        if case .present(let value) = SignedEntitlements.stringArrayResult("groups", machO: present) {
+            XCTAssertEqual(value, ["group.a", "group.b"])
+        } else {
+            XCTFail("expected present")
+        }
+
+        let absent = try sampleMachO() // default plist has no "groups" key
+        XCTAssertEqual(outcomeString(SignedEntitlements.stringArrayResult("groups", machO: absent)), "absentKey")
+
+        let empty = try sampleMachO(xmlDict: ["groups": [String]()])
+        XCTAssertEqual(outcomeString(SignedEntitlements.stringArrayResult("groups", machO: empty)), "emptyValue")
+
+        let unexpected = try sampleMachO(xmlDict: ["groups": "not-an-array"])
+        XCTAssertEqual(outcomeString(SignedEntitlements.stringArrayResult("groups", machO: unexpected)), "unexpectedType")
+
+        let unreadable = try sampleMachO(includeXML: false, derPayload: [0x70, 0x81, 0xFF, 0x00])
+        XCTAssertEqual(outcomeString(SignedEntitlements.stringArrayResult("groups", machO: unreadable)), "unknown")
+    }
+
+    func testEntitlementsAreCachedPerExecutable() throws {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("entitlements-cache-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let first = dir.appendingPathComponent("binary-a")
+        try Data(try sampleMachO()).write(to: first)
+        let second = dir.appendingPathComponent("binary-b")
+        try Data(try sampleMachO(xmlDict: ["groups": ["group.other"]])).write(to: second)
+        let missing = dir.appendingPathComponent("binary-missing")
+
+        SignedEntitlements.debugResetCacheForTests()
+        let a1 = SignedEntitlements.loadForTests(executableAt: first)
+        let a2 = SignedEntitlements.loadForTests(executableAt: first)
+        XCTAssertNotNil(a1)
+        XCTAssertEqual(a1?.count, a2?.count)
+        XCTAssertEqual(a1?["com.apple.developer.team-identifier"] as? String, "EXAMPLE1234")
+        XCTAssertEqual(a2?["com.apple.security.application-groups"] as? [String], ["group.example.shared"])
+        XCTAssertEqual(SignedEntitlements.debugParseCount, 1) // second read served from cache
+
+        let b = SignedEntitlements.loadForTests(executableAt: second)
+        XCTAssertEqual((b?["groups"] as? [String]), ["group.other"])
+        XCTAssertEqual(SignedEntitlements.debugParseCount, 2) // different executable parsed again
+
+        XCTAssertNil(SignedEntitlements.loadForTests(executableAt: missing))
+        XCTAssertNil(SignedEntitlements.loadForTests(executableAt: missing))
+        XCTAssertEqual(SignedEntitlements.debugParseCount, 2) // failures cached too, no retry
+    }
+
+    func testSourceDiagnosticsReportBlobStatuses() throws {
+        let equalDER = derTLV(0x31,
+            derPair("com.apple.security.application-groups", derTLV(0x30, derString("group.example.shared")))
+            + derPair("com.apple.developer.team-identifier", derString("EXAMPLE1234"))
+        )
+
+        var d = SignedEntitlements.sourceDiagnostics(machO: try sampleMachO(includeDER: false))
+        XCTAssertEqual(d.xmlStatus, .valid)
+        XCTAssertEqual(d.derStatus, .absent)
+        XCTAssertEqual(d.selectedSource, .xml)
+        XCTAssertEqual(d.xmlDERMatch, .unknown)
+
+        d = SignedEntitlements.sourceDiagnostics(machO: try sampleMachO(derPayload: equalDER))
+        XCTAssertEqual(d.xmlStatus, .valid)
+        XCTAssertEqual(d.derStatus, .valid)
+        XCTAssertEqual(d.selectedSource, .xml)
+        XCTAssertEqual(d.xmlDERMatch, .match)
+
+        d = SignedEntitlements.sourceDiagnostics(machO: try sampleMachO(derPayload: Self.zsignDERFixture))
+        XCTAssertEqual(d.xmlDERMatch, .mismatch)
+
+        d = SignedEntitlements.sourceDiagnostics(machO: try sampleMachO(includeXML: false, derPayload: equalDER))
+        XCTAssertEqual(d.xmlStatus, .absent)
+        XCTAssertEqual(d.derStatus, .valid)
+        XCTAssertEqual(d.selectedSource, .der)
+
+        d = SignedEntitlements.sourceDiagnostics(machO: try sampleMachO(includeXML: false, derPayload: [0x70, 0x81, 0xFF, 0x00]))
+        XCTAssertEqual(d.derStatus, .invalid)
+        XCTAssertEqual(d.selectedSource, .none)
+    }
+
     func testRejectsMalformedSuperblobCount() throws {
         var sample = [UInt8](try sampleMachO())
         // CS_SuperBlob count is at dataoff + 8, not dataoff + 4.

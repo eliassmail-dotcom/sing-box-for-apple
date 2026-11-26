@@ -14,15 +14,58 @@ public enum SignedEntitlements {
 
     /// The value of `key` if it is an array of strings in the signed entitlements.
     public static func stringArray(_ key: String) -> [String] {
-        guard let dict = load() else { return [] }
-        return dict[key] as? [String] ?? []
+        if case .present(let value) = stringArrayResult(key, of: Bundle.main) { return value }
+        return []
+    }
+
+    /// Typed outcome of reading a string-array entitlement: distinguishes a
+    /// missing key, an empty array, an unexpected value type and an unreadable
+    /// signature, so diagnostics never conflate ABSENT with UNKNOWN.
+    public enum EntitlementReadResult {
+        /// Key present with a non-empty array of strings.
+        case present([String])
+        /// Signature decoded, key absent.
+        case absentKey
+        /// Key present with an empty array.
+        case emptyValue
+        /// Key present with a value that is not an array of strings.
+        case unexpectedType
+        /// Signature unreadable (no XML, no valid DER).
+        case unknown
+    }
+
+    /// Typed read of `key` from the current process entitlements.
+    public static func stringArrayResult(_ key: String) -> EntitlementReadResult {
+        stringArrayResult(key, of: Bundle.main)
+    }
+
+    /// Typed read of `key` from the given bundle's signed entitlements.
+    public static func stringArrayResult(_ key: String, of bundle: Bundle) -> EntitlementReadResult {
+        guard let dict = load(of: bundle) else { return .unknown }
+        return stringArrayResult(key, in: dict)
+    }
+
+    /// Typed read of `key` from raw Mach-O image data (unit tests).
+    internal static func stringArrayResult(_ key: String, machO data: Data) -> EntitlementReadResult {
+        guard let dict = parse(data) else { return .unknown }
+        return stringArrayResult(key, in: dict)
+    }
+
+    private static func stringArrayResult(_ key: String, in dict: [String: Any]) -> EntitlementReadResult {
+        guard let any = dict[key] else { return .absentKey }
+        guard let array = any as? [Any] else { return .unexpectedType }
+        var strings: [String] = []
+        for item in array {
+            guard let string = item as? String else { return .unexpectedType }
+            strings.append(string)
+        }
+        return strings.isEmpty ? .emptyValue : .present(strings)
     }
 
     /// Entitlements dictionary of the current process executable, or nil.
     public static func load() -> [String: Any]? {
         guard let url = Bundle.main.executableURL else { return nil }
-        guard let data = try? Data(contentsOf: url) else { return nil }
-        return parse(data)
+        return load(executableAt: url)
     }
 
     /// Entitlements dictionary of the given bundle's executable, or nil.
@@ -30,14 +73,62 @@ public enum SignedEntitlements {
     /// whose signature may come from a different provisioning profile.
     public static func load(of bundle: Bundle) -> [String: Any]? {
         guard let url = bundle.executableURL else { return nil }
-        guard let data = try? Data(contentsOf: url) else { return nil }
-        return parse(data)
+        return load(executableAt: url)
+    }
+
+    // Parsing a Mach-O reads the whole executable, and callers ask for the
+    // same data repeatedly (app group resolution, signing diagnostics, peer
+    // checks). Decoded results are cached per executable; only the decoded
+    // dictionary is retained, never the mapped file data.
+    private static let cacheLock = NSLock()
+    private static var entitlementsCache: [String: [String: Any]?] = [:]
+    private static var sourceDiagnosticsCache: [String: SourceDiagnostics] = [:]
+
+    /// Incremented on every actual executable read+parse (unit tests only).
+    internal static var debugParseCount = 0
+
+    /// Clears the per-executable caches and counters (unit tests only).
+    internal static func debugResetCacheForTests() {
+        cacheLock.lock()
+        entitlementsCache.removeAll()
+        sourceDiagnosticsCache.removeAll()
+        debugParseCount = 0
+        cacheLock.unlock()
+    }
+
+    /// Cached read of an arbitrary executable path (unit tests).
+    internal static func loadForTests(executableAt url: URL) -> [String: Any]? {
+        load(executableAt: url)
+    }
+
+    /// Reads and caches the entitlements of an executable. A failed read is
+    /// cached as nil: a missing or unreadable file is not retried on every call.
+    private static func load(executableAt url: URL) -> [String: Any]? {
+        let cacheKey = url.path
+        cacheLock.lock()
+        if let cached = entitlementsCache[cacheKey] {
+            cacheLock.unlock()
+            return cached
+        }
+        cacheLock.unlock()
+        guard let data = try? Data(contentsOf: url, options: .mappedIfSafe) else {
+            cacheLock.lock()
+            entitlementsCache[cacheKey] = nil
+            cacheLock.unlock()
+            return nil
+        }
+        let result = parse(data)
+        cacheLock.lock()
+        entitlementsCache[cacheKey] = result
+        debugParseCount += 1
+        cacheLock.unlock()
+        return result
     }
 
     /// The value of `key` in the given bundle's signed entitlements.
     public static func stringArray(_ key: String, of bundle: Bundle) -> [String] {
-        guard let dict = load(of: bundle) else { return [] }
-        return dict[key] as? [String] ?? []
+        if case .present(let value) = stringArrayResult(key, of: bundle) { return value }
+        return []
     }
 
     /// The provisioning profile may list App Group identifiers authorized for
@@ -123,6 +214,110 @@ public enum SignedEntitlements {
         }
         guard let xml = DERPlist.canonicalize(xmlAny) else { return nil }
         return xml == der
+    }
+
+    /// Signing-source diagnostics for one executable: which entitlement blobs
+    /// are present and decodable, which source a read would select, and
+    /// whether XML and DER agree semantically. Losslessly typed so it can be
+    /// rendered into a diagnostic report without re-parsing the binaries.
+    public struct SourceDiagnostics: Equatable {
+        public enum BlobStatus: String, Equatable { case absent, valid, invalid }
+        public enum SelectedSource: String, Equatable { case xml, der, none }
+        public enum MatchStatus: String, Equatable { case match, mismatch, unknown }
+        public let xmlStatus: BlobStatus
+        public let derStatus: BlobStatus
+        public let selectedSource: SelectedSource
+        public let xmlDERMatch: MatchStatus
+
+        static let unreadable = SourceDiagnostics(
+            xmlStatus: .absent, derStatus: .absent, selectedSource: .none, xmlDERMatch: .unknown
+        )
+    }
+
+    /// Source diagnostics of the current process executable.
+    public static func sourceDiagnostics() -> SourceDiagnostics {
+        guard let url = Bundle.main.executableURL else { return SourceDiagnostics.unreadable }
+        return sourceDiagnostics(executableAt: url)
+    }
+
+    /// Source diagnostics of the given bundle's executable.
+    public static func sourceDiagnostics(of bundle: Bundle) -> SourceDiagnostics {
+        guard let url = bundle.executableURL else { return SourceDiagnostics.unreadable }
+        return sourceDiagnostics(executableAt: url)
+    }
+
+    /// Source diagnostics of raw Mach-O image data (unit tests).
+    internal static func sourceDiagnostics(machO data: Data) -> SourceDiagnostics {
+        diagnoseSources(of: arm64Slice(data) ?? data)
+    }
+
+    /// Cached per executable, mirroring the entitlements cache.
+    private static func sourceDiagnostics(executableAt url: URL) -> SourceDiagnostics {
+        let cacheKey = url.path
+        cacheLock.lock()
+        if let cached = sourceDiagnosticsCache[cacheKey] {
+            cacheLock.unlock()
+            return cached
+        }
+        cacheLock.unlock()
+        let value: SourceDiagnostics
+        if let data = try? Data(contentsOf: url, options: .mappedIfSafe) {
+            value = diagnoseSources(of: arm64Slice(data) ?? data)
+            cacheLock.lock()
+            debugParseCount += 1
+            cacheLock.unlock()
+        } else {
+            value = SourceDiagnostics.unreadable
+        }
+        cacheLock.lock()
+        sourceDiagnosticsCache[cacheKey] = value
+        cacheLock.unlock()
+        return value
+    }
+
+    /// Inspects the entitlement blobs of an already-sliced Mach-O image.
+    private static func diagnoseSources(of slice: Data) -> SourceDiagnostics {
+        var xml: [String: Any]? = nil
+        let xmlStatus: SourceDiagnostics.BlobStatus
+        if let blob = entitlementsBlob(slice), blob.count > 8 {
+            xml = (try? PropertyListSerialization.propertyList(
+                from: blob.subdata(in: 8..<blob.count), options: [], format: nil
+            )) as? [String: Any]
+            xmlStatus = xml != nil ? .valid : .invalid
+        } else {
+            xmlStatus = .absent
+        }
+        var der: [String: PListValue]? = nil
+        let derStatus: SourceDiagnostics.BlobStatus
+        if let blob = signatureBlob(slice, slot: 7), blob.count > 8 {
+            if blob.count - 8 <= DERPlist.maxPayloadBytes,
+               let parsed = DERPlist.parse(Array(blob.subdata(in: 8..<blob.count))) {
+                der = parsed
+                derStatus = .valid
+            } else {
+                derStatus = .invalid
+            }
+        } else {
+            derStatus = .absent
+        }
+        let selectedSource: SourceDiagnostics.SelectedSource
+        if xmlStatus == .valid {
+            selectedSource = .xml
+        } else if derStatus == .valid {
+            selectedSource = .der
+        } else {
+            selectedSource = .none
+        }
+        let xmlDERMatch: SourceDiagnostics.MatchStatus
+        if let xml, let der, let canonical = DERPlist.canonicalize(xml) {
+            xmlDERMatch = canonical == der ? .match : .mismatch
+        } else {
+            xmlDERMatch = .unknown
+        }
+        return SourceDiagnostics(
+            xmlStatus: xmlStatus, derStatus: derStatus,
+            selectedSource: selectedSource, xmlDERMatch: xmlDERMatch
+        )
     }
 
     // MARK: - Apple plist-in-DER entitlements
