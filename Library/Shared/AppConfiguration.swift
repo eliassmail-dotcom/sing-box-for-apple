@@ -271,13 +271,21 @@ public enum AppConfiguration {
     /// Non-sensitive diagnostics for GBox/other re-signing tools.
     /// Does not claim that the extension can access a container merely because
     /// the host can; the extension repeats the same live access check.
+    /// Includes per-blob source diagnostics so a DER-only or mismatched
+    /// re-signature is visible without re-reading the Mach-O images.
     public static var signingDiagnostics: String {
         let own = SignedEntitlements.stringArray("com.apple.security.application-groups")
         let peer = peerBundle.map {
             SignedEntitlements.stringArray("com.apple.security.application-groups", of: $0)
         } ?? []
+        let ownSources = SignedEntitlements.sourceDiagnostics()
+        let peerSources = peerBundle.map { SignedEntitlements.sourceDiagnostics(of: $0) }
         return "host=\(packageName); tunnel=\(extensionBundleID); " +
             "ownXMLGroups=\(own.count); peerXMLGroups=\(peer.count); " +
+            "ownSources=xml:\(ownSources.xmlStatus.rawValue)/der:\(ownSources.derStatus.rawValue) " +
+            "selected:\(ownSources.selectedSource.rawValue) match:\(ownSources.xmlDERMatch.rawValue); " +
+            "peerSources=xml:\(peerSources.xmlStatus.rawValue)/der:\(peerSources.derStatus.rawValue) " +
+            "selected:\(peerSources.selectedSource.rawValue) match:\(peerSources.xmlDERMatch.rawValue); " +
             "usableGroups=\(usableAppGroups.count); " +
             "resolved=\(resolvedAppGroupID ?? "none"); " +
             "ambiguous=\(appGroupSelectionAmbiguous)"

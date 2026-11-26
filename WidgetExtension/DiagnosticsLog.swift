@@ -221,7 +221,10 @@ public enum DiagnosticsLog {
     }
 
     /// Appends one JSONL line to `<dir>/diagnostics-<process>.jsonl`,
-    /// rotating at the size limit. All failures are silently tolerated.
+    /// rotating at the size limit. FileHandle(forWritingTo:) only opens an
+    /// EXISTING file, so the file is created on first use and after every
+    /// rotation; if rotation fails the event is dropped rather than letting
+    /// the file grow beyond the limit. All failures are silently tolerated.
     private static func appendLine(_ line: Data, directory: URL?) {
         guard let directory else { return }
         do {
@@ -231,8 +234,15 @@ public enum DiagnosticsLog {
             let attributes = try? FileManager.default.attributesOfItem(atPath: file.path)
             let currentSize = (attributes?[.size] as? NSNumber)?.intValue ?? 0
             if currentSize + line.count > maxFileBytes {
-                try? FileManager.default.removeItem(at: rotated)
-                try? FileManager.default.moveItem(at: file, to: rotated)
+                do {
+                    try? FileManager.default.removeItem(at: rotated)
+                    try FileManager.default.moveItem(at: file, to: rotated)
+                } catch {
+                    return // refuse to grow past the budget; drop this event
+                }
+            }
+            if !FileManager.default.fileExists(atPath: file.path) {
+                FileManager.default.createFile(atPath: file.path, contents: nil)
             }
             let handle = try FileHandle(forWritingTo: file)
             defer { try? handle.close() }
@@ -250,7 +260,8 @@ public enum DiagnosticsLog {
             return cached
         }
         lock.unlock()
-        let url = FileManager.default.url(for: .cachesDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
+        // FileManager.url(for:create:) is throwing; the plural variant is not.
+        let url = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first
         lock.lock()
         _localDirectory = url
         lock.unlock()
@@ -293,6 +304,11 @@ public enum DiagnosticsLog {
         for expected in ["APP", "TUNNEL", "FILEPROVIDER"] where !seen.contains(expected) {
             lines.append("UNKNOWN: no \(expected) events - extension diagnostics inaccessible")
         }
+        // WIDGET events only exist when a Control Center control was actually
+        // used; report their absence without implying broken access.
+        if !seen.contains("WIDGET") {
+            lines.append("UNKNOWN: no WIDGET events - Control Center controls not used since last rotation")
+        }
         lines.append("--- events (\(events.count)) ---")
         for event in events {
             lines.append(event.singleLine)
@@ -318,6 +334,9 @@ public enum DiagnosticsLog {
         }
     }
 
+    /// Reads the diagnostics files of `directory`: the active JSONL files and
+    /// their single rotation (.jsonl.1). Invalid or truncated trailing lines
+    /// are skipped, not fatal.
     private static func readEvents(from directory: URL?, allProcesses: Bool) -> [Event] {
         guard let directory else { return [] }
         var events: [Event] = []
@@ -327,7 +346,10 @@ public enum DiagnosticsLog {
         } else {
             names = ["diagnostics-\(process.rawValue).jsonl"]
         }
-        for name in names where name.hasPrefix("diagnostics-") && name.hasSuffix(".jsonl") {
+        for name in names {
+            let isActive = name.hasPrefix("diagnostics-") && name.hasSuffix(".jsonl")
+            let isRotated = name.hasPrefix("diagnostics-") && name.hasSuffix(".jsonl.1")
+            guard isActive || isRotated else { continue }
             for line in (try? String(contentsOf: directory.appendingPathComponent(name), encoding: .utf8))?
                 .split(separator: "\n") ?? [] {
                 if let data = String(line).data(using: .utf8),
@@ -342,8 +364,15 @@ public enum DiagnosticsLog {
     // MARK: - Shared container probe
 
     /// The app writes a marker identifying its launch session into the shared
-    /// container (best effort, ring of the newest 3, no timers).
+    /// container (best effort, ring of the newest 3, no timers). Asynchronous:
+    /// never performs file IO on the caller's thread (didFinishLaunching).
     public static func writeProbeMarker() {
+        queue.async {
+            writeProbeMarkerNow()
+        }
+    }
+
+    private static func writeProbeMarkerNow() {
         let shared = lock.locked { _sharedDirectory }
         guard let shared else { return }
         let marker = ProbeMarker(appSessionID: session, probeID: UUID().uuidString, createdAt: Date().timeIntervalSince1970)
@@ -358,13 +387,22 @@ public enum DiagnosticsLog {
         }
     }
 
-    /// A non-app process verifies that the app container is shared: a marker
-    /// written by the expected app session is a PASS; a marker from another
-    /// (or unknown) app session is a PASS only while it is fresh, because a
-    /// Control Center / On Demand start legitimately happens without the app
-    /// running; a stale or missing marker is UNKNOWN, never silently PASS; a
-    /// confirmed read error is FAIL.
+    /// A non-app process verifies that the app container is shared. Asynchronous:
+    /// directory reads must not sit on the tunnel's startup critical path.
     public static func checkSharedContainerProbe(expectedSession: String?) {
+        queue.async {
+            checkSharedContainerProbeNow(expectedSession: expectedSession)
+        }
+    }
+
+    /// Runs on the diagnostics queue. When the caller knows the expected app
+    /// session (app-initiated start), a marker from ANY other session is
+    /// UNKNOWN regardless of freshness: it does not prove a link to the
+    /// current session. Freshness alone proves only historical availability
+    /// and is a PASS exclusively for external starts (Control Center / On
+    /// Demand), where no app session is expected. A confirmed read error is
+    /// FAIL; a missing directory or stale marker is UNKNOWN.
+    private static func checkSharedContainerProbeNow(expectedSession: String?) {
         let shared = lock.locked { _sharedDirectory }
         guard let shared else {
             record("appgroup.probe", result: .unknown, details: "no shared container in this process")
@@ -388,11 +426,15 @@ public enum DiagnosticsLog {
             return
         }
         let ageSeconds = Int(Date().timeIntervalSince1970 - newest.createdAt)
-        if let expectedSession, newest.appSessionID == expectedSession {
-            record("appgroup.probe", result: .pass, details: "expected app session, age \(ageSeconds)s")
+        if let expectedSession {
+            if newest.appSessionID == expectedSession {
+                record("appgroup.probe", result: .pass, details: "expected app session, age \(ageSeconds)s")
+            } else {
+                record("appgroup.probe", result: .unknown,
+                       details: "marker from another app session, age \(ageSeconds)s")
+            }
         } else if ageSeconds < Int(probeMaxAge) {
-            record("appgroup.probe", result: .pass,
-                   details: "fresh app session marker, age \(ageSeconds)s")
+            record("appgroup.probe", result: .pass, details: "fresh marker (external start), age \(ageSeconds)s")
         } else {
             record("appgroup.probe", result: .unknown, details: "stale marker, age \(ageSeconds)s")
         }

@@ -304,13 +304,24 @@ final class SigningCompatibilityTests: XCTestCase {
         XCTAssertEqual(a2?["com.apple.security.application-groups"] as? [String], ["group.example.shared"])
         XCTAssertEqual(SignedEntitlements.debugParseCount, 1) // second read served from cache
 
+        // Source diagnostics come from the SAME single read, not a second disk access.
+        let diagnostics = SignedEntitlements.sourceDiagnosticsForTests(executableAt: first)
+        XCTAssertEqual(diagnostics.xmlStatus, .valid)
+        XCTAssertEqual(SignedEntitlements.debugParseCount, 1)
+
         let b = SignedEntitlements.loadForTests(executableAt: second)
         XCTAssertEqual((b?["groups"] as? [String]), ["group.other"])
         XCTAssertEqual(SignedEntitlements.debugParseCount, 2) // different executable parsed again
 
+        // Negative caching: a missing executable is attempted once, then served
+        // from the cache (dictionary `[key] = nil` would DELETE the entry, so
+        // the cache stores a typed negative result instead).
         XCTAssertNil(SignedEntitlements.loadForTests(executableAt: missing))
+        XCTAssertEqual(SignedEntitlements.debugParseCount, 3) // failed attempt still counts as a read
         XCTAssertNil(SignedEntitlements.loadForTests(executableAt: missing))
-        XCTAssertEqual(SignedEntitlements.debugParseCount, 2) // failures cached too, no retry
+        XCTAssertEqual(SignedEntitlements.debugParseCount, 3) // no retry
+        XCTAssertEqual(SignedEntitlements.sourceDiagnosticsForTests(executableAt: missing).selectedSource, .none)
+        XCTAssertEqual(SignedEntitlements.debugParseCount, 3) // negative entry serves diagnostics too
     }
 
     func testSourceDiagnosticsReportBlobStatuses() throws {

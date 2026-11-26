@@ -78,20 +78,29 @@ public enum SignedEntitlements {
 
     // Parsing a Mach-O reads the whole executable, and callers ask for the
     // same data repeatedly (app group resolution, signing diagnostics, peer
-    // checks). Decoded results are cached per executable; only the decoded
-    // dictionary is retained, never the mapped file data.
-    private static let cacheLock = NSLock()
-    private static var entitlementsCache: [String: [String: Any]?] = [:]
-    private static var sourceDiagnosticsCache: [String: SourceDiagnostics] = [:]
+    // checks). A single typed cache entry per executable holds BOTH the
+    // decoded entitlements and the source diagnostics, so one disk read
+    // serves every consumer. Failed reads are cached as a negative entry:
+    // `cache[key] = nil` on a Dictionary removes the key instead of storing
+    // nil, so a dedicated entry struct is required. Only decoded values are
+    // retained, never the mapped file data.
+    private struct ExecutableRead {
+        /// Decoded entitlements, or nil when the executable could not be read.
+        let entitlements: [String: Any]?
+        let diagnostics: SourceDiagnostics
+    }
 
-    /// Incremented on every actual executable read+parse (unit tests only).
+    private static let cacheLock = NSLock()
+    private static var readCache: [String: ExecutableRead] = [:]
+
+    /// Incremented on every actual executable disk read (unit tests only),
+    /// including reads that fail: a negative cache entry must not retry.
     internal static var debugParseCount = 0
 
-    /// Clears the per-executable caches and counters (unit tests only).
+    /// Clears the per-executable cache and counter (unit tests only).
     internal static func debugResetCacheForTests() {
         cacheLock.lock()
-        entitlementsCache.removeAll()
-        sourceDiagnosticsCache.removeAll()
+        readCache.removeAll()
         debugParseCount = 0
         cacheLock.unlock()
     }
@@ -101,28 +110,53 @@ public enum SignedEntitlements {
         load(executableAt: url)
     }
 
-    /// Reads and caches the entitlements of an executable. A failed read is
-    /// cached as nil: a missing or unreadable file is not retried on every call.
+    /// Cached source diagnostics of an arbitrary executable path (unit tests).
+    internal static func sourceDiagnosticsForTests(executableAt url: URL) -> SourceDiagnostics {
+        sourceDiagnostics(executableAt: url)
+    }
+
+    /// Cached read of an executable: entitlements and source diagnostics from
+    /// a single file access. A missing or unreadable file is cached as a
+    /// negative entry and never retried.
     private static func load(executableAt url: URL) -> [String: Any]? {
+        cachedRead(executableAt: url).entitlements
+    }
+
+    /// The single disk-read path behind the entitlements and diagnostics APIs.
+    private static func cachedRead(executableAt url: URL) -> ExecutableRead {
         let cacheKey = url.path
         cacheLock.lock()
-        if let cached = entitlementsCache[cacheKey] {
+        if let cached = readCache[cacheKey] {
             cacheLock.unlock()
             return cached
         }
         cacheLock.unlock()
-        guard let data = try? Data(contentsOf: url, options: .mappedIfSafe) else {
-            cacheLock.lock()
-            entitlementsCache[cacheKey] = nil
-            cacheLock.unlock()
-            return nil
+        let entry: ExecutableRead
+        if let data = try? Data(contentsOf: url, options: .mappedIfSafe) {
+            let slice = arm64Slice(data) ?? data
+            entry = ExecutableRead(
+                entitlements: parseFromSlice(slice),
+                diagnostics: diagnoseSources(of: slice)
+            )
+        } else {
+            entry = ExecutableRead(entitlements: nil, diagnostics: SourceDiagnostics.unreadable)
         }
-        let result = parse(data)
         cacheLock.lock()
-        entitlementsCache[cacheKey] = result
+        readCache[cacheKey] = entry
         debugParseCount += 1
         cacheLock.unlock()
-        return result
+        return entry
+    }
+
+    /// Entitlements of an already-sliced Mach-O image (XML preferred, DER fallback).
+    private static func parseFromSlice(_ slice: Data) -> [String: Any]? {
+        if let blob = entitlementsBlob(slice), blob.count > 8,
+           let dict = (try? PropertyListSerialization.propertyList(
+               from: blob.subdata(in: 8..<blob.count), options: [], format: nil
+           )) as? [String: Any] {
+            return dict
+        }
+        return derEntitlements(in: slice)
     }
 
     /// The value of `key` in the given bundle's signed entitlements.
@@ -251,28 +285,10 @@ public enum SignedEntitlements {
         diagnoseSources(of: arm64Slice(data) ?? data)
     }
 
-    /// Cached per executable, mirroring the entitlements cache.
+    /// Cached per executable through the same single-read cache as the
+    /// entitlements: one disk access fills both.
     private static func sourceDiagnostics(executableAt url: URL) -> SourceDiagnostics {
-        let cacheKey = url.path
-        cacheLock.lock()
-        if let cached = sourceDiagnosticsCache[cacheKey] {
-            cacheLock.unlock()
-            return cached
-        }
-        cacheLock.unlock()
-        let value: SourceDiagnostics
-        if let data = try? Data(contentsOf: url, options: .mappedIfSafe) {
-            value = diagnoseSources(of: arm64Slice(data) ?? data)
-            cacheLock.lock()
-            debugParseCount += 1
-            cacheLock.unlock()
-        } else {
-            value = SourceDiagnostics.unreadable
-        }
-        cacheLock.lock()
-        sourceDiagnosticsCache[cacheKey] = value
-        cacheLock.unlock()
-        return value
+        cachedRead(executableAt: url).diagnostics
     }
 
     /// Inspects the entitlement blobs of an already-sliced Mach-O image.

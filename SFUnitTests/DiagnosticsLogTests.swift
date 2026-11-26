@@ -33,6 +33,11 @@ final class DiagnosticsLogTests: XCTestCase {
         DiagnosticsLog.record("unit.b", result: .fail, errorDomain: "TestDomain", errorCode: 42)
         DiagnosticsLog.flushForTests()
 
+        // FileHandle(forWritingTo:) does not create files: the diagnostics
+        // file must be created on first use or every event is silently lost.
+        let file = dir.appendingPathComponent("diagnostics-APP.jsonl")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: file.path))
+
         let events = DiagnosticsLog.collectEvents()
         let stages = events.map(\.stage)
         XCTAssertTrue(stages.contains("unit.a"))
@@ -46,6 +51,37 @@ final class DiagnosticsLogTests: XCTestCase {
         // Every event belongs to the same launch session and carries an id.
         XCTAssertEqual(Set(events.map(\.session)).count, 1)
         XCTAssertEqual(Set(events.map(\.id)).count, events.count)
+    }
+
+    /// Correlation identifiers survive the JSONL round trip, so an APP event
+    /// can be matched with its TUNNEL counterpart across processes.
+    func testOperationAndAttemptIdentifiersRoundTrip() {
+        let dir = temporaryDirectory()
+        DiagnosticsLog.configureLocalDirectoryForTests(dir)
+
+        DiagnosticsLog.record("unit.correlation", result: .pass,
+                               operation: "op-1234", attempt: "att-5678")
+        DiagnosticsLog.flushForTests()
+
+        let event = DiagnosticsLog.collectEvents().first(where: { $0.stage == "unit.correlation" })
+        XCTAssertEqual(event?.operation, "op-1234")
+        XCTAssertEqual(event?.attempt, "att-5678")
+    }
+
+    /// Rotated files (.jsonl.1) must still be read: otherwise every rotation
+    /// would silently discard the previous window of events.
+    func testRotatedFileIsStillCollected() throws {
+        let dir = temporaryDirectory()
+        DiagnosticsLog.configureLocalDirectoryForTests(dir)
+
+        let rotated = dir.appendingPathComponent("diagnostics-APP.jsonl.1")
+        let record = """
+            {"id":"rotated-1","ts":1,"process":"APP","session":"old","operation":null,"attempt":null,"stage":"unit.rotated","result":"PASS","errorDomain":null,"errorCode":null,"durationMs":null,"details":null}
+            """
+        try Data((record + "\n").utf8).write(to: rotated)
+
+        let stages = DiagnosticsLog.collectEvents().map(\.stage)
+        XCTAssertTrue(stages.contains("unit.rotated"))
     }
 
     func testExportReportRendersUnknownSectionsForMissingProcesses() {
@@ -89,12 +125,34 @@ final class DiagnosticsLogTests: XCTestCase {
         let shared = temporaryDirectory()
         DiagnosticsLog.configureSharedDirectory(shared)
         DiagnosticsLog.writeProbeMarker()
+        DiagnosticsLog.flushForTests() // marker write is asynchronous
 
         DiagnosticsLog.checkSharedContainerProbe(expectedSession: nil)
         DiagnosticsLog.flushForTests()
 
         let probe = DiagnosticsLog.collectEvents().first(where: { $0.stage == "appgroup.probe" })
         XCTAssertEqual(probe?.result, "PASS")
+    }
+
+    /// A fresh marker from ANOTHER app session must not confirm the link to
+    /// the expected session: with a known expectedSession only an exact match
+    /// is a PASS, regardless of marker freshness.
+    func testForeignFreshMarkerWithExpectedSessionIsUnknown() {
+        let shared = temporaryDirectory()
+        DiagnosticsLog.configureSharedDirectory(shared)
+
+        let probeDir = shared.appendingPathComponent("Probes", isDirectory: true)
+        try? FileManager.default.createDirectory(at: probeDir, withIntermediateDirectories: true)
+        let foreign = """
+            {"appSessionID":"someone-else","probeID":"p2","createdAt":\(Date().timeIntervalSince1970 - 60)}
+            """
+        try? Data(foreign.utf8).write(to: probeDir.appendingPathComponent("probe-foreign.json"))
+
+        DiagnosticsLog.checkSharedContainerProbe(expectedSession: "my-session")
+        DiagnosticsLog.flushForTests()
+
+        let probe = DiagnosticsLog.collectEvents().first(where: { $0.stage == "appgroup.probe" })
+        XCTAssertEqual(probe?.result, "UNKNOWN")
     }
 
     func testStaleProbeMarkerIsUnknownNotPass() {
@@ -141,10 +199,15 @@ final class DiagnosticsLogTests: XCTestCase {
         }
         DiagnosticsLog.flushForTests()
 
+        // A missing file reports size 0 and would trivially "pass"; require
+        // the active file to actually exist before checking the budget.
         let file = dir.appendingPathComponent("diagnostics-APP.jsonl")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: file.path))
         let attributes = try? FileManager.default.attributesOfItem(atPath: file.path)
         let size = (attributes?[.size] as? NSNumber)?.intValue ?? 0
         XCTAssertLessThanOrEqual(size, 260_000)
+        // The rotated window is kept readable, not deleted.
+        XCTAssertTrue(DiagnosticsLog.collectEvents().isEmpty == false)
     }
 
     func testExportWritesReportFileIntoDocuments() {

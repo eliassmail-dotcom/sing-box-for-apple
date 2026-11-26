@@ -132,9 +132,9 @@ open class ExtensionProvider: NEPacketTunnelProvider {
         }
     }
 
-    private func resolveStartOptions(_ startOptions: [String: NSObject]?) throws -> [String: NSObject] {
+    private func resolveStartOptions(_ startOptions: [String: NSObject]?, operationID: String?, attemptID: String?) throws -> [String: NSObject] {
         if let startOptions, startOptions["configContent"] as? String != nil {
-            DiagnosticsLog.record("tunnel.options.resolved", result: .pass, details: "source=passed")
+            DiagnosticsLog.record("tunnel.options.resolved", result: .pass, operation: operationID, attempt: attemptID, details: "source=passed")
             return startOptions
         }
         // The desired snapshot is refreshed by the app whenever the selected
@@ -143,36 +143,38 @@ open class ExtensionProvider: NEPacketTunnelProvider {
         if let desired = try? loadPersistedStartOptions() {
             do {
                 try validateStartOptions(desired)
-                DiagnosticsLog.record("tunnel.options.resolved", result: .pass, details: "source=desiredSnapshot")
+                DiagnosticsLog.record("tunnel.options.resolved", result: .pass, operation: operationID, attempt: attemptID, details: "source=desiredSnapshot")
                 return desired
             } catch {
-                DiagnosticsLog.record("tunnel.options.rejected", result: .fail,
-                                       details: "source=desiredSnapshot reason=\(error.localizedDescription)")
+                let nsError = error as NSError
+                DiagnosticsLog.record("tunnel.options.rejected", result: .fail, operation: operationID, attempt: attemptID,
+                                       errorDomain: nsError.domain, errorCode: nsError.code, details: "source=desiredSnapshot")
                 Self.logger.error("Desired start snapshot rejected: \(error.localizedDescription)")
             }
         } else {
-            DiagnosticsLog.record("tunnel.options.rejected", result: .unknown, details: "source=desiredSnapshot missing")
+            DiagnosticsLog.record("tunnel.options.rejected", result: .unknown, operation: operationID, attempt: attemptID, details: "source=desiredSnapshot missing")
         }
         if let lastGood = try? loadLastGoodStartOptions() {
             do {
                 try validateStartOptions(lastGood)
-                DiagnosticsLog.record("tunnel.options.resolved", result: .pass, details: "source=lastGoodSnapshot")
+                DiagnosticsLog.record("tunnel.options.resolved", result: .pass, operation: operationID, attempt: attemptID, details: "source=lastGoodSnapshot")
                 return lastGood
             } catch {
-                DiagnosticsLog.record("tunnel.options.rejected", result: .fail,
-                                       details: "source=lastGoodSnapshot reason=\(error.localizedDescription)")
+                let nsError = error as NSError
+                DiagnosticsLog.record("tunnel.options.rejected", result: .fail, operation: operationID, attempt: attemptID,
+                                       errorDomain: nsError.domain, errorCode: nsError.code, details: "source=lastGoodSnapshot")
                 throw error
             }
         }
         #if os(iOS)
             if !FilePath.hasSharedContainer {
-                DiagnosticsLog.record("tunnel.options.resolved", result: .fail, details: "source=none isolatedMode")
+                DiagnosticsLog.record("tunnel.options.resolved", result: .fail, operation: operationID, attempt: attemptID, details: "source=none isolatedMode")
                 throw ExtensionStartupError(
                     "(packet-tunnel) error: no saved configuration in isolated mode. Open the app and start VPN once from Dashboard before using Control Center or On Demand."
                 )
             }
         #endif
-        DiagnosticsLog.record("tunnel.options.resolved", result: .fail, details: "source=none")
+        DiagnosticsLog.record("tunnel.options.resolved", result: .fail, operation: operationID, attempt: attemptID, details: "source=none")
         throw ExtensionStartupError("(packet-tunnel) error: missing valid start options")
     }
 
@@ -202,33 +204,37 @@ open class ExtensionProvider: NEPacketTunnelProvider {
     }
 
     override open func startTunnel(options startOptions: [String: NSObject]?) async throws {
-        // Diagnostics are configured before anything else so that every later
-        // failure is attributable. The tunnel may be started by the app (with
-        // diagnostic identifiers in the options) or externally (Control Center
-        // control, On Demand) with snapshot-only options; both paths are visible.
+        // Record the entry FIRST, before any App Group resolution: diagnostics
+        // must not change when the tunnel's startup path first resolves the
+        // group. The tunnel may be started by the app (with diagnostic
+        // identifiers in the options) or externally (Control Center control,
+        // On Demand) with snapshot-only options; both paths are visible.
         let tunnelStartBegan = Date()
+        let operationID = startOptions?["diagnosticOperationID"] as? String
+        let attemptID = startOptions?["diagnosticAttemptID"] as? String
+        DiagnosticsLog.record("tunnel.start.entered", operation: operationID, attempt: attemptID,
+                            details: "origin=\(operationID != nil ? "app" : "external")")
         DiagnosticsLog.configureSharedDirectory(FilePath.hasSharedContainer ? FilePath.sharedDirectory : nil)
         DiagnosticsLog.record("appgroup.access",
-                                   result: FilePath.hasSharedContainer ? .pass : .fail,
-                                   details: AppConfiguration.signingDiagnostics)
-        let operationID = startOptions?["diagnosticOperationID"] as? String
-        DiagnosticsLog.record("tunnel.start.entered", operation: operationID,
-                                   details: "origin=\(operationID != nil ? "app" : "external") container=\(FilePath.hasSharedContainer)")
+                            result: FilePath.hasSharedContainer ? .pass : .fail,
+                            details: AppConfiguration.signingDiagnostics)
+        // Probe IO runs on the diagnostics queue, never on this critical path.
         DiagnosticsLog.checkSharedContainerProbe(expectedSession: startOptions?["diagnosticSessionID"] as? String)
         do {
-            try await startTunnelBody(startOptions)
+            try await startTunnelBody(startOptions, operationID: operationID, attemptID: attemptID)
             DiagnosticsLog.record("tunnel.start.completed", result: .pass, operation: operationID,
-                                      durationMs: Int(Date().timeIntervalSince(tunnelStartBegan) * 1000))
+                                attempt: attemptID,
+                                durationMs: Int(Date().timeIntervalSince(tunnelStartBegan) * 1000))
         } catch {
             let nsError = error as NSError
             DiagnosticsLog.record("tunnel.start.failed", result: .fail, operation: operationID,
-                                    errorDomain: nsError.domain, errorCode: nsError.code,
-                                    details: String(describing: nsError.localizedDescription))
+                                attempt: attemptID,
+                                errorDomain: nsError.domain, errorCode: nsError.code)
             throw error
         }
     }
 
-    private func startTunnelBody(_ startOptions: [String: NSObject]?) async throws {
+    private func startTunnelBody(_ startOptions: [String: NSObject]?, operationID: String?, attemptID: String?) async throws {
         #if os(iOS)
             Self.logger.info("Packet Tunnel startTunnel entered")
             // The validated config is supplied by the containing app through
@@ -273,9 +279,25 @@ open class ExtensionProvider: NEPacketTunnelProvider {
             }
         #endif
 
-        let effectiveOptions = try resolveStartOptions(startOptions)
-        try validateStartOptions(effectiveOptions)
-        try applyStartOptions(effectiveOptions)
+        let effectiveOptions = try resolveStartOptions(startOptions, operationID: operationID, attemptID: attemptID)
+        do {
+            try validateStartOptions(effectiveOptions)
+            DiagnosticsLog.record("tunnel.options.validated", result: .pass, operation: operationID, attempt: attemptID)
+        } catch {
+            let nsError = error as NSError
+            DiagnosticsLog.record("tunnel.options.validated", result: .fail, operation: operationID, attempt: attemptID,
+                                   errorDomain: nsError.domain, errorCode: nsError.code)
+            throw error
+        }
+        do {
+            try applyStartOptions(effectiveOptions)
+            DiagnosticsLog.record("tunnel.options.applied", result: .pass, operation: operationID, attempt: attemptID)
+        } catch {
+            let nsError = error as NSError
+            DiagnosticsLog.record("tunnel.options.applied", result: .fail, operation: operationID, attempt: attemptID,
+                                   errorDomain: nsError.domain, errorCode: nsError.code)
+            throw error
+        }
         let options = LibboxSetupOptions()
         options.basePath = basePath
         options.workingPath = workingPath
@@ -329,19 +351,29 @@ open class ExtensionProvider: NEPacketTunnelProvider {
         var setupError: NSError?
         LibboxSetup(options, &setupError)
         if let setupError {
+            DiagnosticsLog.record("tunnel.libbox.setup", result: .fail, operation: operationID, attempt: attemptID,
+                                   errorDomain: setupError.domain, errorCode: setupError.code)
             throw ExtensionStartupError("(packet-tunnel) error: setup service: \(setupError.localizedDescription)")
         }
+        DiagnosticsLog.record("tunnel.libbox.setup", result: .pass, operation: operationID, attempt: attemptID)
         LibboxPromoteOOMDraft()
         LibboxDiscardPowerReportDraft()
 
         var error: NSError?
         commandServer = LibboxNewCommandServer(platformInterface, platformInterface, &error)
         if let error {
+            DiagnosticsLog.record("tunnel.command.create", result: .fail, operation: operationID, attempt: attemptID,
+                                   errorDomain: error.domain, errorCode: error.code)
             throw ExtensionStartupError("(packet-tunnel): create command server error: \(error.localizedDescription)")
         }
+        DiagnosticsLog.record("tunnel.command.create", result: .pass, operation: operationID, attempt: attemptID)
         do {
             try commandServer!.start()
+            DiagnosticsLog.record("tunnel.command.start", result: .pass, operation: operationID, attempt: attemptID)
         } catch {
+            let nsError = error as NSError
+            DiagnosticsLog.record("tunnel.command.start", result: .fail, operation: operationID, attempt: attemptID,
+                                   errorDomain: nsError.domain, errorCode: nsError.code)
             throw ExtensionStartupError("(packet-tunnel): start command server error: \(error.localizedDescription)")
         }
 
@@ -354,8 +386,14 @@ open class ExtensionProvider: NEPacketTunnelProvider {
         #endif
 
         do {
+            let serviceBegan = Date()
             try await startService()
+            DiagnosticsLog.record("tunnel.service.start", result: .pass, operation: operationID, attempt: attemptID,
+                                   durationMs: Int(Date().timeIntervalSince(serviceBegan) * 1000))
         } catch {
+            let nsError = error as NSError
+            DiagnosticsLog.record("tunnel.service.start", result: .fail, operation: operationID, attempt: attemptID,
+                                   errorDomain: nsError.domain, errorCode: nsError.code)
             #if os(macOS)
                 if Variant.useSystemExtension {
                     xpcService.markServiceNotReady(error)

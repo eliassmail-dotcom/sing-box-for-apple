@@ -46,6 +46,7 @@ public struct DiagnosticsExportButton: View {
 
     private func export() {
         let header = [
+            "version: \(Bundle.application.version) build \(Bundle.application.versionNumber)",
             "signing: \(AppConfiguration.signingDiagnostics)",
             "process: \(DiagnosticsLog.process.rawValue)",
         ]
