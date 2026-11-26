@@ -16,12 +16,44 @@ final class SigningCompatibilityTests: XCTestCase {
         bytes[offset + 3] = UInt8((value >> 24) & 255)
     }
 
+    // Minimal DER builders for the plist-in-DER dialects the parser supports.
+
+    private func derLength(_ length: Int) -> [UInt8] {
+        if length < 0x80 { return [UInt8(length)] }
+        var magnitude = length
+        var bytes: [UInt8] = []
+        while magnitude > 0 {
+            bytes.insert(UInt8(magnitude & 0xFF), at: 0)
+            magnitude >>= 8
+        }
+        return [UInt8(0x80 | bytes.count)] + bytes
+    }
+
+    private func derTLV(_ tag: UInt8, _ content: [UInt8]) -> [UInt8] {
+        [tag] + derLength(content.count) + content
+    }
+
+    private func derString(_ string: String) -> [UInt8] {
+        derTLV(0x0C, Array(string.utf8))
+    }
+
+    private func derPair(_ key: String, _ value: [UInt8]) -> [UInt8] {
+        derTLV(0x30, derString(key) + value)
+    }
+
     private func sampleMachO(includeXML: Bool = true, includeDER: Bool = true,
+                              xmlDict: [String: Any]? = nil,
+                              xmlPayload: [UInt8]? = nil,
                               derPayload: [UInt8]? = nil) throws -> Data {
-        let plist = try PropertyListSerialization.data(fromPropertyList: [
-            "com.apple.security.application-groups": ["group.example.shared"],
-            "com.apple.developer.team-identifier": "EXAMPLE1234",
-        ], format: .xml, options: 0)
+        let plist: Data
+        if let raw = xmlPayload {
+            plist = Data(raw)
+        } else {
+            plist = try PropertyListSerialization.data(fromPropertyList: xmlDict ?? [
+                "com.apple.security.application-groups": ["group.example.shared"],
+                "com.apple.developer.team-identifier": "EXAMPLE1234",
+            ], format: .xml, options: 0)
+        }
         let xml = big(0xfade7171) + big(UInt32(8 + plist.count)) + Array(plist)
         let derBody = derPayload ?? [UInt8(0x30), UInt8(0x00)]
         let der = big(0xfade7172) + big(UInt32(8 + derBody.count)) + derBody
@@ -130,6 +162,92 @@ final class SigningCompatibilityTests: XCTestCase {
     func testMalformedDERBlobYieldsNoEntitlements() throws {
         let sample = try sampleMachO(includeXML: false, derPayload: [0x70, 0x81, 0xFF, 0x00])
         XCTAssertNil(SignedEntitlements.parse(sample))
+    }
+
+    // MARK: - DER edge cases (Peer Review №8, R4)
+
+    func testEquivalentXMLAndDERCompareEqual() throws {
+        let der = derTLV(0x31,
+            derPair("com.apple.security.application-groups", derTLV(0x30, derString("group.example.shared")))
+            + derPair("com.apple.developer.team-identifier", derString("EXAMPLE1234"))
+        )
+        let sample = try sampleMachO(derPayload: der)
+        XCTAssertEqual(SignedEntitlements.xmlDEREntitlementsMatch(sample), true)
+    }
+
+    func testBooleanTrueIsNotIntegerOne() throws {
+        // XML encodes Bool true; DER encodes INTEGER 1: the comparison must be false.
+        let der = derTLV(0x31, derPair("flag", derTLV(0x02, [0x01])))
+        let sample = try sampleMachO(xmlDict: ["flag": true], derPayload: der)
+        XCTAssertEqual(SignedEntitlements.xmlDEREntitlementsMatch(sample), false)
+    }
+
+    func testCorruptXMLFallsBackToValidDER() throws {
+        let sample = try sampleMachO(xmlPayload: Array("not a plist".utf8),
+                                     derPayload: Self.zsignDERFixture)
+        let entitlements = try XCTUnwrap(SignedEntitlements.parse(sample))
+        XCTAssertEqual(entitlements["com.apple.developer.team-identifier"] as? String,
+                       "AXSTP35NFJ")
+    }
+
+    func testDuplicateKeyYieldsNoEntitlements() throws {
+        let der = derTLV(0x31,
+            derPair("k", derTLV(0x01, [0x00])) + derPair("k", derTLV(0x01, [0x00])))
+        let sample = try sampleMachO(includeXML: false, derPayload: der)
+        XCTAssertNil(SignedEntitlements.parse(sample))
+    }
+
+    func testTruncatedArrayYieldsNoEntitlements() throws {
+        // Array claims 5 content bytes but the pair only carries 2.
+        let truncatedArray: [UInt8] = [0x30, 0x05, 0x0C, 0x01]
+        let der = derTLV(0x31, derPair("groups", truncatedArray))
+        let sample = try sampleMachO(includeXML: false, derPayload: der)
+        XCTAssertNil(SignedEntitlements.parse(sample))
+    }
+
+    func testUnknownValueTagYieldsNoEntitlements() throws {
+        let der = derTLV(0x31, derPair("k", derTLV(0x55, [0x01])))
+        let sample = try sampleMachO(includeXML: false, derPayload: der)
+        XCTAssertNil(SignedEntitlements.parse(sample))
+    }
+
+    func testNegativeIntegerIsSignExtended() throws {
+        // Two-byte DER INTEGER 0xFF0B is -245 in two's complement.
+        let der = derTLV(0x31, derPair("n", derTLV(0x02, [0xFF, 0x0B])))
+        let sample = try sampleMachO(includeXML: false, derPayload: der)
+        let entitlements = try XCTUnwrap(SignedEntitlements.parse(sample))
+        XCTAssertEqual(entitlements["n"] as? Int, -245)
+    }
+
+    func testExcessiveNestingDepthYieldsNoEntitlements() throws {
+        var value = derString("x")
+        for _ in 0..<20 { value = derTLV(0x30, value) }
+        let der = derTLV(0x31, derPair("nested", value))
+        let sample = try sampleMachO(includeXML: false, derPayload: der)
+        XCTAssertNil(SignedEntitlements.parse(sample))
+    }
+
+    func testOversizedDERPayloadYieldsNoEntitlements() throws {
+        let der = derTLV(0x31, [UInt8](repeating: 0, count: 256 * 1024 + 16))
+        let sample = try sampleMachO(includeXML: false, derPayload: der)
+        XCTAssertNil(SignedEntitlements.parse(sample))
+    }
+
+    func testElementCountLimitYieldsNoEntitlements() throws {
+        var pairs: [UInt8] = []
+        for i in 0..<3000 {
+            pairs += derPair(String(format: "k%04d", i), derTLV(0x01, [0x00]))
+        }
+        let der = derTLV(0x31, pairs)
+        let sample = try sampleMachO(includeXML: false, derPayload: der)
+        XCTAssertNil(SignedEntitlements.parse(sample))
+    }
+
+    func testEmptyDERDictionaryParsesAsEmpty() throws {
+        // Default DER payload is an empty root: valid, zero rights.
+        let sample = try sampleMachO(includeXML: false)
+        let entitlements = try XCTUnwrap(SignedEntitlements.parse(sample))
+        XCTAssertTrue(entitlements.isEmpty)
     }
 
     func testRejectsMalformedSuperblobCount() throws {

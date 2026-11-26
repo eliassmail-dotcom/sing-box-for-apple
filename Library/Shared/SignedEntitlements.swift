@@ -1,4 +1,5 @@
 import Foundation
+import CoreFoundation
 
 /// Reads entitlements embedded in the running executable's code signature.
 ///
@@ -92,7 +93,9 @@ public enum SignedEntitlements {
 
     private static func derEntitlements(in slice: Data) -> [String: Any]? {
         guard let blob = signatureBlob(slice, slot: 7), // CS_SLOT_DER_ENTITLEMENTS
-              blob.count > 8 else { return nil }
+              blob.count > 8,
+              // Size limit is checked before the payload is copied into an array.
+              blob.count - 8 <= DERPlist.maxPayloadBytes else { return nil }
         guard let canonical = DERPlist.parse(Array(blob.subdata(in: 8..<blob.count))) else {
             return nil
         }
@@ -113,6 +116,8 @@ public enum SignedEntitlements {
                   from: xmlBlob.subdata(in: 8..<xmlBlob.count), options: [], format: nil
               )) as? [String: Any] else { return nil }
         guard let derBlob = signatureBlob(slice, slot: 7), derBlob.count > 8,
+              // Size limit is checked before the payload is copied into an array.
+              derBlob.count - 8 <= DERPlist.maxPayloadBytes,
               let der = DERPlist.parse(Array(derBlob.subdata(in: 8..<derBlob.count))) else {
             return nil
         }
@@ -275,8 +280,11 @@ public enum SignedEntitlements {
             return result
         }
 
-        /// Strict value decoding: rejects unsupported tags, non-canonical
-        /// booleans/integers and arrays that do not fully parse.
+        /// Strict value decoding: rejects unsupported tags, oversized or
+        /// truncated integers and arrays that do not fully parse. BOOLEAN
+        /// deliberately accepts any single non-zero byte as true: the signers
+        /// observed in the wild encode 0x01, and canonical DER 0xFF is not
+        /// required for the dialects this parser supports.
         private static func value(payload: [UInt8], decoder: inout Decoder, tlv: Range, depth: Int) -> PListValue? {
             guard depth <= maxDepth else { return nil }
             switch tlv.tag {
