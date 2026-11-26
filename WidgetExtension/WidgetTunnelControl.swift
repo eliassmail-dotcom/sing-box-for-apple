@@ -130,7 +130,18 @@ extension NEVPNStatus {
 }
 
 enum WidgetTunnelControl {
+    /// Widget/Control Center process diagnostics. The control is a separate
+    /// start path for the tunnel (no app process, snapshot-only options), so
+    /// its outcomes must be visible in the shared diagnostics log.
+    private static func configureDiagnostics() {
+        let group = WidgetAppConfiguration.appGroupID
+        DiagnosticsLog.configureSharedDirectory(
+            group.isEmpty ? nil : FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: group)
+        )
+    }
+
     static func currentIsStarted() async throws -> Bool {
+        configureDiagnostics()
         guard let manager = try await loadManager() else {
             // A missing app-owned VPN configuration is distinct from "stopped".
             // Controls may be visible before a VPN profile has been installed.
@@ -141,8 +152,12 @@ enum WidgetTunnelControl {
     }
 
     static func setStarted(_ started: Bool) async throws {
+        configureDiagnostics()
+        DiagnosticsLog.record("widget.vpn.set", result: .unknown, details: "requested=\(started ? "on" : "off")")
         guard let manager = try await loadManager() else {
             NSLog("[WidgetTunnelControl] No tunnel configuration found")
+            DiagnosticsLog.record("widget.vpn.set", result: .fail, errorDomain: "WidgetTunnelControl", errorCode: 1,
+                                details: "tunnel configuration not found")
             throw NSError(domain: "WidgetTunnelControl", code: 1, userInfo: [
                 NSLocalizedDescriptionKey: "Tunnel configuration not found",
             ])
@@ -174,10 +189,16 @@ enum WidgetTunnelControl {
             if !manager.connection.status.isStarted {
                 do {
                     try manager.connection.startVPNTunnel()
+                    DiagnosticsLog.record("widget.vpn.set", result: .pass, details: "requested=on startIssued")
                 } catch {
                     NSLog("[WidgetTunnelControl] startVPNTunnel failed: \(error.localizedDescription)")
+                    let nsError = error as NSError
+                    DiagnosticsLog.record("widget.vpn.set", result: .fail, errorDomain: nsError.domain,
+                        errorCode: nsError.code, details: "startVPNTunnel failed")
                     throw error
                 }
+            } else {
+                DiagnosticsLog.record("widget.vpn.set", result: .pass, details: "requested=on alreadyStarted")
             }
         } else {
             if manager.isOnDemandEnabled {
@@ -191,6 +212,7 @@ enum WidgetTunnelControl {
                 try await manager.loadFromPreferences()
             }
             manager.connection.stopVPNTunnel()
+            DiagnosticsLog.record("widget.vpn.set", result: .pass, details: "requested=off stopIssued")
         }
     }
 
@@ -259,6 +281,10 @@ enum WidgetTunnelControl {
             let declaredInXML = SignedEntitlements.stringArray(
                 "com.apple.developer.networking.networkextension"
             ).contains("packet-tunnel-provider")
+            let nsError = error as NSError
+            DiagnosticsLog.record("widget.vpn.prefs", result: .fail, errorDomain: nsError.domain,
+                errorCode: nsError.code,
+                details: "widgetNEInXML=\(declaredInXML) — VPN preferences unavailable in widget process")
             NSLog("[WidgetTunnelControl] VPN preferences unavailable; widgetNEInXML=\(declaredInXML); error=\(error.localizedDescription)")
             throw NSError(domain: "WidgetTunnelControl", code: 2, userInfo: [
                 NSLocalizedDescriptionKey:
@@ -289,6 +315,8 @@ enum WidgetTunnelControl {
         }
         if candidates.isEmpty {
             NSLog("[WidgetTunnelControl] No matching tunnel: storedManagers=\(managers.count), expectedProviders=\(expectedIDs.count), embeddedTunnelFound=\(WidgetAppConfiguration.packetTunnelBundleID != nil)")
+            DiagnosticsLog.record("widget.vpn.manager", result: .fail,
+                details: "storedManagers=\(managers.count) expectedProviders=\(expectedIDs.count) embeddedTunnelFound=\(WidgetAppConfiguration.packetTunnelBundleID != nil)")
             return nil
         }
         if connectedOnly {

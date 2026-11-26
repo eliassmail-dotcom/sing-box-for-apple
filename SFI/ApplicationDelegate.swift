@@ -17,6 +17,11 @@ class ApplicationDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCe
         LibboxReinstallCrashSignalHandlers()
         HangWatchdog.installForCurrentProcess()
         NSLog("Here I stand")
+        DiagnosticsLog.configureSharedDirectory(FilePath.hasSharedContainer ? FilePath.sharedDirectory : nil)
+        DiagnosticsLog.record("appgroup.access",
+                                   result: FilePath.hasSharedContainer ? .pass : .fail,
+                                   details: AppConfiguration.signingDiagnostics)
+        DiagnosticsLog.writeProbeMarker()
         do {
             try ServiceSetup.apply(crashReportSource: "Application")
         } catch {
@@ -143,12 +148,14 @@ class ApplicationDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCe
               let group = AppConfiguration.resolvedAppGroupID,
               let plugins = Bundle.main.builtInPlugInsURL,
               let paths = try? FileManager.default.contentsOfDirectory(at: plugins, includingPropertiesForKeys: nil) else {
+            DiagnosticsLog.record("fp.reg.shared", result: .fail,
+                                       details: "hasContainer=\(FilePath.hasSharedContainer) group=\(AppConfiguration.resolvedAppGroupID ?? "none")")
             NSLog("File Provider registration skipped: no signed shared App Group")
             return
         }
         // Info.plist is immutable after re-signing. Register only if the File Provider
         // is signed for the same group AND its document-group plist value matches.
-        let canShare = paths.contains { path in
+        let matchedExtension: String? = paths.first { path in
             guard path.pathExtension == "appex",
                   let bundle = Bundle(url: path),
                   let extensionInfo = bundle.infoDictionary?["NSExtension"] as? [String: Any],
@@ -163,8 +170,11 @@ class ApplicationDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCe
             // is authoritative if the XML signature cannot be parsed.
             return (signedGroups.isEmpty || signedGroups.contains(group))
                 && FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: group) != nil
-        }
-        guard canShare else {
+        }?.lastPathComponent
+        DiagnosticsLog.record("fp.reg.plist_match",
+                                   result: matchedExtension != nil ? .pass : .fail,
+                                   details: "group=\(group) appex=\(matchedExtension ?? "none")")
+        guard matchedExtension != nil else {
             NSLog("File Provider registration skipped: document group differs from signed App Group")
             return
         }
@@ -177,18 +187,26 @@ class ApplicationDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCe
         NSFileProviderManager.getDomainsWithCompletionHandler { domains, error in
             if let error {
                 let failure = error as NSError
+                DiagnosticsLog.record("fp.reg.lookup", result: .fail,
+                                         errorDomain: failure.domain, errorCode: failure.code)
                 NSLog("File Provider domain lookup failed: \(failure.domain) / \(failure.code): \(failure.localizedDescription)")
                 return
             }
+            DiagnosticsLog.record("fp.reg.lookup", result: .pass,
+                                       details: "domains=\(domains.count)")
             if domains.contains(where: { $0.identifier == domain.identifier }) {
+                DiagnosticsLog.record("fp.reg.already_registered", result: .pass)
                 NSLog("File Provider domain already registered: \(domain.identifier.rawValue)")
                 return
             }
             NSFileProviderManager.add(domain) { error in
                 if let error {
                     let failure = error as NSError
+                    DiagnosticsLog.record("fp.reg.add", result: .fail,
+                                             errorDomain: failure.domain, errorCode: failure.code)
                     NSLog("File Provider registration failed: \(failure.domain) / \(failure.code): \(failure.localizedDescription)")
                 } else {
+                    DiagnosticsLog.record("fp.reg.add", result: .pass)
                     NSLog("File Provider domain registered: \(domain.identifier.rawValue)")
                 }
             }

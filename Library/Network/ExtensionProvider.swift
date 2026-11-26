@@ -81,7 +81,13 @@ open class ExtensionProvider: NEPacketTunnelProvider {
 
     private func persistLastGoodStartOptions(_ options: [String: NSObject]) throws {
         guard let lastGoodStartOptionsURL else { return }
-        let data = try ExtensionStartOptions.encode(options)
+        // Same invariant as the app-side desired snapshot: correlation
+        // identifiers stay in the live payload only, never in persisted files.
+        var persistable = options
+        for key in ["diagnosticOperationID", "diagnosticSessionID", "diagnosticAttemptID"] {
+            persistable.removeValue(forKey: key)
+        }
+        let data = try ExtensionStartOptions.encode(persistable)
         try data.write(to: lastGoodStartOptionsURL, options: .atomic)
     }
 
@@ -128,6 +134,7 @@ open class ExtensionProvider: NEPacketTunnelProvider {
 
     private func resolveStartOptions(_ startOptions: [String: NSObject]?) throws -> [String: NSObject] {
         if let startOptions, startOptions["configContent"] as? String != nil {
+            DiagnosticsLog.record("tunnel.options.resolved", result: .pass, details: "source=passed")
             return startOptions
         }
         // The desired snapshot is refreshed by the app whenever the selected
@@ -136,22 +143,36 @@ open class ExtensionProvider: NEPacketTunnelProvider {
         if let desired = try? loadPersistedStartOptions() {
             do {
                 try validateStartOptions(desired)
+                DiagnosticsLog.record("tunnel.options.resolved", result: .pass, details: "source=desiredSnapshot")
                 return desired
             } catch {
+                DiagnosticsLog.record("tunnel.options.rejected", result: .fail,
+                                       details: "source=desiredSnapshot reason=\(error.localizedDescription)")
                 Self.logger.error("Desired start snapshot rejected: \(error.localizedDescription)")
             }
+        } else {
+            DiagnosticsLog.record("tunnel.options.rejected", result: .unknown, details: "source=desiredSnapshot missing")
         }
         if let lastGood = try? loadLastGoodStartOptions() {
-            try validateStartOptions(lastGood)
-            return lastGood
+            do {
+                try validateStartOptions(lastGood)
+                DiagnosticsLog.record("tunnel.options.resolved", result: .pass, details: "source=lastGoodSnapshot")
+                return lastGood
+            } catch {
+                DiagnosticsLog.record("tunnel.options.rejected", result: .fail,
+                                       details: "source=lastGoodSnapshot reason=\(error.localizedDescription)")
+                throw error
+            }
         }
         #if os(iOS)
             if !FilePath.hasSharedContainer {
+                DiagnosticsLog.record("tunnel.options.resolved", result: .fail, details: "source=none isolatedMode")
                 throw ExtensionStartupError(
                     "(packet-tunnel) error: no saved configuration in isolated mode. Open the app and start VPN once from Dashboard before using Control Center or On Demand."
                 )
             }
         #endif
+        DiagnosticsLog.record("tunnel.options.resolved", result: .fail, details: "source=none")
         throw ExtensionStartupError("(packet-tunnel) error: missing valid start options")
     }
 
@@ -181,6 +202,33 @@ open class ExtensionProvider: NEPacketTunnelProvider {
     }
 
     override open func startTunnel(options startOptions: [String: NSObject]?) async throws {
+        // Diagnostics are configured before anything else so that every later
+        // failure is attributable. The tunnel may be started by the app (with
+        // diagnostic identifiers in the options) or externally (Control Center
+        // control, On Demand) with snapshot-only options; both paths are visible.
+        let tunnelStartBegan = Date()
+        DiagnosticsLog.configureSharedDirectory(FilePath.hasSharedContainer ? FilePath.sharedDirectory : nil)
+        DiagnosticsLog.record("appgroup.access",
+                                   result: FilePath.hasSharedContainer ? .pass : .fail,
+                                   details: AppConfiguration.signingDiagnostics)
+        let operationID = startOptions?["diagnosticOperationID"] as? String
+        DiagnosticsLog.record("tunnel.start.entered", operation: operationID,
+                                   details: "origin=\(operationID != nil ? "app" : "external") container=\(FilePath.hasSharedContainer)")
+        DiagnosticsLog.checkSharedContainerProbe(expectedSession: startOptions?["diagnosticSessionID"] as? String)
+        do {
+            try await startTunnelBody(startOptions)
+            DiagnosticsLog.record("tunnel.start.completed", result: .pass, operation: operationID,
+                                      durationMs: Int(Date().timeIntervalSince(tunnelStartBegan) * 1000))
+        } catch {
+            let nsError = error as NSError
+            DiagnosticsLog.record("tunnel.start.failed", result: .fail, operation: operationID,
+                                    errorDomain: nsError.domain, errorCode: nsError.code,
+                                    details: String(describing: nsError.localizedDescription))
+            throw error
+        }
+    }
+
+    private func startTunnelBody(_ startOptions: [String: NSObject]?) async throws {
         #if os(iOS)
             Self.logger.info("Packet Tunnel startTunnel entered")
             // The validated config is supplied by the containing app through
@@ -243,6 +291,8 @@ open class ExtensionProvider: NEPacketTunnelProvider {
         #if os(iOS)
             let commandPort = effectiveOptions["commandServerPort"] as? NSNumber
             let commandSecret = effectiveOptions["commandServerSecret"] as? String
+            DiagnosticsLog.record("tunnel.command.transport",
+                                        details: "mode=\(commandPort != nil && commandSecret != nil ? "isolated" : "shared") passedPort=\(commandPort != nil) passedSecret=\(commandSecret != nil) container=\(FilePath.hasSharedContainer)")
             if commandPort != nil || commandSecret != nil || !FilePath.hasSharedContainer {
                 // Fail closed: never expose gRPC over localhost with an empty,
                 // stale or malformed authentication secret.
@@ -318,6 +368,8 @@ open class ExtensionProvider: NEPacketTunnelProvider {
         do {
             try persistLastGoodStartOptions(effectiveOptions)
         } catch {
+            DiagnosticsLog.record("tunnel.lastgood.persist", result: .fail,
+                                    errorDomain: (error as NSError).domain, errorCode: (error as NSError).code)
             Self.logger.error("Unable to persist last-good start options: \(error.localizedDescription)")
         }
         writeMessage("(packet-tunnel): Here I stand")
@@ -396,6 +448,7 @@ open class ExtensionProvider: NEPacketTunnelProvider {
     }
 
     override open func stopTunnel(with reason: NEProviderStopReason) async {
+        DiagnosticsLog.record("tunnel.stop", details: "reason=\(reason.rawValue)")
         writeMessage("(packet-tunnel) stopping, reason: \(reason)")
         #if os(iOS)
             screenStateObserver?.cancel()

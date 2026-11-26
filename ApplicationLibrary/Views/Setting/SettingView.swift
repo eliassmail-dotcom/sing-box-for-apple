@@ -253,6 +253,9 @@ public struct SettingView: View {
                     RequestReviewButton {
                         Label("Rate on the App Store", systemImage: "text.bubble.fill")
                     }
+                    #if os(iOS)
+                        DiagnosticsExportButton()
+                    #endif
                     #if os(macOS)
                         if Variant.useSystemExtension {
                             Tabs.sponsors.navigationLink

@@ -119,9 +119,17 @@ public class ExtensionProfile: ObservableObject {
                     .first(where: { $0.identifier.rawValue == AppConfiguration.fileProviderDomainID }),
                     let manager = NSFileProviderManager(for: domain)
                 else {
+                    DiagnosticsLog.record("fp.signal.enumerator", result: .unknown,
+                        details: "domain not registered, VPN status change not signaled")
                     return
                 }
-                try? await manager.signalEnumerator(for: .workingSet)
+                do {
+                    try await manager.signalEnumerator(for: .workingSet)
+                    DiagnosticsLog.record("fp.signal.enumerator", result: .pass)
+                } catch {
+                    DiagnosticsLog.record("fp.signal.enumerator", result: .fail,
+                        errorDomain: (error as NSError).domain, errorCode: (error as NSError).code)
+                }
             }
         }
     #endif
@@ -218,21 +226,54 @@ public class ExtensionProfile: ObservableObject {
         // Capture the current snapshot before preparing the candidate. The
         // post-connect write is compare-and-swap: a newer concurrent change wins.
         let expectedDesiredOptions = currentDesiredStartOptionsForWrite()
+        DiagnosticsLog.configureSharedDirectory(FilePath.hasSharedContainer ? FilePath.sharedDirectory : nil)
+        let operationID = UUID().uuidString
+        let firstAttemptID = UUID().uuidString
+        DiagnosticsLog.record("appgroup.access",
+                               result: FilePath.hasSharedContainer ? .pass : .fail,
+                               details: "group=\(AppConfiguration.resolvedAppGroupID ?? "none") container=\(FilePath.hasSharedContainer)")
+        DiagnosticsLog.record("vpn.start.entered", operation: operationID, attempt: firstAttemptID,
+                               details: FilePath.hasSharedContainer ? nil : "isolated container mode")
         // Build and validate the complete effective configuration before
         // asking NetworkExtension to start. Never persist an unvalidated candidate.
-        let options = try await prepareStartOptions()
+        var options: [String: NSObject]
+        do {
+            options = try await prepareStartOptions()
+            DiagnosticsLog.record("vpn.prepare.options", result: .pass, operation: operationID)
+        } catch {
+            DiagnosticsLog.record("vpn.prepare.options", result: .fail, operation: operationID,
+                                   errorDomain: (error as NSError).domain, errorCode: (error as NSError).code)
+            throw error
+        }
+        options["diagnosticOperationID"] = NSString(string: operationID)
+        options["diagnosticSessionID"] = NSString(string: DiagnosticsLog.session)
+        options["diagnosticAttemptID"] = NSString(string: firstAttemptID)
         do {
             try await connectWithOneSessionRecovery(options)
         } catch {
             throw await makeStartDiagnosticError(error, fallbackStage: "start / wait for connected / recovery")
         }
+        DiagnosticsLog.record("vpn.start.connected", result: .pass, operation: operationID,
+                               attempt: firstAttemptID)
         if FilePath.hasSharedContainer {
             do {
-                try persistDesiredStartOptions(options, expectedCurrent: expectedDesiredOptions)
+                // Diagnostic correlation identifiers travel only with the
+                // live startVPNTunnel(options:) payload. They must never enter
+                // the persisted snapshots: the snapshot compare-and-swap is a
+                // strict dictionary equality, and a new UUID per start would
+                // look like a concurrent external change.
+                var persistableOptions = options
+                for key in ["diagnosticOperationID", "diagnosticSessionID", "diagnosticAttemptID"] {
+                    persistableOptions.removeValue(forKey: key)
+                }
+                try persistDesiredStartOptions(persistableOptions, expectedCurrent: expectedDesiredOptions)
+                DiagnosticsLog.record("vpn.snapshot.persist", result: .pass, operation: operationID)
             } catch {
                 // The tunnel is already connected. A snapshot sync failure must
                 // not turn a successful VPN start into a reported start failure.
                 logger.warning("VPN connected, but desired snapshot was not updated: \(error.localizedDescription)")
+                DiagnosticsLog.record("vpn.snapshot.persist", result: .fail, operation: operationID,
+                                       errorDomain: (error as NSError).domain, errorCode: (error as NSError).code)
             }
         }
     }
@@ -243,6 +284,8 @@ public class ExtensionProfile: ObservableObject {
     /// retries once after iOS has returned to the disconnected state; a bad
     /// entitlement or config will still surface as an error.
     private func connectWithOneSessionRecovery(_ options: [String: NSObject]) async throws {
+        let operationID = options["diagnosticOperationID"] as? String
+        let attemptID = options["diagnosticAttemptID"] as? String
         do {
             try await start(with: options)
             try await awaitConnected()
@@ -250,18 +293,38 @@ public class ExtensionProfile: ObservableObject {
         } catch {
             let firstError = error as NSError
             // Never reset a live or still-connecting tunnel.
+            let recoveryAllowed = manager != nil && connection?.status == .disconnected
+            DiagnosticsLog.record("vpn.recovery.decision", operation: operationID, attempt: attemptID,
+                                   result: .unknown,
+                                   details: "first=\(firstError.domain)/\(firstError.code) status=\(connection?.status.rawValue ?? -1) allowed=\(recoveryAllowed)")
             guard let manager, connection?.status == .disconnected else {
                 throw error
             }
             logger.warning("Initial VPN start failed (\(firstError.domain, privacy: .public)/\(firstError.code)); reloading NetworkExtension preferences and retrying once")
             try await Task.sleep(nanoseconds: 800_000_000)
             do {
+                let reloadBegan = Date()
                 try await manager.loadFromPreferences()
                 rebindConnection()
+                DiagnosticsLog.record("vpn.recovery.reload", result: .pass, operation: operationID,
+                                       durationMs: Int(Date().timeIntervalSince(reloadBegan) * 1000))
                 // A delayed system On Demand start may have begun in the meantime.
                 if connection?.status == .connected { return }
-                try await start(with: options)
-                try await awaitConnected()
+                var retryOptions = options
+                let retryAttemptID = UUID().uuidString
+                retryOptions["diagnosticAttemptID"] = NSString(string: retryAttemptID)
+                do {
+                    try await start(with: retryOptions)
+                    try await awaitConnected()
+                    DiagnosticsLog.record("vpn.recovery.retry", result: .pass, operation: operationID,
+                                           attempt: retryAttemptID)
+                } catch {
+                    let retryError = error as NSError
+                    DiagnosticsLog.record("vpn.recovery.retry", result: .fail, operation: operationID,
+                                           attempt: retryAttemptID,
+                                           errorDomain: retryError.domain, errorCode: retryError.code)
+                    throw error
+                }
             } catch {
                 let secondError = error as NSError
                 throw NSError(
@@ -320,11 +383,16 @@ public class ExtensionProfile: ObservableObject {
     // startVPNTunnel returning does not prove that the extension started.
     private func awaitConnected(timeout: TimeInterval = 20) async throws {
         let deadline = Date().addingTimeInterval(timeout)
+        var lastReportedStatus: Int?
         while Date() < deadline {
             guard let connection else {
                 throw NSError(domain: "ExtensionProfile.Start", code: 3, userInfo: [
                     NSLocalizedDescriptionKey: "VPN session was lost during startup."
                 ])
+            }
+            if lastReportedStatus != connection.status.rawValue {
+                lastReportedStatus = connection.status.rawValue
+                DiagnosticsLog.record("vpn.await.status", details: "status=\(connection.status.rawValue)")
             }
             status = connection.status
             connectedDate = connection.connectedDate
@@ -339,7 +407,26 @@ public class ExtensionProfile: ObservableObject {
 
     private func start(with options: [String: NSObject]) async throws {
         guard let manager else { return }
-        try await fetchProfile()
+        let operationID = options["diagnosticOperationID"] as? String
+        let attemptID = options["diagnosticAttemptID"] as? String
+        func recorded<T>(_ stage: String, result: DiagnosticsLog.Result = .pass,
+                        _ body: () async throws -> T) async throws -> T {
+            let began = Date()
+            do {
+                let value = try await body()
+                DiagnosticsLog.record(stage, result: result, operation: operationID, attempt: attemptID,
+                                      durationMs: Int(Date().timeIntervalSince(began) * 1000))
+                return value
+            } catch {
+                let nsError = error as NSError
+                DiagnosticsLog.record(stage, result: .fail, operation: operationID, attempt: attemptID,
+                                      errorDomain: nsError.domain, errorCode: nsError.code)
+                throw error
+            }
+        }
+        try await recorded("vpn.fetchProfile") {
+            try await fetchProfile()
+        }
         manager.isEnabled = true
         let alwaysOn = await SharedPreferences.alwaysOn.get()
         let onDemandEnabled = await SharedPreferences.onDemandEnabled.get()
@@ -353,13 +440,20 @@ public class ExtensionProfile: ObservableObject {
                 proto.providerConfiguration = config
             }
         }
-        await applyProtocolConfiguration()
+        try await recorded("vpn.applyProtocolConfiguration") {
+            try await applyProtocolConfiguration()
+        }
         var stage = "saveToPreferences"
         do {
-            try await manager.saveToPreferences()
+            try await recorded("vpn.saveToPreferences") {
+                try await manager.saveToPreferences()
+            }
             stage = "loadFromPreferences"
-            try await manager.loadFromPreferences()
+            try await recorded("vpn.loadFromPreferences") {
+                try await manager.loadFromPreferences()
+            }
             rebindConnection()
+            DiagnosticsLog.record("vpn.rebindConnection", operation: operationID, attempt: attemptID)
             stage = "startVPNTunnel"
             guard let connection else {
                 throw NSError(domain: "ExtensionProfile.Start", code: 2, userInfo: [
@@ -371,8 +465,12 @@ public class ExtensionProfile: ObservableObject {
             if connection.status == .connected || connection.status == .connecting ||
                 connection.status == .reasserting {
                 logger.info("Using existing NetworkExtension session, status=\(connection.status.rawValue)")
+                DiagnosticsLog.record("vpn.start.sessionReuse", operation: operationID, attempt: attemptID,
+                                       details: "status=\(connection.status.rawValue)")
             } else {
-                try connection.startVPNTunnel(options: options)
+                try await recorded("vpn.startVPNTunnel") {
+                    try connection.startVPNTunnel(options: options)
+                }
             }
         } catch {
             let nsError = error as NSError

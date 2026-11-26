@@ -32,6 +32,7 @@ class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
 
     private func requireWorkingDirectory() throws -> URL {
         guard let directory = Self.workingDirectoryURL else {
+            DiagnosticsLog.record("fpx.working_dir", result: .fail, errorDomain: "SFI.FileProvider.SigningCompatibility", errorCode: 1)
             throw NSError(
                 domain: "SFI.FileProvider.SigningCompatibility", code: 1,
                 userInfo: [NSLocalizedDescriptionKey:
@@ -40,8 +41,12 @@ class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
         }
         do {
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            Self.recordWorkingDirOnce()
             return directory
         } catch {
+            let nsError = error as NSError
+            DiagnosticsLog.record("fpx.working_dir", result: .fail, errorDomain: "SFI.FileProvider.Storage", errorCode: 2,
+                                 details: "mkdir domain=\(nsError.domain) code=\(nsError.code)")
             throw NSError(
                 domain: "SFI.FileProvider.Storage", code: 2,
                 userInfo: [
@@ -52,9 +57,35 @@ class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
         }
     }
 
+    /// workingDirectoryURL is a lazy static: resolving it here in init must not
+    /// change when the OS first forces it (it stays untouched until the first
+    /// requireWorkingDirectory call). Only lightweight diagnostics run in init.
+    private static var workingDirReported = false
+    private static func recordWorkingDirOnce() {
+        guard !workingDirReported else { return }
+        workingDirReported = true
+        DiagnosticsLog.record("fpx.working_dir", result: .pass)
+    }
+
+    /// Document group container for cross-process diagnostics. Resolved
+    /// independently of workingDirectoryURL (which stays lazy): this uses the
+    /// same signed Info.plist value, but never touches the working directory.
+    private static let diagnosticsContainer: URL? = {
+        guard let extensionInfo = Bundle.main.object(forInfoDictionaryKey: "NSExtension") as? [String: Any],
+              let group = extensionInfo["NSExtensionFileProviderDocumentGroup"] as? String,
+              !group.isEmpty else { return nil }
+        return FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: group)
+    }()
+
     required init(domain: NSFileProviderDomain) {
         self.domain = domain
         super.init()
+        DiagnosticsLog.configureSharedDirectory(Self.diagnosticsContainer)
+        let signedGroups = SignedEntitlements.stringArray("com.apple.security.application-groups")
+        let declaredGroup = (Bundle.main.object(forInfoDictionaryKey: "NSExtension") as? [String: Any])?["NSExtensionFileProviderDocumentGroup"] as? String
+        DiagnosticsLog.record("appgroup.access",
+                                   result: Self.diagnosticsContainer != nil ? .pass : .fail,
+                                   details: "group=\(declaredGroup ?? "none") signedGroups=\(signedGroups.count) containsDeclared=\(signedGroups.contains(declaredGroup ?? "")) container=\(Self.diagnosticsContainer != nil)")
         do {
             _ = try requireWorkingDirectory()
         } catch {
@@ -62,7 +93,9 @@ class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
         }
     }
 
-    func invalidate() {}
+    func invalidate() {
+        DiagnosticsLog.record("fpx.invalidate")
+    }
 
     // MARK: - NSFileProviderReplicatedExtension
 
@@ -104,6 +137,7 @@ class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
         do {
             workingDirectory = try requireWorkingDirectory()
         } catch {
+            recordOpFailure("fetchContents", error)
             completionHandler(nil, nil, error)
             return progress
         }
@@ -154,6 +188,7 @@ class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
             completionHandler(item, [], false, nil)
 
         } catch {
+            recordOpFailure("createItem", error)
             completionHandler(nil, [], false, error)
         }
 
@@ -210,6 +245,7 @@ class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
             completionHandler(resultItem, [], false, nil)
 
         } catch {
+            recordOpFailure("modifyItem", error)
             completionHandler(nil, [], false, error)
         }
 
@@ -240,6 +276,7 @@ class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
             }
             completionHandler(nil)
         } catch {
+            recordOpFailure("deleteItem", error)
             completionHandler(error)
         }
 
@@ -251,6 +288,9 @@ class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
                     request _: NSFileProviderRequest) throws -> NSFileProviderEnumerator
     {
         let workingDirectory = try requireWorkingDirectory()
+        let kind = containerItemIdentifier == .workingSet ? "workingSet" : (containerItemIdentifier == .rootContainer ? "root" : "item")
+        DiagnosticsLog.record("fpx.enumerator", details: "container=\(kind)")
+        DiagnosticsLog.checkSharedContainerProbe(expectedSession: nil)
         if containerItemIdentifier == .workingSet {
             return FileProviderEnumerator(workingSet: true, workingDirectory: workingDirectory)
         }
@@ -274,6 +314,14 @@ class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
     }
 
     // MARK: - Helper Methods
+
+    /// Operation outcome diagnostics: only failures are recorded, so a healthy
+    /// session produces no per-operation noise.
+    private func recordOpFailure(_ operation: String, _ error: Error) {
+        let nsError = error as NSError
+        DiagnosticsLog.record("fpx.op.failed", result: .fail, operation: operation.isEmpty ? nil : operation,
+                               errorDomain: nsError.domain, errorCode: nsError.code)
+    }
 
     private func fileURL(for identifier: NSFileProviderItemIdentifier, workingDirectory: URL) -> URL {
         if identifier == .rootContainer {

@@ -26,7 +26,15 @@ struct NextNodeControlIntent: AppIntent {
     )
 
     func perform() async throws -> some IntentResult {
-        try await WidgetTunnelControl.changeNode()
+        do {
+            try await WidgetTunnelControl.changeNode()
+            DiagnosticsLog.record("widget.node.command", result: .pass)
+        } catch {
+            let nsError = error as NSError
+            DiagnosticsLog.record("widget.node.command", result: .fail,
+                errorDomain: nsError.domain, errorCode: nsError.code)
+            throw error
+        }
         return .result()
     }
 }
