@@ -256,7 +256,6 @@ public class ExtensionProfile: ObservableObject {
             let nsError = error as NSError
             let stage = nsError.userInfo["VPNStartStage"] as? String ?? "unspecified"
             DiagnosticsLog.record("vpn.start.failed", result: .fail, operation: operationID,
-                                   attempt: firstAttemptID,
                                    errorDomain: nsError.domain, errorCode: nsError.code,
                                    details: "stage=\(stage)")
             throw await makeStartDiagnosticError(error, fallbackStage: "start / wait for connected / recovery")
@@ -291,15 +290,17 @@ public class ExtensionProfile: ObservableObject {
     /// entitlement or config will still surface as an error.
     /// Returns the attempt ID that actually produced the connected session:
     /// the first attempt, or the recovery retry when the first one failed.
-    private func connectWithOneSessionRecovery(_ options: [String: NSObject]) async throws -> String {
+    private func connectWithOneSessionRecovery(_ options: [String: NSObject]) async throws -> String? {
         let operationID = options["diagnosticOperationID"] as? String
         let attemptID = options["diagnosticAttemptID"] as? String
         do {
-            try await start(with: options)
+            let issued = try await start(with: options)
             try await awaitConnected(operationID: operationID, attemptID: attemptID)
-            return attemptID ?? ""
+            return issued ? attemptID : nil
         } catch {
             let firstError = error as NSError
+            DiagnosticsLog.record("vpn.attempt.failed", result: .fail, operation: operationID, attempt: attemptID,
+                                  errorDomain: firstError.domain, errorCode: firstError.code)
             // Never reset a live or still-connecting tunnel.
             let recoveryAllowed = manager != nil && connection?.status == .disconnected
             DiagnosticsLog.record("vpn.recovery.decision", result: .unknown,
@@ -317,18 +318,23 @@ public class ExtensionProfile: ObservableObject {
                 DiagnosticsLog.record("vpn.recovery.reload", result: .pass, operation: operationID,
                                        durationMs: Int(Date().timeIntervalSince(reloadBegan) * 1000))
                 // A delayed system On Demand start may have begun in the meantime.
-                if connection?.status == .connected { return attemptID ?? "" }
+                if connection?.status == .connected {
+                    DiagnosticsLog.record("vpn.recovery.externalConnected", result: .pass, operation: operationID)
+                    return nil
+                }
                 var retryOptions = options
                 let retryAttemptID = UUID().uuidString
                 retryOptions["diagnosticAttemptID"] = NSString(string: retryAttemptID)
                 do {
-                    try await start(with: retryOptions)
+                    let issued = try await start(with: retryOptions)
                     try await awaitConnected(operationID: operationID, attemptID: retryAttemptID)
                     DiagnosticsLog.record("vpn.recovery.retry", result: .pass, operation: operationID,
                                            attempt: retryAttemptID)
-                    return retryAttemptID
+                    return issued ? retryAttemptID : nil
                 } catch {
                     let retryError = error as NSError
+                    DiagnosticsLog.record("vpn.attempt.failed", result: .fail, operation: operationID, attempt: retryAttemptID,
+                                          errorDomain: retryError.domain, errorCode: retryError.code)
                     DiagnosticsLog.record("vpn.recovery.retry", result: .fail, operation: operationID,
                                            attempt: retryAttemptID,
                                            errorDomain: retryError.domain, errorCode: retryError.code)
@@ -415,8 +421,8 @@ public class ExtensionProfile: ObservableObject {
         ])
     }
 
-    private func start(with options: [String: NSObject]) async throws {
-        guard let manager else { return }
+    private func start(with options: [String: NSObject]) async throws -> Bool {
+        guard let manager else { return false }
         let operationID = options["diagnosticOperationID"] as? String
         let attemptID = options["diagnosticAttemptID"] as? String
         func recorded<T>(_ stage: String, result: DiagnosticsLog.Result = .pass,
@@ -451,7 +457,7 @@ public class ExtensionProfile: ObservableObject {
             }
         }
         try await recorded("vpn.applyProtocolConfiguration") {
-            try await applyProtocolConfiguration()
+            await applyProtocolConfiguration()
         }
         var stage = "saveToPreferences"
         do {
@@ -477,10 +483,12 @@ public class ExtensionProfile: ObservableObject {
                 logger.info("Using existing NetworkExtension session, status=\(connection.status.rawValue)")
                 DiagnosticsLog.record("vpn.start.sessionReuse", operation: operationID, attempt: attemptID,
                                        details: "status=\(connection.status.rawValue)")
+                return false
             } else {
                 try await recorded("vpn.startVPNTunnel") {
                     try connection.startVPNTunnel(options: options)
                 }
+                return true
             }
         } catch {
             let nsError = error as NSError
@@ -683,7 +691,7 @@ public class ExtensionProfile: ObservableObject {
             }
         }
         do {
-            try await start(with: options)
+            _ = try await start(with: options)
             try await awaitConnected(operationID: nil, attemptID: nil)
         } catch {
             throw await makeStartDiagnosticError(error, fallbackStage: "restart / wait for connected")

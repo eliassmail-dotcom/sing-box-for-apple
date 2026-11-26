@@ -26,7 +26,7 @@ public struct DiagnosticsExportButton: View {
         } label: {
             Label {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Диагностика подписи")
+                    Text("Диагностика VPN и подписи")
                     if let failureText {
                         Text(failureText)
                             .font(.footnote)

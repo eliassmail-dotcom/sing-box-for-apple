@@ -8,7 +8,9 @@ import XCTest
 final class DiagnosticsLogTests: XCTestCase {
     override func setUp() {
         super.setUp()
+        DiagnosticsLog.flushForTests()
         DiagnosticsLog.configureSharedDirectory(nil)
+        DiagnosticsLog.configureLocalDirectoryForTests(temporaryDirectory())
     }
 
     override func tearDown() {
@@ -185,14 +187,14 @@ final class DiagnosticsLogTests: XCTestCase {
         XCTAssertEqual(probe?.result, "UNKNOWN")
     }
 
-    func testStorageStaysBoundedUnderManyEvents() {
+    func testStorageStaysBoundedUnderManyEvents() throws {
         let dir = temporaryDirectory()
         DiagnosticsLog.configureLocalDirectoryForTests(dir)
 
         // Far more events than fit into the 256 KiB budget; interleaved
         // flushes keep the pending queue below its drop threshold.
-        for index in 0..<600 {
-            DiagnosticsLog.record("unit.flood", result: .pass, details: "payload \(index) " + String(repeating: "p", count: 64))
+        for index in 0..<900 {
+            DiagnosticsLog.record("unit.flood", result: .pass, details: "payload \(index) " + String(repeating: "p", count: 768))
             if index.isMultiple(of: 16) {
                 DiagnosticsLog.flushForTests()
             }
@@ -205,9 +207,14 @@ final class DiagnosticsLogTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: file.path))
         let attributes = try? FileManager.default.attributesOfItem(atPath: file.path)
         let size = (attributes?[.size] as? NSNumber)?.intValue ?? 0
-        XCTAssertLessThanOrEqual(size, 260_000)
-        // The rotated window is kept readable, not deleted.
-        XCTAssertTrue(DiagnosticsLog.collectEvents().isEmpty == false)
+        XCTAssertLessThanOrEqual(size, 256 * 1024)
+        let rotated = file.appendingPathExtension("1")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: rotated.path))
+        let rotatedAttributes = try FileManager.default.attributesOfItem(atPath: rotated.path)
+        let rotatedSize = (rotatedAttributes[.size] as? NSNumber)?.intValue ?? 0
+        XCTAssertGreaterThan(rotatedSize, 0)
+        XCTAssertLessThanOrEqual(rotatedSize, 256 * 1024)
+        XCTAssertFalse(DiagnosticsLog.collectEvents().isEmpty)
     }
 
     func testExportWritesReportFileIntoDocuments() {

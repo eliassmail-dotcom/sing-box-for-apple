@@ -126,25 +126,18 @@ public enum SignedEntitlements {
     private static func cachedRead(executableAt url: URL) -> ExecutableRead {
         let cacheKey = url.path
         cacheLock.lock()
-        if let cached = readCache[cacheKey] {
-            cacheLock.unlock()
-            return cached
-        }
-        cacheLock.unlock()
+        defer { cacheLock.unlock() }
+        if let cached = readCache[cacheKey] { return cached }
+        // Serialize cache misses so concurrent callers never reread an executable.
         let entry: ExecutableRead
         if let data = try? Data(contentsOf: url, options: .mappedIfSafe) {
             let slice = arm64Slice(data) ?? data
-            entry = ExecutableRead(
-                entitlements: parseFromSlice(slice),
-                diagnostics: diagnoseSources(of: slice)
-            )
+            entry = inspectSources(of: slice)
         } else {
             entry = ExecutableRead(entitlements: nil, diagnostics: SourceDiagnostics.unreadable)
         }
-        cacheLock.lock()
         readCache[cacheKey] = entry
         debugParseCount += 1
-        cacheLock.unlock()
         return entry
     }
 
@@ -255,7 +248,7 @@ public enum SignedEntitlements {
     /// whether XML and DER agree semantically. Losslessly typed so it can be
     /// rendered into a diagnostic report without re-parsing the binaries.
     public struct SourceDiagnostics: Equatable {
-        public enum BlobStatus: String, Equatable { case absent, valid, invalid }
+        public enum BlobStatus: String, Equatable { case absent, valid, invalid, unknown }
         public enum SelectedSource: String, Equatable { case xml, der, none }
         public enum MatchStatus: String, Equatable { case match, mismatch, unknown }
         public let xmlStatus: BlobStatus
@@ -264,7 +257,7 @@ public enum SignedEntitlements {
         public let xmlDERMatch: MatchStatus
 
         static let unreadable = SourceDiagnostics(
-            xmlStatus: .absent, derStatus: .absent, selectedSource: .none, xmlDERMatch: .unknown
+            xmlStatus: .unknown, derStatus: .unknown, selectedSource: .none, xmlDERMatch: .unknown
         )
     }
 
@@ -293,6 +286,10 @@ public enum SignedEntitlements {
 
     /// Inspects the entitlement blobs of an already-sliced Mach-O image.
     private static func diagnoseSources(of slice: Data) -> SourceDiagnostics {
+        inspectSources(of: slice).diagnostics
+    }
+
+    private static func inspectSources(of slice: Data) -> ExecutableRead {
         var xml: [String: Any]? = nil
         let xmlStatus: SourceDiagnostics.BlobStatus
         if let blob = entitlementsBlob(slice), blob.count > 8 {
@@ -330,10 +327,15 @@ public enum SignedEntitlements {
         } else {
             xmlDERMatch = .unknown
         }
-        return SourceDiagnostics(
+        let diagnostics = SourceDiagnostics(
             xmlStatus: xmlStatus, derStatus: derStatus,
             selectedSource: selectedSource, xmlDERMatch: xmlDERMatch
         )
+        var selected = xml
+        if selected == nil, let der {
+            selected = der.mapValues { DERPlist.box($0) }
+        }
+        return ExecutableRead(entitlements: selected, diagnostics: diagnostics)
     }
 
     // MARK: - Apple plist-in-DER entitlements

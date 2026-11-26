@@ -281,11 +281,11 @@ public enum AppConfiguration {
         let ownSources = SignedEntitlements.sourceDiagnostics()
         let peerSources = peerBundle.map { SignedEntitlements.sourceDiagnostics(of: $0) }
         return "host=\(packageName); tunnel=\(extensionBundleID); " +
-            "ownXMLGroups=\(own.count); peerXMLGroups=\(peer.count); " +
+            "ownSignedGroups=\(own.count); peerSignedGroups=\(peer.count); " +
             "ownSources=xml:\(ownSources.xmlStatus.rawValue)/der:\(ownSources.derStatus.rawValue) " +
             "selected:\(ownSources.selectedSource.rawValue) match:\(ownSources.xmlDERMatch.rawValue); " +
-            "peerSources=xml:\(peerSources.xmlStatus.rawValue)/der:\(peerSources.derStatus.rawValue) " +
-            "selected:\(peerSources.selectedSource.rawValue) match:\(peerSources.xmlDERMatch.rawValue); " +
+            "peerSources=xml:\(peerSources?.xmlStatus.rawValue ?? "unknown")/der:\(peerSources?.derStatus.rawValue ?? "unknown") " +
+            "selected:\(peerSources?.selectedSource.rawValue ?? "unknown") match:\(peerSources?.xmlDERMatch.rawValue ?? "unknown"); " +
             "usableGroups=\(usableAppGroups.count); " +
             "resolved=\(resolvedAppGroupID ?? "none"); " +
             "ambiguous=\(appGroupSelectionAmbiguous)"

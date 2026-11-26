@@ -320,7 +320,10 @@ final class SigningCompatibilityTests: XCTestCase {
         XCTAssertEqual(SignedEntitlements.debugParseCount, 3) // failed attempt still counts as a read
         XCTAssertNil(SignedEntitlements.loadForTests(executableAt: missing))
         XCTAssertEqual(SignedEntitlements.debugParseCount, 3) // no retry
-        XCTAssertEqual(SignedEntitlements.sourceDiagnosticsForTests(executableAt: missing).selectedSource, .none)
+        let missingDiagnostics = SignedEntitlements.sourceDiagnosticsForTests(executableAt: missing)
+        XCTAssertEqual(missingDiagnostics.selectedSource, .none)
+        XCTAssertEqual(missingDiagnostics.xmlStatus, .unknown)
+        XCTAssertEqual(missingDiagnostics.derStatus, .unknown)
         XCTAssertEqual(SignedEntitlements.debugParseCount, 3) // negative entry serves diagnostics too
     }
 

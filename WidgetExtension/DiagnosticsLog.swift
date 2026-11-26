@@ -60,6 +60,7 @@ public enum DiagnosticsLog {
 
     private static let lock = NSLock()
     private static let queue = DispatchQueue(label: "DiagnosticsLog", qos: .utility)
+    private static let queuedWork = DispatchGroup()
     private static let osLogger = Logger(
         subsystem: Bundle.main.bundleIdentifier ?? "unknown", category: "Diagnostics"
     )
@@ -124,7 +125,7 @@ public enum DiagnosticsLog {
 
     /// Blocks until every event queued so far has been written (unit tests only).
     static func flushForTests() {
-        queue.sync {}
+        queuedWork.wait()
     }
 
     // MARK: - Recording
@@ -166,7 +167,7 @@ public enum DiagnosticsLog {
         pending += 1
         lock.unlock()
 
-        queue.async {
+        queue.async(group: queuedWork) {
             defer {
                 lock.lock()
                 pending -= 1
@@ -226,7 +227,7 @@ public enum DiagnosticsLog {
     /// rotation; if rotation fails the event is dropped rather than letting
     /// the file grow beyond the limit. All failures are silently tolerated.
     private static func appendLine(_ line: Data, directory: URL?) {
-        guard let directory else { return }
+        guard let directory, line.count <= maxFileBytes else { return }
         do {
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
             let file = directory.appendingPathComponent("diagnostics-\(process.rawValue).jsonl")
@@ -307,7 +308,7 @@ public enum DiagnosticsLog {
         // WIDGET events only exist when a Control Center control was actually
         // used; report their absence without implying broken access.
         if !seen.contains("WIDGET") {
-            lines.append("UNKNOWN: no WIDGET events - Control Center controls not used since last rotation")
+            lines.append("UNKNOWN: no WIDGET events available (not used, not persisted, or inaccessible)")
         }
         lines.append("--- events (\(events.count)) ---")
         for event in events {
@@ -363,11 +364,27 @@ public enum DiagnosticsLog {
 
     // MARK: - Shared container probe
 
+    // Probe jobs share the same pending-work limit as event writes.
+    private static func enqueueProbe(_ work: @escaping @Sendable () -> Void) {
+        lock.lock()
+        guard pending < maxPendingEvents else {
+            droppedEvents += 1
+            lock.unlock()
+            return
+        }
+        pending += 1
+        lock.unlock()
+        queue.async(group: queuedWork) {
+            defer { lock.locked { pending -= 1 } }
+            work()
+        }
+    }
+
     /// The app writes a marker identifying its launch session into the shared
     /// container (best effort, ring of the newest 3, no timers). Asynchronous:
     /// never performs file IO on the caller's thread (didFinishLaunching).
     public static func writeProbeMarker() {
-        queue.async {
+        enqueueProbe {
             writeProbeMarkerNow()
         }
     }
@@ -390,7 +407,7 @@ public enum DiagnosticsLog {
     /// A non-app process verifies that the app container is shared. Asynchronous:
     /// directory reads must not sit on the tunnel's startup critical path.
     public static func checkSharedContainerProbe(expectedSession: String?) {
-        queue.async {
+        enqueueProbe {
             checkSharedContainerProbeNow(expectedSession: expectedSession)
         }
     }
@@ -421,11 +438,19 @@ public enum DiagnosticsLog {
                    errorCode: (error as NSError).code, details: "probe read failed")
             return
         }
-        guard let newest = markers.max(by: { $0.createdAt < $1.createdAt }) else {
+        let matched = expectedSession.flatMap { expected in
+            markers.filter { $0.appSessionID == expected }.max(by: { $0.createdAt < $1.createdAt })
+        }
+        guard let newest = matched ?? markers.max(by: { $0.createdAt < $1.createdAt }) else {
             record("appgroup.probe", result: .unknown, details: "no probe markers found")
             return
         }
-        let ageSeconds = Int(Date().timeIntervalSince1970 - newest.createdAt)
+        let age = Date().timeIntervalSince1970 - newest.createdAt
+        guard age.isFinite, abs(age) < Double(Int.max / 2) else {
+            record("appgroup.probe", result: .unknown, details: "invalid marker time")
+            return
+        }
+        let ageSeconds = Int(age)
         if let expectedSession {
             if newest.appSessionID == expectedSession {
                 record("appgroup.probe", result: .pass, details: "expected app session, age \(ageSeconds)s")
@@ -433,7 +458,7 @@ public enum DiagnosticsLog {
                 record("appgroup.probe", result: .unknown,
                        details: "marker from another app session, age \(ageSeconds)s")
             }
-        } else if ageSeconds < Int(probeMaxAge) {
+        } else if ageSeconds >= 0 && ageSeconds < Int(probeMaxAge) {
             record("appgroup.probe", result: .pass, details: "fresh marker (external start), age \(ageSeconds)s")
         } else {
             record("appgroup.probe", result: .unknown, details: "stale marker, age \(ageSeconds)s")

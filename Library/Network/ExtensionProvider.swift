@@ -211,7 +211,7 @@ open class ExtensionProvider: NEPacketTunnelProvider {
         // On Demand) with snapshot-only options; both paths are visible.
         let tunnelStartBegan = Date()
         let operationID = startOptions?["diagnosticOperationID"] as? String
-        let attemptID = startOptions?["diagnosticAttemptID"] as? String
+        let attemptID = startOptions?["diagnosticAttemptID"] as? String ?? UUID().uuidString
         DiagnosticsLog.record("tunnel.start.entered", operation: operationID, attempt: attemptID,
                             details: "origin=\(operationID != nil ? "app" : "external")")
         DiagnosticsLog.configureSharedDirectory(FilePath.hasSharedContainer ? FilePath.sharedDirectory : nil)
@@ -279,7 +279,11 @@ open class ExtensionProvider: NEPacketTunnelProvider {
             }
         #endif
 
-        let effectiveOptions = try resolveStartOptions(startOptions, operationID: operationID, attemptID: attemptID)
+        var effectiveOptions = try resolveStartOptions(startOptions, operationID: operationID, attemptID: attemptID)
+        // Correlation metadata belongs to the live diagnostic context only.
+        for key in ["diagnosticOperationID", "diagnosticSessionID", "diagnosticAttemptID"] {
+            effectiveOptions.removeValue(forKey: key)
+        }
         do {
             try validateStartOptions(effectiveOptions)
             DiagnosticsLog.record("tunnel.options.validated", result: .pass, operation: operationID, attempt: attemptID)
@@ -313,7 +317,7 @@ open class ExtensionProvider: NEPacketTunnelProvider {
         #if os(iOS)
             let commandPort = effectiveOptions["commandServerPort"] as? NSNumber
             let commandSecret = effectiveOptions["commandServerSecret"] as? String
-            DiagnosticsLog.record("tunnel.command.transport",
+            DiagnosticsLog.record("tunnel.command.transport", operation: operationID, attempt: attemptID,
                                         details: "mode=\(commandPort != nil && commandSecret != nil ? "isolated" : "shared") passedPort=\(commandPort != nil) passedSecret=\(commandSecret != nil) container=\(FilePath.hasSharedContainer)")
             if commandPort != nil || commandSecret != nil || !FilePath.hasSharedContainer {
                 // Fail closed: never expose gRPC over localhost with an empty,
@@ -405,8 +409,9 @@ open class ExtensionProvider: NEPacketTunnelProvider {
         // must never replace the previous last-known-good configuration.
         do {
             try persistLastGoodStartOptions(effectiveOptions)
+            DiagnosticsLog.record("tunnel.lastgood.persist", result: .pass, operation: operationID, attempt: attemptID)
         } catch {
-            DiagnosticsLog.record("tunnel.lastgood.persist", result: .fail,
+            DiagnosticsLog.record("tunnel.lastgood.persist", result: .fail, operation: operationID, attempt: attemptID,
                                     errorDomain: (error as NSError).domain, errorCode: (error as NSError).code)
             Self.logger.error("Unable to persist last-good start options: \(error.localizedDescription)")
         }
