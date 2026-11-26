@@ -69,16 +69,163 @@ public enum SignedEntitlements {
         return Array(Set(groups.filter { $0.hasPrefix("group.") })).sorted()
     }
 
-    /// Parses the XML entitlements blob out of a Mach-O image (thin or universal).
+    /// Parses the entitlements of a Mach-O image (thin or universal).
+    /// Prefers the XML blob; falls back to the DER blob when XML is absent,
+    /// so a DER-only signature is read rather than reported as "no rights".
     public static func parse(_ data: Data) -> [String: Any]? {
         var slice = data
         if let universal = arm64Slice(data) {
             slice = universal
         }
-        guard let blob = entitlementsBlob(slice) else { return nil }
-        guard blob.count > 8 else { return nil }
-        let payload = blob.subdata(in: 8..<blob.count)
-        return (try? PropertyListSerialization.propertyList(from: payload, options: [], format: nil)) as? [String: Any]
+        if let blob = entitlementsBlob(slice), blob.count > 8,
+           let dict = (try? PropertyListSerialization.propertyList(
+               from: blob.subdata(in: 8..<blob.count), options: [], format: nil
+           )) as? [String: Any] {
+            return dict
+        }
+        return parseDEREntitlements(data)
+    }
+
+    /// Entitlements decoded from the DER blob (slot 7) of a Mach-O image,
+    /// or nil when the blob is absent or malformed. Never invents values:
+    /// a key the signer did not encode stays absent from the result.
+    public static func parseDEREntitlements(_ data: Data) -> [String: Any]? {
+        let slice = arm64Slice(data) ?? data
+        guard let blob = signatureBlob(slice, slot: 7), // CS_SLOT_DER_ENTITLEMENTS
+              blob.count > 8 else { return nil }
+        return derPlist(Array(blob.subdata(in: 8..<blob.count)))
+    }
+
+    /// Semantic comparison of the XML and DER entitlements of a Mach-O image.
+    /// Returns nil when only one source is present (nothing to compare)
+    /// or when either side cannot be decoded.
+    public static func xmlDEREntitlementsMatch(_ data: Data) -> Bool? {
+        let slice = arm64Slice(data) ?? data
+        guard let xmlBlob = entitlementsBlob(slice), xmlBlob.count > 8,
+              let xml = (try? PropertyListSerialization.propertyList(
+                  from: xmlBlob.subdata(in: 8..<xmlBlob.count), options: [], format: nil
+              )) as? [String: Any] else { return nil }
+        guard let der = parseDEREntitlements(data) else { return nil }
+        return normalizedPlist(xml) == normalizedPlist(der)
+    }
+
+    /// Round-trips a dictionary through a binary plist so values from
+    /// different decoders (PropertyListSerialization vs DER) compare with
+    /// identical types.
+    private static func normalizedPlist(_ dict: [String: Any]) -> [String: Any] {
+        guard let data = try? PropertyListSerialization.data(
+                fromPropertyList: dict, format: .binary, options: 0),
+              let normalized = (try? PropertyListSerialization.propertyList(
+                  from: data, options: [], format: nil)) as? [String: Any] else {
+            return [:]
+        }
+        return normalized
+    }
+
+    // MARK: - Apple plist-in-DER entitlements
+    //
+    // Two dialects observed in real re-signed artifacts:
+    //  zsign-class: root 0x70 [ version(0x02), dict(0xB0) [ pair* ] ]
+    //  Feather:     root 0x31 [ pair* ]
+    //  pair := 0x30 [ key(0x0C string), value ]
+    //  value := 0x0C string | 0x01 bool | 0x02 integer | 0x30 array
+
+    private struct DERRange {
+        let tag: UInt8
+        let start: Int
+        let end: Int
+    }
+
+    /// Reads one tag-length-value element at `offset`; long-form lengths supported.
+    private static func derTLV(_ bytes: [UInt8], _ offset: Int) -> DERRange? {
+        guard offset >= 0, offset + 2 <= bytes.count else { return nil }
+        let tag = bytes[offset]
+        var off = offset + 1
+        let first = bytes[off]
+        var length = 0
+        if first < 0x80 {
+            length = Int(first)
+            off += 1
+        } else {
+            let num = Int(first & 0x7f)
+            guard num > 0, num <= 4, off + 1 + num <= bytes.count else { return nil }
+            for i in 0..<num {
+                length = (length << 8) | Int(bytes[off + 1 + i])
+            }
+            off += 1 + num
+        }
+        guard length >= 0, off + length <= bytes.count else { return nil }
+        return DERRange(tag: tag, start: off, end: off + length)
+    }
+
+    private static func derPlist(_ payload: [UInt8]) -> [String: Any]? {
+        guard let root = derTLV(payload, 0) else { return nil }
+        let pairs: [UInt8]
+        switch root.tag {
+        case 0x70: // zsign-class: version integer + dict container
+            var dict: DERRange? = nil
+            var sawVersion = false
+            var off = root.start
+            while off < root.end {
+                guard let member = derTLV(payload, off), member.end <= root.end else { return nil }
+                if member.tag == 0x02, !sawVersion {
+                    sawVersion = true // version, value ignored
+                } else if member.tag == 0xB0, dict == nil {
+                    dict = member
+                } else {
+                    return nil
+                }
+                off = member.end
+            }
+            guard let dict else { return nil }
+            pairs = Array(payload[dict.start..<dict.end])
+        case 0x31, 0x30: // Feather: pairs directly under the root
+            pairs = Array(payload[root.start..<root.end])
+        default:
+            return nil
+        }
+        var result: [String: Any] = [:]
+        var off = 0
+        while off < pairs.count {
+            guard let pair = derTLV(pairs, off), pair.tag == 0x30 else { return nil }
+            guard let key = derTLV(pairs, pair.start), key.tag == 0x0C,
+                  let keyString = String(bytes: pairs[key.start..<key.end], encoding: .utf8) else {
+                return nil
+            }
+            if key.end < pair.end, let value = derTLV(pairs, key.end) {
+                result[keyString] = derValue(pairs, value)
+            } else {
+                result[keyString] = nil // key with no value
+            }
+            off = pair.end
+        }
+        return result
+    }
+
+    private static func derValue(_ bytes: [UInt8], _ tlv: DERRange) -> Any {
+        switch tlv.tag {
+        case 0x0C:
+            return String(bytes: bytes[tlv.start..<tlv.end], encoding: .utf8) as Any
+        case 0x01:
+            return (tlv.end > tlv.start && bytes[tlv.start] != 0) as Any
+        case 0x02:
+            var value = 0
+            for i in tlv.start..<tlv.end {
+                value = (value << 8) | Int(bytes[i])
+            }
+            return value as Any
+        case 0x30:
+            var items: [Any] = []
+            var off = tlv.start
+            while off < tlv.end {
+                guard let item = derTLV(bytes, off), item.end <= tlv.end else { break }
+                items.append(derValue(bytes, item))
+                off = item.end
+            }
+            return items as Any
+        default:
+            return Data(bytes[tlv.start..<tlv.end]) as Any
+        }
     }
 
     // MARK: - Mach-O

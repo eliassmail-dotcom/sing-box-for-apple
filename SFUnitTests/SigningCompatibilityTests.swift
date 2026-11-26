@@ -16,13 +16,15 @@ final class SigningCompatibilityTests: XCTestCase {
         bytes[offset + 3] = UInt8((value >> 24) & 255)
     }
 
-    private func sampleMachO(includeXML: Bool = true, includeDER: Bool = true) throws -> Data {
+    private func sampleMachO(includeXML: Bool = true, includeDER: Bool = true,
+                              derPayload: [UInt8]? = nil) throws -> Data {
         let plist = try PropertyListSerialization.data(fromPropertyList: [
             "com.apple.security.application-groups": ["group.example.shared"],
             "com.apple.developer.team-identifier": "EXAMPLE1234",
         ], format: .xml, options: 0)
         let xml = big(0xfade7171) + big(UInt32(8 + plist.count)) + Array(plist)
-        let der = big(0xfade7172) + big(10) + [UInt8(0x30), UInt8(0x00)]
+        let derBody = derPayload ?? [UInt8(0x30), UInt8(0x00)]
+        let der = big(0xfade7172) + big(UInt32(8 + derBody.count)) + derBody
         let slots: [(UInt32, [UInt8])] =
             (includeXML ? [(UInt32(5), xml)] : []) + (includeDER ? [(UInt32(7), der)] : [])
 
@@ -66,10 +68,68 @@ final class SigningCompatibilityTests: XCTestCase {
         XCTAssertFalse(SignedEntitlements.hasDEREntitlements(sample))
     }
 
-    func testDEROnlyDoesNotInventXMLRights() throws {
-        let sample = try sampleMachO(includeXML: false)
-        XCTAssertNil(SignedEntitlements.parse(sample))
+    /// Real DER entitlements blob from a zsign-class CI signature (VT app, team AXSTP35NFJ).
+    /// Root dialect: 0x70 [ version, 0xB0 dict [ pairs ] ].
+    private static let zsignDERFixture: [UInt8] = {
+        Array(Data(base64Encoded:
+            "cIGOAgEBsIGIMD4MFmFwcGxpY2F0aW9uLWlkZW50aWZpZXIMJEFYU1RQMzVORkouYXBwLmFtZXRoeXN0NDE4NC5jb3JuMTgxNjAxDCNjb20uYXBwbGUuZGV2ZWxvcGVyLnRlYW0taWRlbnRpZmllcgwKQVhTVFAzNU5GSjATDA5nZXQtdGFzay1hbGxvdwEBAA=="
+        )!)
+    }()
+
+    /// Real DER entitlements blob from a Feather signature (SFI b41, same team).
+    /// Root dialect: 0x31 [ pairs ] (no version/dict wrapper).
+    private static let featherDERFixture: [UInt8] = {
+        Array(Data(base64Encoded:
+            "MYIKJzA+DBZhcHBsaWNhdGlvbi1pZGVudGlmaWVyDCRBWFNUUDM1TkZKLmFwcC5hbWV0aHlzdDQxODQuY29ybjE4MTYwHQwPYXBzLWVudmlyb25tZW50DApwcm9kdWN0aW9uMDgMKGNvbS5hcHBsZS5kZXZlbG9wZXIuQ2xhc3NLaXQtZW52aXJvbm1lbnQwDAwKcHJvZHVjdGlvbjAsDB9jb20uYXBwbGUuZGV2ZWxvcGVyLmFwcGxlc2lnbmluMAkMB0RlZmF1bHQwKwwmY29tLmFwcGxlLmRldmVsb3Blci5hc3NvY2lhdGVkLWRvbWFpbnMMASowTQxIY29tLmFwcGxlLmRldmVsb3Blci5hdXRoZW50aWNhdGlvbi1zZXJ2aWNlcy5hdXRvZmlsbC1jcmVkZW50aWFsLXByb3ZpZGVyAQEBMEAMO2NvbS5hcHBsZS5kZXZlbG9wZXIuYXZmb3VuZGF0aW9uLm11bHRpdGFza2luZy1jYW1lcmEtYWNjZXNzAQEBMDIMLWNvbS5hcHBsZS5kZXZlbG9wZXIuY29yZW1lZGlhLmhscy5sb3ctbGF0ZW5jeQEBATBSDDVjb20uYXBwbGUuZGV2ZWxvcGVyLmRldmljZWNoZWNrLmFwcGF0dGVzdC1lbnZpcm9ubWVudDAZDAtkZXZlbG9wbWVudAwKcHJvZHVjdGlvbjAkDB9jb20uYXBwbGUuZGV2ZWxvcGVyLmdhbWUtY2VudGVyAQEBMCIMHWNvbS5hcHBsZS5kZXZlbG9wZXIuaGVhbHRoa2l0AQEBMDgMJGNvbS5hcHBsZS5kZXZlbG9wZXIuaGVhbHRoa2l0LmFjY2VzczAQDA5oZWFsdGgtcmVjb3JkczA2DDFjb20uYXBwbGUuZGV2ZWxvcGVyLmhlYWx0aGtpdC5iYWNrZ3JvdW5kLWRlbGl2ZXJ5AQEBMDgMM2NvbS5hcHBsZS5kZXZlbG9wZXIuaGVhbHRoa2l0LnJlY2FsaWJyYXRlLWVzdGltYXRlcwEBATAgDBtjb20uYXBwbGUuZGV2ZWxvcGVyLmhvbWVraXQBAQEwSgxGY29tLmFwcGxlLmRldmVsb3Blci5pY2xvdWQtY29udGFpbmVyLWRldmVsb3BtZW50LWNvbnRhaW5lci1pZGVudGlmaWVyczAAMDQMMGNvbS5hcHBsZS5kZXZlbG9wZXIuaWNsb3VkLWNvbnRhaW5lci1pZGVudGlmaWVyczAAMCgMI2NvbS5hcHBsZS5kZXZlbG9wZXIuaWNsb3VkLXNlcnZpY2VzDAEqMCcMI2NvbS5hcHBsZS5kZXZlbG9wZXIuaW4tYXBwLXBheW1lbnRzMAAwOww2Y29tLmFwcGxlLmRldmVsb3Blci5rZXJuZWwuZXh0ZW5kZWQtdmlydHVhbC1hZGRyZXNzaW5nAQEBMEAMO2NvbS5hcHBsZS5kZXZlbG9wZXIua2VybmVsLmluY3JlYXNlZC1kZWJ1Z2dpbmctbWVtb3J5LWxpbWl0AQEBMDYMMWNvbS5hcHBsZS5kZXZlbG9wZXIua2VybmVsLmluY3JlYXNlZC1tZW1vcnktbGltaXQBAQEwOAwzY29tLmFwcGxlLmRldmVsb3Blci5uZXR3b3JraW5nLkhvdHNwb3RDb25maWd1cmF0aW9uAQEBMC0MKGNvbS5hcHBsZS5kZXZlbG9wZXIubmV0d29ya2luZy5tdWx0aXBhdGgBAQEwgcAML2NvbS5hcHBsZS5kZXZlbG9wZXIubmV0d29ya2luZy5uZXR3b3JrZXh0ZW5zaW9uMIGMDBJhcHAtcHJveHktcHJvdmlkZXIMF2NvbnRlbnQtZmlsdGVyLXByb3ZpZGVyDBZwYWNrZXQtdHVubmVsLXByb3ZpZGVyDAlkbnMtcHJveHkMDGRucy1zZXR0aW5ncwwFcmVsYXkME3VybC1maWx0ZXItcHJvdmlkZXIMEGhvdHNwb3QtcHJvdmlkZXIwNQwmY29tLmFwcGxlLmRldmVsb3Blci5uZXR3b3JraW5nLnZwbi5hcGkwCwwJYWxsb3ctdnBuMC0MKGNvbS5hcHBsZS5kZXZlbG9wZXIubmV0d29ya2luZy53aWZpLWluZm8BAQEwQgwtY29tLmFwcGxlLmRldmVsb3Blci5uZmMucmVhZGVyc2Vzc2lvbi5mb3JtYXRzMBEMBE5ERUYMA1RBRwwEUEFDRTA7DCljb20uYXBwbGUuZGV2ZWxvcGVyLnBhc3MtdHlwZS1pZGVudGlmaWVyczAODAxBWFNUUDM1TkZKLiowHQwYY29tLmFwcGxlLmRldmVsb3Blci5zaXJpAQEBMDEMLGNvbS5hcHBsZS5kZXZlbG9wZXIuc3lzdGVtLWV4dGVuc2lvbi5pbnN0YWxsAQEBMDEMI2NvbS5hcHBsZS5kZXZlbG9wZXIudGVhbS1pZGVudGlmaWVyDApBWFNUUDM1TkZKMDYMMmNvbS5hcHBsZS5kZXZlbG9wZXIudWJpcXVpdHktY29udGFpbmVyLWlkZW50aWZpZXJzMAAwPwwvY29tLmFwcGxlLmRldmVsb3Blci51YmlxdWl0eS1rdnN0b3JlLWlkZW50aWZpZXIMDEFYU1RQMzVORkouKjBCDB5jb20uYXBwbGUuZGV2ZWxvcGVyLnVzZXItZm9udHMwIAwJYXBwLXVzYWdlDBNzeXN0ZW0taW5zdGFsbGF0aW9uMDgMM2NvbS5hcHBsZS5kZXZlbG9wZXIudXNlcm5vdGlmaWNhdGlvbnMuY29tbXVuaWNhdGlvbgEBATA5DDRjb20uYXBwbGUuZGV2ZWxvcGVyLnVzZXJub3RpZmljYXRpb25zLnRpbWUtc2Vuc2l0aXZlAQEBMCMMHmNvbS5hcHBsZS5kZXZlbG9wZXIud2VhdGhlcmtpdAEBATA2DB5jb20uYXBwbGUuZGV2ZWxvcGVyLndpZmktYXdhcmUwFAwHUHVibGlzaAwJU3Vic2NyaWJlMDgMM2NvbS5hcHBsZS5leHRlcm5hbC1hY2Nlc3Nvcnkud2lyZWxlc3MtY29uZmlndXJhdGlvbgEBATCBrAwlY29tLmFwcGxlLnNlY3VyaXR5LmFwcGxpY2F0aW9uLWdyb3VwczCBggwYZ3JvdXAuYTFhMzEyNmQ3NWVlOTBiZC4yDBhncm91cC5hMWEzMTI2ZDc1ZWU5MGJkLjEMGGdyb3VwLmExYTMxMjZkNzVlZTkwYmQuMwwYZ3JvdXAuYTFhMzEyNmQ3NWVlOTBiZC41DBhncm91cC5hMWEzMTI2ZDc1ZWU5MGJkLjQwEwwOZ2V0LXRhc2stYWxsb3cBAQAwFAwPaW50ZXItYXBwLWF1ZGlvAQEBMDkMFmtleWNoYWluLWFjY2Vzcy1ncm91cHMwHwwMQVhTVFAzNU5GSi4qDA9jb20uYXBwbGUudG9rZW4="
+        )!)
+    }()
+
+    func testDEROnlySignatureIsReadFromDER() throws {
+        let sample = try sampleMachO(includeXML: false, derPayload: Self.zsignDERFixture)
+        let entitlements = try XCTUnwrap(SignedEntitlements.parse(sample))
+        XCTAssertEqual(entitlements["application-identifier"] as? String,
+                       "AXSTP35NFJ.app.amethyst4184.corn1816")
+        XCTAssertEqual(entitlements["com.apple.developer.team-identifier"] as? String,
+                       "AXSTP35NFJ")
+        XCTAssertEqual(entitlements["get-task-allow"] as? Bool, false)
         XCTAssertTrue(SignedEntitlements.hasDEREntitlements(sample))
+    }
+
+    func testFeatherDERDialectIsDecoded() throws {
+        let sample = try sampleMachO(includeXML: false, derPayload: Self.featherDERFixture)
+        let entitlements = try XCTUnwrap(SignedEntitlements.parse(sample))
+        XCTAssertEqual(entitlements["com.apple.developer.team-identifier"] as? String,
+                       "AXSTP35NFJ")
+        let groups = try XCTUnwrap(entitlements["com.apple.security.application-groups"] as? [Any])
+        XCTAssertEqual(groups.count, 5)
+        XCTAssertTrue(groups.contains { ($0 as? String) == "group.a1a3126d75ee90bd.2" })
+        let ne = try XCTUnwrap(entitlements["com.apple.developer.networking.networkextension"] as? [Any])
+        XCTAssertTrue(ne.contains { ($0 as? String) == "packet-tunnel-provider" })
+    }
+
+    func testXMLIsPreferredOverDERWhenBothPresent() throws {
+        // XML declares one team; the zsign fixture another: XML must win.
+        let sample = try sampleMachO(includeXML: true, derPayload: Self.zsignDERFixture)
+        let entitlements = try XCTUnwrap(SignedEntitlements.parse(sample))
+        XCTAssertEqual(entitlements["com.apple.developer.team-identifier"] as? String,
+                       "EXAMPLE1234")
+        XCTAssertNil(entitlements["application-identifier"])
+    }
+
+    func testXMLDERComparisonDetectsMismatchAndAbsence() throws {
+        let mismatch = try sampleMachO(includeXML: true, derPayload: Self.zsignDERFixture)
+        XCTAssertEqual(SignedEntitlements.xmlDEREntitlementsMatch(mismatch), false)
+
+        let noDER = try sampleMachO(includeDER: false)
+        XCTAssertNil(SignedEntitlements.xmlDEREntitlementsMatch(noDER))
+
+        let derOnly = try sampleMachO(includeXML: false, derPayload: Self.zsignDERFixture)
+        XCTAssertNil(SignedEntitlements.xmlDEREntitlementsMatch(derOnly))
+    }
+
+    func testMalformedDERBlobYieldsNoEntitlements() throws {
+        let sample = try sampleMachO(includeXML: false, derPayload: [0x70, 0x81, 0xFF, 0x00])
+        XCTAssertNil(SignedEntitlements.parse(sample))
     }
 
     func testRejectsMalformedSuperblobCount() throws {
