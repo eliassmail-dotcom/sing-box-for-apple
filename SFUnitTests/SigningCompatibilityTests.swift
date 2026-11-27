@@ -1,0 +1,94 @@
+import Foundation
+import XCTest
+@testable import Library
+
+/// Pure synthetic Mach-O signatures: no developer account, keychain or provisioning needed.
+final class SigningCompatibilityTests: XCTestCase {
+    private func big(_ value: UInt32) -> [UInt8] {
+        [UInt8((value >> 24) & 255), UInt8((value >> 16) & 255),
+         UInt8((value >> 8) & 255), UInt8(value & 255)]
+    }
+
+    private func little(_ value: UInt32, into bytes: inout [UInt8], at offset: Int) {
+        bytes[offset] = UInt8(value & 255)
+        bytes[offset + 1] = UInt8((value >> 8) & 255)
+        bytes[offset + 2] = UInt8((value >> 16) & 255)
+        bytes[offset + 3] = UInt8((value >> 24) & 255)
+    }
+
+    private func sampleMachO(includeXML: Bool = true, includeDER: Bool = true) throws -> Data {
+        let plist = try PropertyListSerialization.data(fromPropertyList: [
+            "com.apple.security.application-groups": ["group.example.shared"],
+            "com.apple.developer.team-identifier": "EXAMPLE1234",
+        ], format: .xml, options: 0)
+        let xml = big(0xfade7171) + big(UInt32(8 + plist.count)) + Array(plist)
+        let der = big(0xfade7172) + big(10) + [UInt8(0x30), UInt8(0x00)]
+        let slots: [(UInt32, [UInt8])] =
+            (includeXML ? [(UInt32(5), xml)] : []) + (includeDER ? [(UInt32(7), der)] : [])
+
+        var blob = big(0xfade0cc0)
+        let payloadLength = slots.reduce(0) { $0 + $1.1.count }
+        blob += big(UInt32(12 + slots.count * 8 + payloadLength))
+        blob += big(UInt32(slots.count))
+        var offset = 12 + slots.count * 8
+        for (slot, payload) in slots {
+            blob += big(slot)
+            blob += big(UInt32(offset))
+            offset += payload.count
+        }
+        for (_, payload) in slots { blob += payload }
+
+        // Minimal 64-bit Mach-O header and one LC_CODE_SIGNATURE load command.
+        var file = [UInt8](repeating: 0, count: 48)
+        little(0xfeedfacf, into: &file, at: 0)
+        little(1, into: &file, at: 16) // ncmds
+        little(16, into: &file, at: 20) // sizeofcmds
+        little(0x1d, into: &file, at: 32)
+        little(16, into: &file, at: 36)
+        little(48, into: &file, at: 40)
+        little(UInt32(blob.count), into: &file, at: 44)
+        return Data(file + blob)
+    }
+
+    func testReadsXMLAndDetectsDERSlot() throws {
+        let sample = try sampleMachO()
+        let entitlements = try XCTUnwrap(SignedEntitlements.parse(sample))
+        XCTAssertEqual(entitlements["com.apple.security.application-groups"] as? [String],
+                       ["group.example.shared"])
+        XCTAssertEqual(entitlements["com.apple.developer.team-identifier"] as? String,
+                       "EXAMPLE1234")
+        XCTAssertTrue(SignedEntitlements.hasDEREntitlements(sample))
+    }
+
+    func testMissingDERIsReportedWithoutCrashing() throws {
+        let sample = try sampleMachO(includeDER: false)
+        XCTAssertNotNil(SignedEntitlements.parse(sample))
+        XCTAssertFalse(SignedEntitlements.hasDEREntitlements(sample))
+    }
+
+    func testDEROnlyDoesNotInventXMLRights() throws {
+        let sample = try sampleMachO(includeXML: false)
+        XCTAssertNil(SignedEntitlements.parse(sample))
+        XCTAssertTrue(SignedEntitlements.hasDEREntitlements(sample))
+    }
+
+    func testRejectsMalformedSuperblobCount() throws {
+        var sample = [UInt8](try sampleMachO())
+        // CS_SuperBlob count is at dataoff + 8, not dataoff + 4.
+        sample.replaceSubrange(56..<60, with: big(1000))
+        XCTAssertNil(SignedEntitlements.parse(Data(sample)))
+    }
+
+    func testRejectsTruncatedSignature() throws {
+        var sample = [UInt8](try sampleMachO())
+        sample.removeLast(10)
+        XCTAssertNil(SignedEntitlements.parse(Data(sample)))
+        XCTAssertFalse(SignedEntitlements.hasDEREntitlements(Data(sample)))
+    }
+
+    func testUnsignedBinaryHasNoEntitlements() {
+        let unsigned = Data(repeating: 0, count: 48)
+        XCTAssertNil(SignedEntitlements.parse(unsigned))
+        XCTAssertFalse(SignedEntitlements.hasDEREntitlements(unsigned))
+    }
+}
