@@ -85,10 +85,10 @@ public struct GroupPresentationSettings: Codable, Equatable {
     public func displayedGroups(_ groups: [OutboundGroup]) -> [OutboundGroup] {
         let pairs = Self.providerPairTags(in: groups)
         let byTag = Dictionary(groups.map { ($0.tag, $0) }, uniquingKeysWith: { first, _ in first })
-        let tags = visibleTags(available: groups.map(\.tag).filter { !pairs.contains($0) })
+        let tags = visibleTags(available: groups.filter { $0.type != "chain-hop" }.map(\.tag).filter { !pairs.contains($0) })
         return tags.compactMap { tag in
             guard var group = byTag[tag] else { return nil }
-            group.items = group.items.map { item in
+            group.items = group.items.filter { $0.type != "chain-hop" }.map { item in
                 guard pairs.contains(item.tag), let pair = byTag[item.tag] else { return item }
                 let active = pair.items.first { $0.tag == pair.selected }
                 return OutboundGroupItem(tag: item.tag, type: "vless",

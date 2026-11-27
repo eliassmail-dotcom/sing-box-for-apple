@@ -88,9 +88,17 @@ final class LXGeminiBuilderTests: XCTestCase {
             XCTAssertEqual(chain["type"] as? String, "chain")
             // A strategy change must automatically affect hop #0; never freeze
             // its current VLESS leaf at subscription-refresh/start time.
-            XCTAssertEqual(chain["outbounds"] as? [String], ["Стратегия", exit])
+            let exitCopy = "LX • Gemini • Exit • " + exit
+            XCTAssertEqual(chain["outbounds"] as? [String], ["Стратегия", exitCopy])
             XCTAssertEqual(chain["interrupt_exist_connections"] as? Bool, false)
+            XCTAssertNil(chain["idle_timeout"])
             XCTAssertNil(chain["detour"])
+            let original = try item(exit, in: out)
+            let copied = try item(exitCopy, in: out)
+            XCTAssertEqual(copied["type"] as? String, original["type"] as? String)
+            XCTAssertEqual(copied["server"] as? String, original["server"] as? String)
+            XCTAssertEqual(copied["uuid"] as? String, original["uuid"] as? String)
+            XCTAssertNil(original["detour"])
         }
         XCTAssertEqual(
             try item("Gemini", in: out)["default"] as? String,
@@ -112,6 +120,59 @@ final class LXGeminiBuilderTests: XCTestCase {
         XCTAssertEqual(auto["tolerance_percent"] as? Int, 35)
         // Legacy per-source group remains available to any external references.
         XCTAssertNotNil(try? item("Legacy Chain", in: tuned))
+    }
+
+    func testGeminiChainExitsAreIsolatedIncludingRetainedChain() throws {
+        var root = try transformed(chains: true)
+        let before = try outbounds(root)
+        let direct = ["Swiss (Gemini)", "Austria (Gemini)"]
+        let chains = before.filter { $0["type"] as? String == "chain" }
+        let upper = chains.flatMap { ($0["outbounds"] as? [String] ?? []).dropFirst() }
+        XCTAssertEqual(Set(upper).count, upper.count)
+        XCTAssertTrue(Set(upper).isDisjoint(with: direct))
+        XCTAssertEqual(try item("Gemini • Авто", in: before)["outbounds"] as? [String], direct)
+        XCTAssertTrue(try LXGeminiBuilder.apply(to: &root, chainsEnabled: true))
+        let after = try outbounds(root)
+        XCTAssertEqual(Set(before.compactMap { $0["tag"] as? String }), Set(after.compactMap { $0["tag"] as? String }))
+        for leaf in direct {
+            XCTAssertNil(try item(leaf, in: after)["detour"])
+        }
+        XCTAssertTrue(try LXGeminiBuilder.apply(to: &root, chainsEnabled: false))
+        let disabled = try outbounds(root)
+        XCTAssertFalse(disabled.contains { ($0["tag"] as? String)?.hasPrefix("LX • Gemini • Exit • ") == true })
+        let retained = try item("Legacy Chain", in: disabled)
+        let exit = try XCTUnwrap((retained["outbounds"] as? [String])?.last)
+        XCTAssertNotNil(try? item(exit, in: disabled))
+        XCTAssertFalse(direct.contains(exit))
+    }
+
+    func testWireGuardStaysDirectAndIsNeverDuplicated() throws {
+        var root = try document(source)
+        var out = try outbounds(root)
+        out.append(["type": "wireguard", "tag": "WG"])
+        let index = try XCTUnwrap(out.firstIndex { $0["tag"] as? String == "Gemini+" })
+        out[index]["outbounds"] = ["Swiss (Gemini)", "WG"]
+        root["outbounds"] = out
+        XCTAssertTrue(try LXGeminiBuilder.apply(to: &root, chainsEnabled: true))
+        let built = try outbounds(root)
+        XCTAssertEqual(try item("Gemini • Авто", in: built)["outbounds"] as? [String], ["Swiss (Gemini)", "WG"])
+        XCTAssertEqual(try item("Gemini • Chain • A", in: built)["outbounds"] as? [String], ["LX • Gemini • Chain • Swiss (Gemini)"])
+        XCTAssertEqual(built.filter { $0["type"] as? String == "wireguard" }.count, 1)
+
+        out[index]["outbounds"] = ["WG"]
+        var onlyWG = try document(source)
+        onlyWG["outbounds"] = out
+        XCTAssertThrowsError(try LXGeminiBuilder.apply(to: &onlyWG, chainsEnabled: true))
+        XCTAssertTrue(try LXGeminiBuilder.apply(to: &onlyWG, chainsEnabled: false))
+    }
+
+    func testSharedLegacyUpperGroupIsRejectedInsteadOfRedirectingDirectGemini() throws {
+        var root = try document(source)
+        var out = try outbounds(root)
+        let legacy = try XCTUnwrap(out.firstIndex { $0["tag"] as? String == "Legacy Chain" })
+        out[legacy]["outbounds"] = ["France", "Gemini+"]
+        root["outbounds"] = out
+        XCTAssertThrowsError(try LXGeminiBuilder.apply(to: &root, chainsEnabled: true))
     }
 
     func testToggleAndSavedSettingsAreScopedToProfile() throws {

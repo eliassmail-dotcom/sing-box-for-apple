@@ -10,6 +10,7 @@ public enum LXGeminiBuilder {
     private static let mixedTag = "Gemini • Super • A"
     private static let chainGroupTag = "Gemini • Chain • A"
     private static let chainPrefix = "LX • Gemini • Chain • "
+    private static let chainExitPrefix = "LX • Gemini • Exit • "
     private static let maxDepth = 12
 
     private static let eligibleLeafTypes: Set<String> = [
@@ -87,12 +88,24 @@ public enum LXGeminiBuilder {
             return result
         }
 
-        var chainNames: [String] = []
-        if chainsEnabled {
-            for sourceLeaf in directNodes {
-                let name = chainPrefix + sourceLeaf
-                chainNames.append(name)
+        // LX.37 SPEC 165 rewrites the detour of every upper-hop node globally.
+        // Never let a chain take over the direct Gemini+ instance. Stateful
+        // WireGuard peers cannot safely be duplicated with the same keys.
+        let chainLeaves = chainsEnabled ? directNodes.filter {
+            byTag[$0]?["type"] as? String != "wireguard"
+        } : []
+        if chainsEnabled && chainLeaves.isEmpty {
+            throw LXProfileOverrides.OverrideError.invalidOption(
+                "Gemini Chains: нет узлов для отдельной цепочки; WireGuard доступен только напрямую"
+            )
+        }
+        let chainNames = chainLeaves.map { chainPrefix + $0 }
+        let chainExits = try chainLeaves.map { leaf -> [String: Any] in
+            guard var copy = byTag[leaf] else {
+                throw LXProfileOverrides.OverrideError.invalidOption("Gemini+: отсутствует outbound \(leaf)")
             }
+            copy["tag"] = chainExitPrefix + leaf
+            return copy
         }
 
         let manualMembers = directNodes + chainNames
@@ -124,14 +137,13 @@ public enum LXGeminiBuilder {
             ],
         ] + (chainsEnabled
             ? [urlTest(chainGroupTag, members: chainNames)]
-            : []) + zip(chainNames, directNodes).map { name, leaf in
+            : []) + chainExits + zip(chainNames, chainLeaves).map { name, leaf in
                 [
                     "type": "chain",
                     "tag": name,
                     // The LX chain engine resolves the selected Strategy leaf
                     // at DIAL TIME. No fixed first-hop node or reload required.
-                    "outbounds": ["Стратегия", leaf],
-                    "idle_timeout": "5m",
+                    "outbounds": ["Стратегия", chainExitPrefix + leaf],
                     "interrupt_exist_connections": false,
                 ] as [String: Any]
             }
@@ -142,7 +154,54 @@ public enum LXGeminiBuilder {
         let replacedTags: Set<String> = [rootTag, directTag, manualTag, mixedTag, chainGroupTag]
         outbounds.removeAll { item in
             guard let tag = item["tag"] as? String else { return false }
-            return replacedTags.contains(tag) || tag.hasPrefix(chainPrefix)
+            return replacedTags.contains(tag) || tag.hasPrefix(chainPrefix) || tag.hasPrefix(chainExitPrefix)
+        }
+
+        // A retained, independently named chain can also refer to a direct
+        // Gemini leaf (old profiles used clone-on-dial semantics). Isolate
+        // simple upper-hop leaf references without changing the chain's tag.
+        // Reject ambiguous shared groups/stateful peers instead of silently
+        // redirecting a direct path. This is not a generic legacy converter.
+        var legacyCopies: [[String: Any]] = []
+        var reserved = Set(outbounds.compactMap { $0["tag"] as? String })
+        for item in generated {
+            if let tag = item["tag"] as? String {
+                guard reserved.insert(tag).inserted else {
+                    throw LXProfileOverrides.OverrideError.invalidOption("конфликт имени Gemini outbound: \(tag)")
+                }
+            }
+        }
+        let directSet = Set(directNodes)
+        func reachesDirect(_ tag: String, seen: inout Set<String>) -> Bool {
+            if directSet.contains(tag) { return true }
+            guard seen.insert(tag).inserted, let entry = byTag[tag],
+                  ["selector", "urltest"].contains(entry["type"] as? String ?? ""),
+                  let members = entry["outbounds"] as? [String] else { return false }
+            return members.contains { reachesDirect($0, seen: &seen) }
+        }
+        for index in outbounds.indices {
+            guard outbounds[index]["type"] as? String == "chain",
+                  let name = outbounds[index]["tag"] as? String,
+                  var positions = outbounds[index]["outbounds"] as? [String] else { continue }
+            for position in positions.indices.dropFirst() {
+                let leaf = positions[position]
+                var seen = Set<String>()
+                guard reachesDirect(leaf, seen: &seen) else { continue }
+                guard directSet.contains(leaf), var copy = byTag[leaf],
+                      copy["type"] as? String != "wireguard" else {
+                    throw LXProfileOverrides.OverrideError.invalidOption(
+                        "LX.37: цепочка \(name) использует общую группу Gemini+ или WireGuard; требуется отдельный выход"
+                    )
+                }
+                let copyTag = "LX • Gemini • Retained Exit • " + name + " • " + String(position) + " • " + leaf
+                guard reserved.insert(copyTag).inserted else {
+                    throw LXProfileOverrides.OverrideError.invalidOption("конфликт имени Gemini outbound: \(copyTag)")
+                }
+                copy["tag"] = copyTag
+                legacyCopies.append(copy)
+                positions[position] = copyTag
+            }
+            outbounds[index]["outbounds"] = positions
         }
         let retainedTags = Set(outbounds.compactMap { $0["tag"] as? String })
         for item in generated {
@@ -152,6 +211,7 @@ public enum LXGeminiBuilder {
                 )
             }
         }
+        outbounds.append(contentsOf: legacyCopies)
         outbounds.append(contentsOf: generated)
         root["outbounds"] = outbounds
         return true
