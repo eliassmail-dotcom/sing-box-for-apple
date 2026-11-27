@@ -19,6 +19,10 @@ enum WidgetAppConfiguration {
     static var widgetControlKind: String {
         "\(packageName).widget.ServiceToggle"
     }
+
+    static var widgetNextNodeKind: String {
+        "\(packageName).widget.NextNode"
+    }
 }
 
 extension NEVPNStatus {
@@ -82,8 +86,100 @@ enum WidgetTunnelControl {
         }
     }
 
-    private static func loadManager() async throws -> NETunnelProviderManager? {
+    /// Sends a command to the already-running PacketTunnel extension. Using
+    /// sendProviderMessage avoids importing Libbox into the widget target,
+    /// starting a second VPN session, or modifying subscription settings.
+    static func changeNode() async throws {
+        guard let manager = try await loadManager(connectedOnly: true) else {
+            throw nodeError("Подключённый туннель sing-box не найден")
+        }
+        guard manager.connection.status == .connected,
+              let session = manager.connection as? NETunnelProviderSession else {
+            throw nodeError("Сначала подключите VPN")
+        }
+        let command = try JSONSerialization.data(withJSONObject: [
+            "lxControl": "changeNode",
+            "version": 1,
+        ])
+
+        let response: Data = try await withCheckedThrowingContinuation { continuation in
+            do {
+                try session.sendProviderMessage(command) { data in
+                    guard let data else {
+                        continuation.resume(throwing: nodeError("Туннель не ответил на команду"))
+                        return
+                    }
+                    continuation.resume(returning: data)
+                }
+            } catch {
+                continuation.resume(throwing: error)
+            }
+        }
+
+        guard let reply = try JSONSerialization.jsonObject(with: response) as? [String: Any] else {
+            throw nodeError("Получен некорректный ответ туннеля")
+        }
+        if reply["ok"] as? Bool == true {
+            guard let previous = reply["previousNode"] as? String,
+                  let selected = reply["selectedNode"] as? String,
+                  !selected.isEmpty, selected != previous else {
+                throw nodeError("Туннель не подтвердил смену активного узла")
+            }
+            NSLog("[WidgetTunnelControl] LX Next Node confirmed")
+            return
+        }
+        let reason = reply["error"] as? String ?? "Не удалось сменить узел"
+        throw nodeError(reason)
+    }
+
+    private static func nodeError(_ message: String) -> NSError {
+        NSError(domain: "LXNextNodeControl", code: 1, userInfo: [
+            NSLocalizedDescriptionKey: message,
+        ])
+    }
+
+    /// Use the tunnel owned by this app instead of loadAllFromPreferences().first.
+    /// iOS may retain old or additional VPN profiles; sending the LX command to
+    /// one of those silently leaves the Dashboard's running route unchanged.
+    private static func loadManager(connectedOnly: Bool = false) async throws -> NETunnelProviderManager? {
         let managers = try await NETunnelProviderManager.loadAllFromPreferences()
-        return managers.first
+        // GBox/other signing tools can rewrite the actual CFBundleIdentifier
+        // while leaving BasePackageIdentifier in Info.plist unchanged.
+        // Derive the installed package from this signed .widget extension too.
+        var packageNames = [WidgetAppConfiguration.packageName]
+        if let signedWidgetID = Bundle.main.bundleIdentifier,
+           signedWidgetID.hasSuffix(".widget") {
+            let signedBase = String(signedWidgetID.dropLast(".widget".count))
+            if !packageNames.contains(signedBase) {
+                packageNames.insert(signedBase, at: 0)
+            }
+        }
+        let expectedIDs = Set(packageNames.flatMap { base in
+            ["\(base).extension", "\(base).system"]
+        })
+        let exact = managers.filter { manager in
+            guard let tunnel = manager.protocolConfiguration as? NETunnelProviderProtocol,
+                  let provider = tunnel.providerBundleIdentifier else { return false }
+            return expectedIDs.contains(provider)
+        }
+        // Fallback for unusual IPA resigning: only use the stable serverAddress
+        // when exactly one candidate exists. Never guess between two sing-box
+        // installations or send our widget command to an unrelated VPN.
+        let candidates: [NETunnelProviderManager]
+        if !exact.isEmpty {
+            candidates = exact
+        } else {
+            let fallback = managers.filter { manager in
+                guard let tunnel = manager.protocolConfiguration as? NETunnelProviderProtocol,
+                      let provider = tunnel.providerBundleIdentifier else { return false }
+                return tunnel.serverAddress == "sing-box" &&
+                    (provider.hasSuffix(".extension") || provider.hasSuffix(".system"))
+            }
+            candidates = fallback.count == 1 ? fallback : []
+        }
+        if connectedOnly {
+            return candidates.first(where: { $0.connection.status == .connected })
+        }
+        return candidates.first(where: { $0.connection.status.isStarted }) ?? candidates.first
     }
 }

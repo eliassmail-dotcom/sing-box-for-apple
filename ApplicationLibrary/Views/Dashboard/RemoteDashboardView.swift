@@ -162,9 +162,11 @@ public struct RemoteDashboardView: View {
 
     private func shouldShowCard(_ card: DashboardCard) -> Bool {
         switch card {
-        case .status, .connections, .uploadTraffic, .downloadTraffic, .clashMode, .strategyMode:
+        case .status, .connections, .uploadTraffic, .downloadTraffic, .clashMode, .currentRoutes, .strategyMode:
             return true
-        case .httpProxy, .profile:
+        case .httpProxy, .resilience, .profile:
+            // Resilience settings are persisted per local profile, so they
+            // must not appear in a remote Dashboard without a local profile.
             return false
         }
     }
@@ -182,9 +184,11 @@ public struct RemoteDashboardView: View {
             DownloadTrafficCard()
         case .clashMode:
             ClashModeCard()
+        case .currentRoutes:
+            CurrentRoutesCard()
         case .strategyMode:
             StrategyModeCard()
-        case .httpProxy, .profile:
+        case .httpProxy, .resilience, .profile:
             EmptyView()
         }
     }

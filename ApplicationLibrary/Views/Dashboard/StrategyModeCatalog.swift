@@ -1,4 +1,5 @@
 import Foundation
+import Library
 
 // gru: pure mapping between the four dashboard mode switches and the actual
 // selector tags of the generated profile (Dashboard TZ 14.11.2026, stage 4).
@@ -21,6 +22,21 @@ public struct StrategyModeSpec: Hashable, Identifiable {
     }
 
     public var id: String { title }
+}
+
+// UI-only choice for a selector-backed Manual mode. Automatic URLTest modes
+// use the LX core command below and never change the top-level Strategy tag.
+public enum StrategyNodeChange {
+    // SelectOutbound RPC's reserved LX URLTest command. Must match the core's
+    // group.LXNextNodeTag; no protobuf change or subscription edit is needed.
+    public static let nextNodeCommand = LXNextNodeSelection.commandTag
+
+    public static func nextHealthyManualTag(
+        current: String,
+        candidates: [(tag: String, delayMs: UInt16)]
+    ) -> String? {
+        LXNextNodeSelection.nextHealthyTag(current: current, candidates: candidates)
+    }
 }
 
 public enum StrategyModeCatalog {

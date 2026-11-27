@@ -9,6 +9,14 @@ import os.log
     import CoreLocation
 #endif
 
+// Small, versioned command sent by the Control Center widget via
+// NETunnelProviderSession.sendProviderMessage. Keep separate from the
+// existing start-options payload; never reload the VPN for a node change.
+private struct LXWidgetControlRequest: Decodable {
+    let lxControl: String
+    let version: Int
+}
+
 open class ExtensionProvider: NEPacketTunnelProvider {
     private static let logger = Logger(category: "ExtensionProvider")
 
@@ -349,7 +357,94 @@ open class ExtensionProvider: NEPacketTunnelProvider {
         #endif
     }
 
+    private static func widgetControlReply(
+        ok: Bool, error: String? = nil, previousNode: String? = nil, selectedNode: String? = nil
+    ) -> Data {
+        var payload: [String: Any] = [
+            "ok": ok,
+            "error": error ?? "",
+        ]
+        if let previousNode { payload["previousNode"] = previousNode }
+        if let selectedNode { payload["selectedNode"] = selectedNode }
+        return (try? JSONSerialization.data(withJSONObject: payload)) ?? Data()
+    }
+
+    /// Process the active Strategy group's *current* selected child. Both the
+    /// Dashboard and the Control Center use the same LX command for URLTest,
+    /// so Smart base/white preference and 30-second healthy-node hold are
+    /// enforced by the core, not duplicated in a widget process.
+    private static func snapshotGroups(_ client: LibboxCommandClient) throws -> [OutboundGroup] {
+        let iterator = try client.getGroups()
+        var groups: [OutboundGroup] = []
+        while iterator.hasNext() {
+            if let group = iterator.next() {
+                groups.append(OutboundGroup(group))
+            }
+        }
+        return groups
+    }
+
+    private static func changeActiveNode() throws -> (previousNode: String, selectedNode: String) {
+        let client = try CommandTarget.standaloneClient()
+        let groups = try snapshotGroups(client)
+        guard let previousNode = LXNextNodeSelection.activeLeafTag(in: groups) else {
+            throw ExtensionStartupError("LX: текущий узел не определён")
+        }
+        guard let strategy = groups.first(where: { $0.tag == LXNextNodeSelection.strategyGroupTag }),
+              strategy.type == "selector",
+              let active = groups.first(where: { $0.tag == strategy.selected }) else {
+            throw ExtensionStartupError("LX: активная стратегия не найдена")
+        }
+
+        switch active.type {
+        case "urltest":
+            // The Go URLTest group rotates the leaf of the active tier.
+            // Strategy, Gemini and established connections stay unchanged.
+            try client.selectOutbound(active.tag, outboundTag: LXNextNodeSelection.commandTag)
+        case "selector":
+            guard let next = LXNextNodeSelection.nextHealthyTag(
+                current: active.selected,
+                candidates: active.items.map { (tag: $0.tag, delayMs: $0.urlTestDelay) }
+            ) else {
+                throw ExtensionStartupError("В выбранном режиме нет другого доступного узла")
+            }
+            try client.selectOutbound(active.tag, outboundTag: next)
+        default:
+            throw ExtensionStartupError("Этот режим не поддерживает ручную смену узла")
+        }
+
+        // A successful RPC alone is not sufficient: verify the *live* route,
+        // including nested Smart base -> white -> leaf groups. This prevents
+        // the widget from reporting success when Dashboard still shows the
+        // previous node.
+        let updatedGroups = try snapshotGroups(client)
+        guard let selectedNode = LXNextNodeSelection.activeLeafTag(in: updatedGroups),
+              selectedNode != previousNode else {
+            throw ExtensionStartupError("Команда отправлена, но активный узел не изменился")
+        }
+        return (previousNode, selectedNode)
+    }
+
     override open func handleAppMessage(_ messageData: Data) async -> Data? {
+        // The control command must be recognized BEFORE the legacy settings
+        // decoder. Otherwise a widget tap would trigger reloadService().
+        if let request = try? JSONDecoder().decode(LXWidgetControlRequest.self, from: messageData) {
+            guard request.version == 1, request.lxControl == "changeNode" else {
+                return Self.widgetControlReply(ok: false, error: "Неизвестная команда LX")
+            }
+            do {
+                let change = try await Task.detached(priority: .userInitiated) {
+                    try Self.changeActiveNode()
+                }.value
+                Self.logger.info("LX next-node widget changed the active leaf")
+                return Self.widgetControlReply(
+                    ok: true, previousNode: change.previousNode, selectedNode: change.selectedNode
+                )
+            } catch {
+                Self.logger.error("LX next-node widget command failed: \(error.localizedDescription)")
+                return Self.widgetControlReply(ok: false, error: error.localizedDescription)
+            }
+        }
         do {
             let options = try ExtensionStartOptions.decode(messageData)
             try applyStartOptions(options)

@@ -20,7 +20,7 @@ public extension Notification.Name {
 
 public enum SettingsPage: Hashable {
     case app
-    case core, packetTunnel, onDemandRules, profileOverride, lxFeatures, groupVisibility, remoteControl, sponsors
+    case core, packetTunnel, onDemandRules, profileOverride, lxFeatures, localGenerator, groupVisibility, remoteControl, sponsors
 }
 
 public struct SettingView: View {
@@ -29,7 +29,7 @@ public struct SettingView: View {
             self
         }
 
-        case app, core, packetTunnel, onDemandRules, profileOverride, lxFeatures, groupVisibility, remoteControl, sponsors
+        case app, core, packetTunnel, onDemandRules, profileOverride, lxFeatures, localGenerator, groupVisibility, remoteControl, sponsors
 
         #if os(macOS)
             var page: SettingsPage {
@@ -46,6 +46,8 @@ public struct SettingView: View {
                     return .profileOverride
                 case .lxFeatures:
                     return .lxFeatures
+                case .localGenerator:
+                    return .localGenerator
                 case .groupVisibility:
                     return .groupVisibility
                 case .remoteControl:
@@ -74,6 +76,8 @@ public struct SettingView: View {
                 return String(localized: "Profile Override")
             case .lxFeatures:
                 return "Функции LX"
+            case .localGenerator:
+                return "Локальный генератор"
             case .groupVisibility:
                 return "Видимость групп"
             case .remoteControl:
@@ -97,6 +101,8 @@ public struct SettingView: View {
                 return "square.dashed.inset.filled"
             case .lxFeatures:
                 return "slider.horizontal.3"
+            case .localGenerator:
+                return "curlybraces.square"
             case .groupVisibility:
                 return "list.bullet.indent"
             case .remoteControl:
@@ -122,6 +128,8 @@ public struct SettingView: View {
                     ProfileOverrideView()
                 case .lxFeatures:
                     LXRuntimeSettingsView()
+                case .localGenerator:
+                    LocalGeneratorView()
                 case .groupVisibility:
                     GroupVisibilitySettingsView()
                 case .remoteControl:
@@ -169,6 +177,8 @@ public struct SettingView: View {
                     ProfileOverrideView()
                 case .lxFeatures:
                     LXRuntimeSettingsView()
+                case .localGenerator:
+                    LocalGeneratorView()
                 case .groupVisibility:
                     GroupVisibilitySettingsView()
                 case .remoteControl:
@@ -197,6 +207,9 @@ public struct SettingView: View {
                 Tabs.onDemandRules.navigationLink
                 Tabs.profileOverride.navigationLink
                 Tabs.lxFeatures.navigationLink
+                #if os(iOS)
+                    Tabs.localGenerator.navigationLink
+                #endif
                 Tabs.groupVisibility.navigationLink
                 #if !os(tvOS)
                     remoteControlLink

@@ -85,6 +85,17 @@ public struct ResolvedOutbound: Hashable {
     public let latencyMs: UInt16?
     public let latencyMeasuredAt: Date?
     public let status: Status
+
+    /// Final user-facing node: for a chain this is the exit node, not the
+    /// chain outbound tag or its first transport hop.
+    public var displayNodeTag: String? {
+        chainHops.last ?? selectedTag
+    }
+
+    /// True for native LX chains and legacy detour-based chains.
+    public var isChained: Bool {
+        selectedType == "chain" || chainHops.count > 1
+    }
 }
 
 public struct SelectedOutboundResolver: Hashable {
@@ -138,12 +149,22 @@ public struct SelectedOutboundResolver: Hashable {
             }
         }
 
-        // Detour chain: the selected outbound rides through its detour target.
-        // Resolve the transport side to concrete nodes (packet order: entries
-        // first, the selected exit last). Transport hops with their own detour
-        // are surfaced as an unresolved hop instead of recursing.
+        // LX native chain uses explicit ordered outbounds, not "detour".
+        // Each hop can be a live group: resolve Strategy at display time,
+        // so a Strategy failover updates Gemini without reloading the profile.
         var chainHops: [String] = []
-        if let selectedTag, let detour = nodes[selectedTag]?.detour {
+        if let selectedTag, let selectedNode = nodes[selectedTag],
+           selectedNode.type == "chain" {
+            for member in selectedNode.members {
+                if let hops = resolveTransport(member, live: live), !hops.isEmpty {
+                    chainHops.append(contentsOf: hops)
+                } else {
+                    reason = reason ?? .unresolvedChainHop(member)
+                    chainHops.append(member)
+                }
+            }
+        } else if let selectedTag, let detour = nodes[selectedTag]?.detour {
+            // Legacy detour chain: transport entry followed by the exit node.
             if !detour.isEmpty, let hops = resolveTransport(detour, live: live), !hops.isEmpty {
                 chainHops = hops + [selectedTag]
             } else {

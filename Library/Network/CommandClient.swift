@@ -240,6 +240,37 @@ public class CommandClient: ObservableObject {
         startConnection()
     }
 
+    /// Force a fresh group snapshot after returning from Control Center.
+    /// The push subscription normally handles changes; this pull covers a
+    /// missed/suspended update without restarting the VPN or changing routes.
+    @MainActor
+    public func refreshGroups() {
+        guard isConnected, connectionTypes.contains(.groups), !CommandTarget.isRemote else {
+            return
+        }
+        let token = activeConnectionToken
+        Task.detached(priority: .userInitiated) { [weak self] in
+            do {
+                let client = try CommandTarget.standaloneClient()
+                let iterator = try client.getGroups()
+                var fresh: [OutboundGroup] = []
+                while iterator.hasNext() {
+                    if let group = iterator.next() { fresh.append(OutboundGroup(group)) }
+                }
+                await MainActor.run {
+                    guard let self, self.isConnected, self.activeConnectionToken == token else {
+                        return
+                    }
+                    if self.groups != fresh { self.groups = fresh }
+                }
+            } catch {
+                // The existing group subscription continues to retry; a one-
+                // shot refresh failure must not bring down the Dashboard.
+                logger.debug("LX refreshGroups: \(error.localizedDescription)")
+            }
+        }
+    }
+
     public func loadStartedAt() {
         guard isConnected, startedAt == nil else { return }
         let token = activeConnectionToken

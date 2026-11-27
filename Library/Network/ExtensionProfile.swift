@@ -202,10 +202,6 @@ public class ExtensionProfile: ObservableObject {
         }
         await applyProtocolConfiguration()
         try await manager.saveToPreferences()
-        // NetworkExtension may still be using the pre-save manager snapshot on
-        // the very first launch after installation. Wait for the persisted VPN
-        // configuration to be loaded before starting the tunnel.
-        try await manager.loadFromPreferences()
         let options = try await prepareStartOptions()
         try manager.connection.startVPNTunnel(options: options)
     }
@@ -341,9 +337,6 @@ public class ExtensionProfile: ObservableObject {
 
     public static func install() async throws {
         let manager = NETunnelProviderManager()
-        // Apple requires loading VPN preferences before the first save.
-        // A newly installed app has no saved configuration yet; that is OK.
-        try await manager.loadFromPreferences()
         manager.localizedDescription = Variant.applicationName
         let tunnelProtocol = NETunnelProviderProtocol()
         if Variant.useSystemExtension {

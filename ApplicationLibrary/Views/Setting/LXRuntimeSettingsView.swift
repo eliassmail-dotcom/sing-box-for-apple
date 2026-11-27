@@ -43,6 +43,34 @@ public struct LXRuntimeSettingsView: View {
                             Text("Общий режим применяется ко всем группам выбранного профиля, кроме групп с индивидуальным переопределением.")
                                 .font(.footnote).foregroundStyle(.secondary)
                         }
+                        Section("Профиль устойчивости") {
+                            Picker("Профиль", selection: resiliencePresetBinding) {
+                                Text("Мои настройки").tag("custom")
+                                Text("Стабильный").tag("economy")
+                                Text("Баланс").tag("balance")
+                                Text("Антиблок").tag("antiblock")
+                            }
+                            Text("Профили управляют только порогом задержки, удержанием и Passive Guard. Баланс сохраняет Guard выключенным; Антиблок включает карантин и Dial Gate. Заданные проверочные URL, приоритет базовых/белых узлов, DNS и таймаут подключения не меняются.")
+                                .font(.footnote).foregroundStyle(.secondary)
+                        }
+                        Section("Устойчивость URLTest") {
+                            Toggle("Адаптивный порог задержки", isOn: adaptiveEnabledBinding)
+                            if currentSettings.adaptiveTolerancePercent > 0 {
+                                Stepper("Относительный порог: \(currentSettings.adaptiveTolerancePercent)%",
+                                        value: adaptivePercentBinding, in: 5...60, step: 5)
+                            }
+                            Toggle("Удерживать выбранный узел", isOn: holdEnabledBinding)
+                            if currentSettings.minHoldSeconds > 0 {
+                                Stepper("Минимальное удержание: \(currentSettings.minHoldSeconds) с",
+                                        value: holdSecondsBinding, in: 5...120, step: 5)
+                            }
+                            TextField("Проверочные URL через запятую", text: probeURLsBinding)
+                            Text("До трёх HTTP(S)-адресов. Узел доступен, если ответил хотя бы один. Пустое поле сохраняет исходный URL. Порог и удержание действуют только для Least Test; при отказе или возврате на базовые удержание не мешает переключению.")
+                                .font(.footnote).foregroundStyle(.secondary)
+                            Toggle("Passive Guard · карантин узлов", isOn: passiveGuardEnabledBinding)
+                            Text("Экспериментально, по умолчанию выключено. Учитывает независимые ошибки соединений и зависания потоков; при подтверждённом отказе исключает узел на 60 с без разрыва действующих соединений. Только Least Test и Failover, не Round Robin. Это не гарантированный обход ТСПУ.")
+                                .font(.footnote).foregroundStyle(.secondary)
+                        }
                         Section("Переопределения групп") {
                             ForEach(summary.urlTests) { group in
                                 VStack(alignment: .leading, spacing: 8) {
@@ -68,6 +96,15 @@ public struct LXRuntimeSettingsView: View {
                                 }.padding(.vertical, 4)
                             }
                         }
+                    }
+
+                    Section("Gemini") {
+                        Toggle("Gemini Chains", isOn: geminiChainsBinding)
+                            .disabled(!LXGeminiBuilder.hasSource(profileContent))
+                        statusRow("Источник конечных узлов", value:
+                            LXGeminiBuilder.hasSource(profileContent) ? "Gemini+" : "Gemini+ не найден")
+                        Text("Прямые Gemini-узлы собираются приложением из Gemini+. При включении добавляются цепочки: текущий узел Стратегии → Gemini-узел. Первый переход выбирается ядром динамически, без фиксации сервера. Исходная подписка не меняется.")
+                            .font(.footnote).foregroundStyle(.secondary)
                     }
 
                     if !summary.dnsGroups.isEmpty {
@@ -99,7 +136,7 @@ public struct LXRuntimeSettingsView: View {
                         statusRow("Multi-hop Chain", value: "\(summary.chainCount) цепочек")
                         statusRow("XHTTP", value: "\(summary.xhttpCount) узлов")
                         statusRow("VLESS Encryption", value: "\(summary.encryptedVlessCount) узлов")
-                        Text("Цепочки, XHTTP и VLESS Encryption нельзя включить общим тумблером: нужна соответствующая конфигурация узлов и поддержка серверов. Существующие цепочки выбираются в разделе «Группы».")
+                        Text("Gemini Chains создаёт цепочки из Gemini+ внутри приложения. Остальные Chain, XHTTP и VLESS Encryption требуют поддержки исходной конфигурации и серверов.")
                             .font(.footnote).foregroundStyle(.secondary)
                         statusRow("Clash API / CommandClient", value: "Функции ядра")
                         Text("API и события определяются сборкой ядра, а не переключателем в профиле.")
@@ -121,7 +158,7 @@ public struct LXRuntimeSettingsView: View {
                             draft.profiles.removeValue(forKey: String(profileID))
                         }.disabled(isApplying || currentSettings.isEmpty)
                     } footer: {
-                        Text("Применение перезагружает VPN-конфигурацию и может прервать текущие соединения. При ошибке сохранённые настройки откатываются.")
+                        Text("«Применить к VPN» сохраняет настройки и полностью перезапускает подключённый VPN, включая группы Gemini Chains. Все текущие соединения прервутся. Если VPN выключен — настройки сохранятся для следующего запуска. При ошибке будет предпринята попытка отката.")
                     }
                 }
             } else {
@@ -160,6 +197,50 @@ public struct LXRuntimeSettingsView: View {
         } else {
             draft.profiles[String(profileID)] = settings
         }
+    }
+
+    private var resiliencePresetBinding: Binding<String> {
+        Binding(
+            get: { currentSettings.resiliencePreset },
+            set: { selected in mutate { $0.applyResiliencePreset(selected) } }
+        )
+    }
+
+    private var geminiChainsBinding: Binding<Bool> {
+        Binding(
+            get: { currentSettings.geminiChainsEnabled },
+            set: { enabled in mutate { $0.geminiChainsEnabled = enabled } }
+        )
+    }
+
+    private var adaptiveEnabledBinding: Binding<Bool> {
+        Binding(get: { currentSettings.adaptiveTolerancePercent > 0 },
+                set: { enabled in mutate { $0.adaptiveTolerancePercent = enabled ? 30 : 0; $0.resiliencePreset = "custom" } })
+    }
+
+    private var adaptivePercentBinding: Binding<Int> {
+        Binding(get: { currentSettings.adaptiveTolerancePercent },
+                set: { value in mutate { $0.adaptiveTolerancePercent = value; $0.resiliencePreset = "custom" } })
+    }
+
+    private var holdEnabledBinding: Binding<Bool> {
+        Binding(get: { currentSettings.minHoldSeconds > 0 },
+                set: { enabled in mutate { $0.minHoldSeconds = enabled ? 30 : 0; $0.resiliencePreset = "custom" } })
+    }
+
+    private var holdSecondsBinding: Binding<Int> {
+        Binding(get: { currentSettings.minHoldSeconds },
+                set: { value in mutate { $0.minHoldSeconds = value; $0.resiliencePreset = "custom" } })
+    }
+
+    private var probeURLsBinding: Binding<String> {
+        Binding(get: { currentSettings.probeURLs },
+                set: { value in mutate { $0.probeURLs = value } })
+    }
+
+    private var passiveGuardEnabledBinding: Binding<Bool> {
+        Binding(get: { currentSettings.passiveGuardEnabled },
+                set: { enabled in mutate { $0.passiveGuardEnabled = enabled; $0.resiliencePreset = "custom" } })
     }
 
     private var globalModeBinding: Binding<String> {
@@ -273,6 +354,23 @@ public struct LXRuntimeSettingsView: View {
         }
     }
 
+    /// A new Gemini Chains graph requires a fresh Packet Tunnel lifecycle:
+    /// reloading the running service does not reliably rebuild nested groups.
+    /// Confirm .connected before reporting the Apply action as successful.
+    @MainActor
+    private func restartVPNAndAwaitConnection(_ profile: ExtensionProfile) async throws {
+        try await profile.restart()
+        let deadline = Date().addingTimeInterval(18)
+        while profile.status != .connected {
+            if Date() >= deadline {
+                throw NSError(domain: "LXRuntimeSettings", code: 4, userInfo: [
+                    NSLocalizedDescriptionKey: "VPN не подключился в течение 18 секунд после перезапуска."
+                ])
+            }
+            try await Task.sleep(nanoseconds: 250_000_000)
+        }
+    }
+
     @MainActor
     private func apply() async {
         guard !isApplying, draft != saved else { return }
@@ -284,24 +382,43 @@ public struct LXRuntimeSettingsView: View {
             _ = try LXProfileOverrides.apply(profileContent, profileID: profileID, storedJSON: desiredJSON)
             let activeID = await SharedPreferences.selectedProfileID.get()
             guard activeID == profileID else {
-                throw NSError(domain: "LXRuntimeSettings", code: 1, userInfo: [NSLocalizedDescriptionKey: "Активный профиль изменился. Открой настройки LX заново."])
+                throw NSError(domain: "LXRuntimeSettings", code: 1, userInfo: [
+                    NSLocalizedDescriptionKey: "Активный профиль изменился. Открой настройки LX заново."
+                ])
             }
+            let runningProfile = environments.extensionProfile
+            if let runningProfile, runningProfile.status.isConnected &&
+                runningProfile.status != .connected && runningProfile.status != .reasserting {
+                throw NSError(domain: "LXRuntimeSettings", code: 5, userInfo: [
+                    NSLocalizedDescriptionKey: "Дождитесь окончания подключения или отключения VPN и повторите."
+                ])
+            }
+            let shouldRestart = runningProfile?.status.isConnectedStrict == true
+
             await SharedPreferences.lxOverridesJSON.set(desiredJSON)
             guard await SharedPreferences.lxOverridesJSON.get() == desiredJSON else {
-                throw NSError(domain: "LXRuntimeSettings", code: 2, userInfo: [NSLocalizedDescriptionKey: "Настройки не сохранились."])
+                await SharedPreferences.lxOverridesJSON.set(previousJSON)
+                throw NSError(domain: "LXRuntimeSettings", code: 2, userInfo: [
+                    NSLocalizedDescriptionKey: "Настройки не сохранились."
+                ])
             }
-            if let profile = environments.extensionProfile, profile.status.isConnected {
+
+            if shouldRestart, let runningProfile {
                 do {
-                    try await profile.reloadService()
+                    try await restartVPNAndAwaitConnection(runningProfile)
                 } catch {
+                    // Restore the last good configuration and attempt to bring
+                    // back the previous VPN. If the restoration also fails, the
+                    // original error remains visible; never claim success.
                     await SharedPreferences.lxOverridesJSON.set(previousJSON)
-                    try? await profile.reloadService()
+                    try? await restartVPNAndAwaitConnection(runningProfile)
                     throw error
                 }
             }
             saved = draft
+            NotificationCenter.default.post(name: .lxResilienceSettingsChanged, object: nil)
         } catch {
-            alert = AlertState(action: "apply LX settings", error: error)
+            alert = AlertState(action: "применить настройки LX и перезапустить VPN", error: error)
         }
     }
 }

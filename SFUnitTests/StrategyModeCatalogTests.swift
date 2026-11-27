@@ -1,4 +1,5 @@
 import XCTest
+import Library
 @testable import ApplicationLibrary
 
 // gru: unit tests for the mode ↔ selector-tag correspondence (Dashboard TZ
@@ -90,4 +91,108 @@ final class StrategyModeCatalogTests: XCTestCase {
             "Ручной режим"
         )
     }
+    func testActiveModeManualNextNodeCyclesAmongHealthyCandidates() {
+        let candidates: [(tag: String, delayMs: UInt16)] = [
+            ("a", 120), ("dead", 0), ("b", 70), ("c", 85)
+        ]
+        XCTAssertEqual(
+            StrategyNodeChange.nextHealthyManualTag(current: "a", candidates: candidates),
+            "b"
+        )
+        XCTAssertEqual(
+            StrategyNodeChange.nextHealthyManualTag(current: "b", candidates: candidates),
+            "c"
+        )
+        XCTAssertEqual(
+            StrategyNodeChange.nextHealthyManualTag(current: "c", candidates: candidates),
+            "a"
+        )
+        XCTAssertEqual(
+            StrategyNodeChange.nextHealthyManualTag(current: "dead", candidates: candidates),
+            "a"
+        )
+    }
+
+    func testActiveModeNoHealthyAlternativeDoesNotSelectSameNode() {
+        XCTAssertNil(StrategyNodeChange.nextHealthyManualTag(
+            current: "a", candidates: [("a", 100)]
+        ))
+        XCTAssertNil(StrategyNodeChange.nextHealthyManualTag(
+            current: "a", candidates: [("a", 100), ("b", 0)]
+        ))
+        XCTAssertEqual(StrategyNodeChange.nextHealthyManualTag(
+            current: "dead", candidates: [("a", 100), ("dead", 0)]
+        ), "a")
+        XCTAssertNil(StrategyNodeChange.nextHealthyManualTag(
+            current: "dead", candidates: [("a", 0), ("dead", 0)]
+        ))
+    }
+
+    func testControlCenterUsesSameHealthyManualCycleAsDashboard() {
+        let candidates: [(tag: String, delayMs: UInt16)] = [
+            ("a", 90), ("dead", 0), ("a", 90), ("b", 110), ("c", 150)
+        ]
+        // Duplicate leaf tags must never count as two different nodes.
+        XCTAssertEqual(
+            LXNextNodeSelection.nextHealthyTag(current: "a", candidates: candidates),
+            "b"
+        )
+        XCTAssertEqual(
+            LXNextNodeSelection.nextHealthyTag(current: "b", candidates: candidates),
+            "c"
+        )
+        XCTAssertEqual(
+            LXNextNodeSelection.nextHealthyTag(current: "c", candidates: candidates),
+            "a"
+        )
+        XCTAssertNil(
+            LXNextNodeSelection.nextHealthyTag(
+                current: "only", candidates: [("only", 40), ("down", 0)]
+            )
+        )
+        XCTAssertEqual(
+            LXNextNodeSelection.commandTag, StrategyNodeChange.nextNodeCommand
+        )
+        XCTAssertEqual(LXNextNodeSelection.strategyGroupTag, "Стратегия")
+    }
+
+
+    func testControlCenterVerifiesActiveLeafInNestedSmartMode() {
+        func makeGroup(_ tag: String, _ type: String, _ selected: String) -> OutboundGroup {
+            OutboundGroup(tag: tag, type: type, selected: selected,
+                          selectable: type == "selector", isExpand: false, items: [])
+        }
+        let base: [OutboundGroup] = [
+            makeGroup("Стратегия", "selector", "Авто · База → Белые"),
+            makeGroup("Авто · База → Белые", "urltest", "Авто · Базовая"),
+            makeGroup("Авто · Базовая", "urltest", "server-a"),
+            makeGroup("Авто · Белые", "urltest", "white-a"),
+        ]
+        XCTAssertEqual(LXNextNodeSelection.activeLeafTag(in: base), "server-a")
+        var changed = base
+        changed[2] = makeGroup("Авто · Базовая", "urltest", "server-b")
+        XCTAssertEqual(LXNextNodeSelection.activeLeafTag(in: changed), "server-b")
+        changed[1] = makeGroup("Авто · База → Белые", "urltest", "Авто · Белые")
+        XCTAssertEqual(LXNextNodeSelection.activeLeafTag(in: changed), "white-a")
+        changed[0] = makeGroup("Стратегия", "selector", "Ручной выбор")
+        changed.append(makeGroup("Ручной выбор", "selector", "manual-a"))
+        XCTAssertEqual(LXNextNodeSelection.activeLeafTag(in: changed), "manual-a")
+    }
+
+    func testControlCenterRejectsMissingOrCyclicStrategyGraph() {
+        func group(_ tag: String, _ type: String, _ selected: String) -> OutboundGroup {
+            OutboundGroup(tag: tag, type: type, selected: selected,
+                          selectable: type == "selector", isExpand: false, items: [])
+        }
+        XCTAssertNil(LXNextNodeSelection.activeLeafTag(in: []))
+        XCTAssertNil(LXNextNodeSelection.activeLeafTag(in: [
+            group("Стратегия", "selector", "loop"),
+            group("loop", "selector", "Стратегия"),
+        ]))
+        XCTAssertNil(LXNextNodeSelection.activeLeafTag(in: [
+            group("Стратегия", "selector", "Авто"),
+            group("Авто", "urltest", ""),
+        ]))
+    }
+
 }
