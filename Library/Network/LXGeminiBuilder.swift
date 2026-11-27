@@ -193,6 +193,10 @@ public enum LXGeminiBuilder {
                         "LX.37: цепочка \(name) использует общую группу Gemini+ или WireGuard; требуется отдельный выход"
                     )
                 }
+                // Retained copies are not under chainExitPrefix: the retained
+                // chain still references its copy on a second apply or when
+                // Gemini Chains is disabled. Fresh subscription inputs have
+                // neither copy; the original imported bytes are never changed.
                 let copyTag = "LX • Gemini • Retained Exit • " + name + " • " + String(position) + " • " + leaf
                 guard reserved.insert(copyTag).inserted else {
                     throw LXProfileOverrides.OverrideError.invalidOption("конфликт имени Gemini outbound: \(copyTag)")

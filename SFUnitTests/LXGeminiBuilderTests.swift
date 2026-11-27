@@ -162,8 +162,33 @@ final class LXGeminiBuilderTests: XCTestCase {
         out[index]["outbounds"] = ["WG"]
         var onlyWG = try document(source)
         onlyWG["outbounds"] = out
-        XCTAssertThrowsError(try LXGeminiBuilder.apply(to: &onlyWG, chainsEnabled: true))
+        XCTAssertThrowsError(try LXGeminiBuilder.apply(to: &onlyWG, chainsEnabled: true)) { error in
+            XCTAssertTrue(error.localizedDescription.contains("WireGuard доступен только напрямую"))
+            XCTAssertTrue(error.localizedDescription.contains("Gemini Chains"))
+        }
         XCTAssertTrue(try LXGeminiBuilder.apply(to: &onlyWG, chainsEnabled: false))
+    }
+
+    func testNestedRetainedChainKeepsItsEntryAndIsolatesGeminiExit() throws {
+        var root = try document(source)
+        var out = try outbounds(root)
+        out.append(["type": "chain", "tag": "Outer Chain",
+                    "outbounds": ["Legacy Chain", "Austria (Gemini)"]])
+        root["outbounds"] = out
+        XCTAssertTrue(try LXGeminiBuilder.apply(to: &root, chainsEnabled: true))
+        let built = try outbounds(root)
+        let inner = try XCTUnwrap(try item("Legacy Chain", in: built)["outbounds"] as? [String])
+        let outer = try XCTUnwrap(try item("Outer Chain", in: built)["outbounds"] as? [String])
+        XCTAssertEqual(inner.first, "France")
+        XCTAssertEqual(outer.first, "Legacy Chain")
+        XCTAssertNotEqual(inner.last, "Swiss (Gemini)")
+        XCTAssertNotEqual(outer.last, "Austria (Gemini)")
+        XCTAssertNotEqual(inner.last, outer.last)
+        let exit = try XCTUnwrap(outer.last)
+        XCTAssertEqual(try item(exit, in: built)["server"] as? String, "at.example.org")
+        XCTAssertNil(try item("Austria (Gemini)", in: built)["detour"])
+        XCTAssertTrue(try LXGeminiBuilder.apply(to: &root, chainsEnabled: false))
+        XCTAssertEqual(try item("Outer Chain", in: outbounds(root))["outbounds"] as? [String], outer)
     }
 
     func testSharedLegacyUpperGroupIsRejectedInsteadOfRedirectingDirectGemini() throws {
