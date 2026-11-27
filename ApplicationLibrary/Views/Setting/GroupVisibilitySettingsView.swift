@@ -79,7 +79,7 @@ public struct GroupVisibilitySettingsView: View {
         .task { await load() }
         .onReceive(environments.commandClient.$groups) { groups in
             guard !isLoading, let groups, !groups.isEmpty else { return }
-            mergeTags(groups.map(\.tag))
+            mergeTags(groups.map(\.tag).filter { !GroupPresentationSettings.providerPairTags(in: groups).contains($0) })
         }
         .onReceive(environments.selectedProfileUpdate) { _ in
             Task { await load() }
@@ -105,7 +105,8 @@ public struct GroupVisibilitySettingsView: View {
 
     private func availableTags(profileID id: Int64) async -> [String] {
         if let live = environments.commandClient.groups, !live.isEmpty {
-            return live.map(\.tag)
+            let pairs = GroupPresentationSettings.providerPairTags(in: live)
+            return live.map(\.tag).filter { !pairs.contains($0) }
         }
         guard let profile = try? await ProfileManager.get(id),
               let contents = try? await profile.readAsync() else { return [] }

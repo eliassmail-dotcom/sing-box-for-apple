@@ -7,8 +7,7 @@ public struct GroupListView: View {
     @State private var presentation = GroupPresentationSettings()
 
     private var displayedGroups: [OutboundGroup] {
-        let byTag = Dictionary(viewModel.groups.map { ($0.tag, $0) }, uniquingKeysWith: { first, _ in first })
-        return presentation.visibleTags(available: viewModel.groups.map(\.tag)).compactMap { byTag[$0] }
+        presentation.displayedGroups(viewModel.groups)
     }
 
     private func reloadPresentation() async {
