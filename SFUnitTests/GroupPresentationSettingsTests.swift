@@ -82,6 +82,19 @@ final class GroupPresentationSettingsTests: XCTestCase {
         XCTAssertEqual(GroupPresentationSettings.tagsFromConfig(json), ["Ru 🔗 Авто", "Ru 🔗 Ручной", "Other"])
     }
 
+    func testInternalChainHopsAreNotDisplayed() {
+        let now = Date()
+        let leaf = OutboundGroupItem(tag: "node", type: "vless", urlTestTime: now, urlTestDelay: 40)
+        let hop = OutboundGroupItem(tag: "chain#0", type: "chain-hop", urlTestTime: now, urlTestDelay: 0)
+        let userChain = OutboundGroupItem(tag: "chain", type: "chain", urlTestTime: now, urlTestDelay: 50)
+        let strategy = OutboundGroup(tag: "Стратегия", type: "selector", selected: "chain", selectable: true, isExpand: true, items: [leaf, hop, userChain])
+        let internalHop = OutboundGroup(tag: "chain#0", type: "chain-hop", selected: "node", selectable: false, isExpand: true, items: [leaf])
+        let shown = GroupPresentationSettings().displayedGroups([strategy, internalHop])
+        XCTAssertEqual(shown.map(\.tag), ["Стратегия"])
+        XCTAssertEqual(shown[0].items.map(\.tag), ["node", "chain"])
+        XCTAssertEqual(strategy.items.map(\.tag), ["node", "chain#0", "chain"])
+    }
+
     func testOfflineGroupsReadFromConfig() {
         let json = """
         {"outbounds":[
