@@ -79,7 +79,8 @@ public struct GroupVisibilitySettingsView: View {
         .task { await load() }
         .onReceive(environments.commandClient.$groups) { groups in
             guard !isLoading, let groups, !groups.isEmpty else { return }
-            mergeTags(groups.map(\.tag).filter { !GroupPresentationSettings.providerPairTags(in: groups).contains($0) })
+            let pairs = GroupPresentationSettings.providerPairTags(in: groups)
+            mergeTags(groups.map(\.tag).filter { !pairs.contains($0) })
         }
         .onReceive(environments.selectedProfileUpdate) { _ in
             Task { await load() }

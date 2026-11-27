@@ -529,6 +529,7 @@ public enum LXProfileOverrides {
         }
 
         if var outbounds = root["outbounds"] as? [[String: Any]] {
+            let providerPairs = GroupPresentationSettings.providerPairTags(inConfigOutbounds: outbounds)
             for index in outbounds.indices {
                 guard (outbounds[index]["type"] as? String) == "urltest",
                       let tag = outbounds[index]["tag"] as? String else { continue }
@@ -541,7 +542,10 @@ public enum LXProfileOverrides {
                 let setting = settings.urlTests[tag] ?? settings.urlTestDefault
                 var group = outbounds[index]
                 var groupChanged = false
-                if setting.mode != "profile" {
+                // The hidden technical pair keeps its ordinary failover algorithm.
+                // Global pool overrides still apply to the parent groups.
+                let preservePair = providerPairs.contains(tag) && (group["mode"] as? String) == "failover"
+                if setting.mode != "profile" && !preservePair {
                     guard ["least_test", "failover", "round_robin"].contains(setting.mode) else {
                         throw OverrideError.invalidOption("urltest \(tag): mode")
                     }

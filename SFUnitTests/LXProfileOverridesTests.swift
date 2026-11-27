@@ -110,6 +110,33 @@ final class LXProfileOverridesTests: XCTestCase {
         XCTAssertEqual(balancer["sticky_hash"] as? [String], ["none"])
     }
 
+    func testLogicalPairKeepsOrdinaryFailoverAndSmartKeepsTierPriorities() throws {
+        let source = """
+        {"outbounds":[
+          {"type":"selector","tag":"Стратегия","outbounds":["Авто · Базовая","Авто · Белые","Country"],"default":"Авто · Базовая"},
+          {"type":"urltest","tag":"Авто · Базовая","outbounds":["Country"],"mode":"failover"},
+          {"type":"urltest","tag":"Авто · Белые","outbounds":["w"],"mode":"failover"},
+          {"type":"urltest","tag":"Country","outbounds":["Country #1","Country #2"],"mode":"failover"},
+          {"type":"vless","tag":"Country #1"},{"type":"vless","tag":"Country #2"},{"type":"vless","tag":"w"}
+        ]}
+        """
+        var store = LXOverridesStore()
+        var settings = LXProfileSettings()
+        settings.urlTestDefault.mode = "round_robin"
+        settings.urlTestDefault.pool = 2
+        store.profiles["42"] = settings
+        let root = try parsed(LXProfileOverrides.apply(source, profileID: 42, storedJSON: store.encode()))
+        let groups = try XCTUnwrap(root["outbounds"] as? [[String: Any]])
+        let pair = try XCTUnwrap(groups.first { ($0["tag"] as? String) == "Country" })
+        XCTAssertEqual(pair["mode"] as? String, "failover")
+        XCTAssertNil(pair["priority_outbounds"])
+        XCTAssertNil(pair["balancer"])
+        let smart = try XCTUnwrap(groups.first { ($0["tag"] as? String) == LXProfileOverrides.preferredFallbackTag })
+        XCTAssertEqual(smart["mode"] as? String, "least_test")
+        XCTAssertEqual(smart["priority_outbounds"] as? [String], ["Country #1","Country #2"])
+        XCTAssertEqual(smart["outbounds"] as? [String], ["Country #1","Country #2","w"])
+    }
+
     func testModeOverrideRejectsLeakedNativeAdaptiveFields() throws {
         let source = """
         {"outbounds":[

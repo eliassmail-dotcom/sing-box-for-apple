@@ -99,16 +99,20 @@ public struct GroupPresentationSettings: Codable, Equatable {
         }
     }
 
-    /// Offline fallback when CommandClient has not connected.
-    public static func tagsFromConfig(_ source: String) -> [String] {
-        guard let root = (try? JSONSerialization.jsonObject(with: Data(source.utf8))) as? [String: Any],
-              let outbounds = root["outbounds"] as? [[String: Any]] else { return [] }
+    public static func providerPairTags(inConfigOutbounds outbounds: [[String: Any]]) -> Set<String> {
         let definitions = outbounds.compactMap { item -> (tag: String, type: String, members: [String])? in
             guard let tag = item["tag"] as? String, let type = item["type"] as? String else { return nil }
             return (tag, type, item["outbounds"] as? [String] ?? [])
         }
         let types = Dictionary(definitions.map { ($0.tag, $0.type) }, uniquingKeysWith: { first, _ in first })
-        let pairs = providerPairTags(groups: definitions, leafTypes: types)
+        return providerPairTags(groups: definitions, leafTypes: types)
+    }
+
+    /// Offline fallback when CommandClient has not connected.
+    public static func tagsFromConfig(_ source: String) -> [String] {
+        guard let root = (try? JSONSerialization.jsonObject(with: Data(source.utf8))) as? [String: Any],
+              let outbounds = root["outbounds"] as? [[String: Any]] else { return [] }
+        let pairs = providerPairTags(inConfigOutbounds: outbounds)
         var result: [String] = []
         var seen = Set<String>()
         for outbound in outbounds {
