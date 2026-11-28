@@ -10,6 +10,8 @@ import UserNotifications
 class ApplicationDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDelegate {
     private var profileServer: ProfileServer?
     private var reportTransferServer: ReportTransferServer?
+    private var checkingFileProviderDomain = false
+    private var fileProviderDomainReady = false
 
     func application(_: UIApplication, didFinishLaunchingWithOptions _: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
         LibboxPrepareCrashSignalHandlers()
@@ -85,7 +87,11 @@ class ApplicationDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCe
         } catch {
             NSLog("setup background task error: \(error.localizedDescription)")
         }
-        if #available(iOS 16.0, *) { registerFileProviderDomain() }
+        if #available(iOS 16.0, *) {
+            NotificationCenter.default.addObserver(self, selector: #selector(fileProviderDidBecomeActive(_:)),
+                name: UIApplication.didBecomeActiveNotification, object: nil)
+            registerFileProviderDomain()
+        }
         Task {
             if UIDevice.current.userInterfaceIdiom == .phone {
                 await requestNetworkPermission()
@@ -147,7 +153,13 @@ class ApplicationDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCe
     }
 
     @available(iOS 16.0, *)
-    private nonisolated func registerFileProviderDomain() {
+    @objc private func fileProviderDidBecomeActive(_: Notification) {
+        registerFileProviderDomain()
+    }
+
+    @available(iOS 16.0, *)
+    private func registerFileProviderDomain() {
+        guard !checkingFileProviderDomain, !fileProviderDomainReady else { return }
         guard FilePath.hasSharedContainer else {
             DiagnosticsLog.record("fp.reg.shared", result: .fail, details: AppConfiguration.signingDiagnostics)
             return
@@ -161,31 +173,26 @@ class ApplicationDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCe
         )
         // Persistent domains survive updates. Repeated add() calls are not a
         // registration refresh and must not be used to hide a stale extension.
-        NSFileProviderManager.getDomainsWithCompletionHandler { domains, error in
-            if let error {
-                let failure = error as NSError
-                DiagnosticsLog.record("fp.reg.lookup", result: .fail,
-                                         errorDomain: failure.domain, errorCode: failure.code)
-                NSLog("File Provider domain lookup failed: \(failure.domain) / \(failure.code): \(failure.localizedDescription)")
-                return
-            }
-            DiagnosticsLog.record("fp.reg.lookup", result: .pass,
-                                       details: "domains=\(domains.count)")
-            if domains.contains(where: { $0.identifier == domain.identifier }) {
-                DiagnosticsLog.record("fp.reg.already_registered", result: .pass)
-                NSLog("File Provider domain already registered: \(domain.identifier.rawValue)")
-                return
-            }
-            NSFileProviderManager.add(domain) { error in
-                if let error {
-                    let failure = error as NSError
-                    DiagnosticsLog.record("fp.reg.add", result: .fail,
-                                             errorDomain: failure.domain, errorCode: failure.code)
-                    NSLog("File Provider registration failed: \(failure.domain) / \(failure.code): \(failure.localizedDescription)")
+        checkingFileProviderDomain = true
+        Task { @MainActor in
+            defer { checkingFileProviderDomain = false }
+            var stage = "fp.reg.lookup"
+            do {
+                let domains = try await NSFileProviderManager.domains()
+                DiagnosticsLog.record(stage, result: .pass, details: "domains=\(domains.count)")
+                if domains.contains(where: { $0.identifier == domain.identifier }) {
+                    DiagnosticsLog.record("fp.reg.already_registered", result: .pass)
                 } else {
+                    stage = "fp.reg.add"
+                    try await NSFileProviderManager.add(domain)
                     DiagnosticsLog.record("fp.reg.add", result: .pass)
-                    NSLog("File Provider domain registered: \(domain.identifier.rawValue)")
                 }
+                fileProviderDomainReady = true
+            } catch {
+                // System registration may still be pending just after installation.
+                // Retry on the next real foreground activation.
+                let failure = error as NSError
+                DiagnosticsLog.record(stage, result: .fail, errorDomain: failure.domain, errorCode: failure.code)
             }
         }
     }

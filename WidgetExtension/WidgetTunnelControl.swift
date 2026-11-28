@@ -216,6 +216,7 @@ enum WidgetTunnelControl {
                 var newConfig = config
                 newConfig.removeValue(forKey: "wasOnDemandEnabled")
                 proto.providerConfiguration = newConfig
+                manager.protocolConfiguration = proto
                 manager.isOnDemandEnabled = true
                 preferencesChanged = true
             }
@@ -228,6 +229,10 @@ enum WidgetTunnelControl {
             }
             if !manager.connection.status.isStarted {
                 do {
+                    guard manager.connection.status == .disconnected else {
+                        throw NSError(domain: "WidgetTunnelControl", code: 3,
+                                      userInfo: [NSLocalizedDescriptionKey: "VPN session is not ready for a new connection."])
+                    }
                     try manager.connection.startVPNTunnel()
                     DiagnosticsLog.record("widget.vpn.set", result: .pass, details: "requested=on startIssued")
                 } catch {
@@ -246,6 +251,7 @@ enum WidgetTunnelControl {
                     var config = proto.providerConfiguration ?? [:]
                     config["wasOnDemandEnabled"] = true
                     proto.providerConfiguration = config
+                    manager.protocolConfiguration = proto
                 }
                 manager.isOnDemandEnabled = false
                 try await manager.saveToPreferences()
@@ -335,6 +341,10 @@ enum WidgetTunnelControl {
                 NSUnderlyingErrorKey: error,
             ])
         }
+        let embedded = WidgetAppConfiguration.packetTunnelBundleID
+        #if os(iOS)
+        let expectedIDs = Set([embedded].compactMap { $0 })
+        #else
         // GBox/other signing tools can rewrite the actual CFBundleIdentifier
         // while leaving BasePackageIdentifier in Info.plist unchanged.
         // Derive the installed package from this signed .widget extension too.
@@ -346,20 +356,20 @@ enum WidgetTunnelControl {
                 packageNames.insert(signedBase, at: 0)
             }
         }
-        let expectedIDs = Set(packageNames.flatMap { base in
+        let legacyIDs = Set(packageNames.flatMap { base in
             ["\(base).extension", "\(base).system"]
         })
-        // Never select unrelated or stale VPN profiles by a generic serverAddress.
-        // The embedded extension's real signed Bundle ID is authoritative.
+        let expectedIDs = legacyIDs.union([embedded].compactMap { $0 })
+        #endif
         let candidates = managers.filter { manager in
             guard let tunnel = manager.protocolConfiguration as? NETunnelProviderProtocol,
                   let provider = tunnel.providerBundleIdentifier else { return false }
-            return expectedIDs.contains(provider) || provider == WidgetAppConfiguration.packetTunnelBundleID
+            return expectedIDs.contains(provider)
         }
         if candidates.isEmpty {
             NSLog("[WidgetTunnelControl] No matching tunnel: storedManagers=\(managers.count), expectedProviders=\(expectedIDs.count), embeddedTunnelFound=\(WidgetAppConfiguration.packetTunnelBundleID != nil)")
             DiagnosticsLog.record("widget.vpn.manager", result: managers.isEmpty && purpose == "status" ? .unknown : .fail,
-                details: "purpose=\(purpose) storedManagers=\(managers.count) expectedProviders=\(expectedIDs.count) embeddedTunnelFound=\(WidgetAppConfiguration.packetTunnelBundleID != nil)")
+                details: "purpose=\(purpose) storedManagers=\(managers.count) provider=\(embedded ?? "none") widgetSignedForVPN=\(SignedEntitlements.stringArray("com.apple.developer.networking.networkextension").contains("packet-tunnel-provider"))")
             return nil
         }
         let active = candidates.filter { connectedOnly ? $0.connection.status == .connected : $0.connection.status.isStarted }
