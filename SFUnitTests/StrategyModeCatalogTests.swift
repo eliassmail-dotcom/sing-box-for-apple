@@ -99,12 +99,29 @@ final class StrategyModeCatalogTests: XCTestCase {
         XCTAssertEqual(active("Авто · Только белые", "Gemini • Super • A"), "Авто • Белые")
         XCTAssertEqual(active("Авто · Полная", "Gemini • Авто"), "Авто • Полная")
         XCTAssertEqual(active("Ручной выбор", "Gemini • Выбор"), "Ручной режим")
-        // Mixed: groups point at different modes.
-        XCTAssertNil(active("Авто · Базовая", "Gemini • Выбор"))
+        // Manual Gemini selection does not change the main strategy.
+        XCTAssertEqual(active("Авто · Базовая", "Gemini • Выбор"), "Авто • Базовая")
         XCTAssertNil(active("Пулы", "Gemini • Super • A"))
         // Guest: Базовая via «Авто» + Gemini fallback.
         XCTAssertEqual(active("Авто", "Gemini • Авто", strategyTags: guestStrategy, geminiTags: guestGemini), "Авто • Базовая")
-        XCTAssertNil(active("Авто", "Gemini • Chain • A", strategyTags: guestStrategy, geminiTags: guestGemini))
+        XCTAssertEqual(active("Авто", "Gemini • Chain • A", strategyTags: guestStrategy, geminiTags: guestGemini), "Авто • Базовая")
+    }
+
+    func testManualGeminiNeverClearsAnyMainMode() {
+        let tags = renamedStrategy + ["Авто · Умный", "Ru 🔗 Авто"]
+        for mode in StrategyModeCatalog.modes {
+            guard let strategy = StrategyModeCatalog.strategyTarget(mode, strategyTags: tags) else {
+                XCTFail("Missing strategy fixture: \(mode.title)")
+                continue
+            }
+            for gemini in ["Gemini • Выбор", "Gemini • Chain • M", "Швейцария (Gemini)", "", "unknown"] {
+                XCTAssertEqual(StrategyModeCatalog.activeMode(strategySelected: strategy,
+                    geminiSelected: gemini, strategyTags: tags, geminiTags: corporateGemini), mode)
+            }
+            XCTAssertTrue(StrategyModeCatalog.isAvailable(mode, strategyTags: tags, geminiTags: ["custom Gemini"]))
+            XCTAssertEqual(StrategyModeCatalog.activeMode(strategySelected: strategy,
+                geminiSelected: nil, strategyTags: tags, geminiTags: nil), mode)
+        }
     }
 
     func testNoGeminiGroupTolerated() {
