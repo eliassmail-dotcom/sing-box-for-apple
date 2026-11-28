@@ -94,3 +94,17 @@ enum ExtensionStartOptions {
         ])
     }
 }
+
+/// Active identity comes from the actual startTunnel callback. A missing app ID
+/// denotes an external start (Widget, On Demand or Settings).
+struct VPNStartReceipt: Codable {
+    static let prefix = "sfi.start.receipt/"
+    let operation: String?
+    let attempt: String?
+    let group: String
+    let stages: [String]
+
+    func matches(operation requested: String, issued: String) -> Bool {
+        operation == requested && attempt == issued
+    }
+}

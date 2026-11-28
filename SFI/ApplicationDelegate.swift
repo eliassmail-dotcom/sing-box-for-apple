@@ -85,6 +85,7 @@ class ApplicationDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCe
         } catch {
             NSLog("setup background task error: \(error.localizedDescription)")
         }
+        if #available(iOS 16.0, *) { registerFileProviderDomain() }
         Task {
             if UIDevice.current.userInterfaceIdiom == .phone {
                 await requestNetworkPermission()
@@ -110,7 +111,11 @@ class ApplicationDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCe
                 let message = "sing-box lx++\n\nThis is the local Documents folder available in Files > On My iPhone.\nFiles here are separate from the VPN working directory. VPN profiles and secrets are not exported automatically.\n"
                 try message.write(to: readme, atomically: true, encoding: .utf8)
             }
+            let info = Bundle.main.infoDictionary ?? [:]
+            DiagnosticsLog.record("files.localDocuments", result: .pass,
+                                  details: "fileSharing=\(info["UIFileSharingEnabled"] as? Bool == true) inPlace=\(info["LSSupportsOpeningDocumentsInPlace"] as? Bool == true) hasVisibleFile=\(FileManager.default.fileExists(atPath: readme.path))")
         } catch {
+            DiagnosticsLog.record("files.localDocuments", result: .fail, errorDomain: (error as NSError).domain, errorCode: (error as NSError).code)
             NSLog("Native Files folder initialization failed: \(error.localizedDescription)")
         }
     }
@@ -138,46 +143,18 @@ class ApplicationDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCe
             } catch {
                 NSLog("setup report transfer server error: \(error.localizedDescription)")
             }
-            registerFileProviderDomain()
         }
     }
 
     @available(iOS 16.0, *)
     private nonisolated func registerFileProviderDomain() {
-        guard FilePath.hasSharedContainer,
-              let group = AppConfiguration.resolvedAppGroupID,
-              let plugins = Bundle.main.builtInPlugInsURL,
-              let paths = try? FileManager.default.contentsOfDirectory(at: plugins, includingPropertiesForKeys: nil) else {
-            DiagnosticsLog.record("fp.reg.shared", result: .fail,
-                                       details: "hasContainer=\(FilePath.hasSharedContainer) group=\(AppConfiguration.resolvedAppGroupID ?? "none")")
-            NSLog("File Provider registration skipped: no signed shared App Group")
+        guard FilePath.hasSharedContainer else {
+            DiagnosticsLog.record("fp.reg.shared", result: .fail, details: AppConfiguration.signingDiagnostics)
             return
         }
-        // Info.plist is immutable after re-signing. Register only if the File Provider
-        // is signed for the same group AND its document-group plist value matches.
-        let matchedExtension: String? = paths.first { path in
-            guard path.pathExtension == "appex",
-                  let bundle = Bundle(url: path),
-                  let extensionInfo = bundle.infoDictionary?["NSExtension"] as? [String: Any],
-                  extensionInfo["NSExtensionPointIdentifier"] as? String == "com.apple.fileprovider-nonui",
-                  extensionInfo["NSExtensionFileProviderDocumentGroup"] as? String == group else {
-                return false
-            }
-            let signedGroups = SignedEntitlements.stringArray(
-                "com.apple.security.application-groups", of: bundle
-            )
-            // DER-only signatures have no XML groups. The OS container check
-            // is authoritative if the XML signature cannot be parsed.
-            return (signedGroups.isEmpty || signedGroups.contains(group))
-                && FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: group) != nil
-        }?.lastPathComponent
-        DiagnosticsLog.record("fp.reg.plist_match",
-                                   result: matchedExtension != nil ? .pass : .fail,
-                                   details: "group=\(group) appex=\(matchedExtension ?? "none")")
-        guard matchedExtension != nil else {
-            NSLog("File Provider registration skipped: document group differs from signed App Group")
-            return
-        }
+        DiagnosticsLog.record("fp.reg.plist_match", result: AppConfiguration.fileProviderGroupReady ? .pass : .fail,
+                              details: AppConfiguration.signingDiagnostics)
+        guard AppConfiguration.fileProviderGroupReady else { return }
         let domain = NSFileProviderDomain(
             identifier: NSFileProviderDomainIdentifier(AppConfiguration.fileProviderDomainID),
             displayName: "sing-box"

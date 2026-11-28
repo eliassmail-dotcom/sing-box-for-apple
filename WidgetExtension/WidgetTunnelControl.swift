@@ -12,6 +12,9 @@ enum WidgetAppConfiguration {
         return Bundle.main.object(forInfoDictionaryKey: "BasePackageIdentifier") as? String ?? Bundle.main.bundleIdentifier ?? ""
     }()
 
+    #if os(iOS)
+    static var appGroupID: String { SharedGroupContract.resolved ?? "" }
+    #else
     static func candidateAppGroups(
         ownSigned: [String],
         peerSigned: [String],
@@ -106,6 +109,8 @@ enum WidgetAppConfiguration {
         return group
     }()
 
+    #endif
+
     static var widgetControlKind: String {
         "\(packageName).widget.ServiceToggle"
     }
@@ -161,15 +166,23 @@ enum WidgetTunnelControl {
     /// start path for the tunnel (no app process, snapshot-only options), so
     /// its outcomes must be visible in the shared diagnostics log.
     static func configureDiagnostics() {
+        #if os(iOS)
+        _ = accessObservation
+        #else
         let group = WidgetAppConfiguration.appGroupID
         DiagnosticsLog.configureSharedDirectory(
             group.isEmpty ? nil : FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: group)
         )
+        #endif
     }
+
+    #if os(iOS)
+    private static let accessObservation: Void = SharedGroupContract.recordAccess()
+    #endif
 
     static func currentIsStarted() async throws -> Bool {
         configureDiagnostics()
-        guard let manager = try await loadManager() else {
+        guard let manager = try await loadManager(purpose: "status") else {
             // A missing app-owned VPN configuration is distinct from "stopped".
             // Controls may be visible before a VPN profile has been installed.
             NSLog("[WidgetTunnelControl] No app-owned tunnel configuration for status query")
@@ -181,7 +194,7 @@ enum WidgetTunnelControl {
     static func setStarted(_ started: Bool) async throws {
         configureDiagnostics()
         DiagnosticsLog.record("widget.vpn.set", result: .unknown, details: "requested=\(started ? "on" : "off")")
-        guard let manager = try await loadManager() else {
+        guard let manager = try await loadManager(purpose: started ? "start" : "stop") else {
             NSLog("[WidgetTunnelControl] No tunnel configuration found")
             DiagnosticsLog.record("widget.vpn.set", result: .fail, errorDomain: "WidgetTunnelControl", errorCode: 1,
                                 details: "tunnel configuration not found")
@@ -248,7 +261,7 @@ enum WidgetTunnelControl {
     /// starting a second VPN session, or modifying subscription settings.
     static func changeNode() async throws {
         configureDiagnostics()
-        guard let manager = try await loadManager(connectedOnly: true) else {
+        guard let manager = try await loadManager(purpose: "nextNode", connectedOnly: true) else {
             throw nodeError("Подключённый туннель sing-box не найден")
         }
         guard manager.connection.status == .connected,
@@ -301,7 +314,7 @@ enum WidgetTunnelControl {
     /// Use the tunnel owned by this app instead of loadAllFromPreferences().first.
     /// iOS may retain old or additional VPN profiles; sending the LX command to
     /// one of those silently leaves the Dashboard's running route unchanged.
-    private static func loadManager(connectedOnly: Bool = false) async throws -> NETunnelProviderManager? {
+    private static func loadManager(purpose: String, connectedOnly: Bool = false) async throws -> NETunnelProviderManager? {
         let managers: [NETunnelProviderManager]
         do {
             managers = try await NETunnelProviderManager.loadAllFromPreferences()
@@ -345,13 +358,19 @@ enum WidgetTunnelControl {
         }
         if candidates.isEmpty {
             NSLog("[WidgetTunnelControl] No matching tunnel: storedManagers=\(managers.count), expectedProviders=\(expectedIDs.count), embeddedTunnelFound=\(WidgetAppConfiguration.packetTunnelBundleID != nil)")
-            DiagnosticsLog.record("widget.vpn.manager", result: .fail,
-                details: "storedManagers=\(managers.count) expectedProviders=\(expectedIDs.count) embeddedTunnelFound=\(WidgetAppConfiguration.packetTunnelBundleID != nil)")
+            DiagnosticsLog.record("widget.vpn.manager", result: managers.isEmpty && purpose == "status" ? .unknown : .fail,
+                details: "purpose=\(purpose) storedManagers=\(managers.count) expectedProviders=\(expectedIDs.count) embeddedTunnelFound=\(WidgetAppConfiguration.packetTunnelBundleID != nil)")
             return nil
         }
-        if connectedOnly {
-            return candidates.first(where: { $0.connection.status == .connected })
+        let active = candidates.filter { connectedOnly ? $0.connection.status == .connected : $0.connection.status.isStarted }
+        if active.count == 1 { return active[0] }
+        if active.isEmpty && !connectedOnly {
+            if candidates.count == 1 { return candidates[0] }
+            let enabled = candidates.filter(\.isEnabled)
+            if enabled.count == 1 { return enabled[0] }
         }
-        return candidates.first(where: { $0.connection.status.isStarted }) ?? candidates.first
+        DiagnosticsLog.record("widget.vpn.manager", result: .unknown,
+                              details: "purpose=\(purpose) candidates=\(candidates.count) active=\(active.count)")
+        return nil
     }
 }

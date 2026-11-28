@@ -15,9 +15,18 @@ from pathlib import Path
 from typing import Optional
 
 
-def analyze(ipa: Path, expected_build: Optional[str]) -> dict:
+POINTS = {
+    "com.apple.networkextension.packet-tunnel", "com.apple.fileprovider-nonui",
+    "com.apple.widgetkit-extension", "com.apple.appintents-extension", "com.apple.share-services",
+    "com.apple.ui-services",
+}
+
+
+def analyze(ipa: Path, expected_build: Optional[str], *, signed: bool = False) -> dict:
     with zipfile.ZipFile(ipa) as z:
         names = set(z.namelist())
+        if len(names) != len(z.namelist()):
+            raise ValueError("Duplicate archive member")
         apps = [n for n in names if n.startswith("Payload/") and
                 n.count("/") == 2 and n.endswith(".app/Info.plist")]
         if len(apps) != 1:
@@ -31,6 +40,8 @@ def analyze(ipa: Path, expected_build: Optional[str]) -> dict:
         bundles = []
         for name in [main_path, *plist_names]:
             p = plistlib.loads(z.read(name))
+            if name == main_path and not all(p.get(k) is True for k in ("UIFileSharingEnabled", "LSSupportsOpeningDocumentsInPlace")):
+                raise ValueError("Native Files document sharing is disabled")
             bundle = p.get("CFBundleIdentifier", "")
             exe = p.get("CFBundleExecutable", "")
             ver = str(p.get("CFBundleVersion", ""))
@@ -48,12 +59,13 @@ def analyze(ipa: Path, expected_build: Optional[str]) -> dict:
             bundles.append({
                 "info": name, "bundle": bundle, "build": ver,
                 "marketing": marketing, "group": group,
-                "extension_point": p.get("NSExtension", {}).get("NSExtensionPointIdentifier"),
+                "extension_point": p.get("NSExtension", {}).get("NSExtensionPointIdentifier")
+                                   or p.get("EXAppExtensionAttributes", {}).get("EXExtensionPointIdentifier"),
                 "document_group": p.get("NSExtension", {}).get("NSExtensionFileProviderDocumentGroup")
             })
 
         host = bundles[0]
-        if not host["group"]:
+        if not signed and not host["group"]:
             raise ValueError("Missing host AppGroupIdentifier")
         group = host["group"]
         seen = set()
@@ -63,20 +75,22 @@ def analyze(ipa: Path, expected_build: Optional[str]) -> dict:
             seen.add(item["bundle"])
             if item["build"] != host["build"] or item["marketing"] != host["marketing"]:
                 raise ValueError(f"Version mismatch in {item['info']}")
-            if item["group"] != group:
+            if not signed and item["group"] != group:
                 raise ValueError(f"App Group mismatch in {item['info']}")
             if item is not host and not item["bundle"].startswith(host["bundle"] + "."):
                 raise ValueError(f"Extension Bundle ID not nested under host: {item['bundle']}")
-            if item["document_group"] is not None and item["document_group"] != group:
+            if not signed and item["document_group"] is not None and item["document_group"] != group:
                 raise ValueError(f"Document Group mismatch in {item['info']}")
         vpn = [x for x in bundles[1:] if x["extension_point"] == "com.apple.networkextension.packet-tunnel"]
         fp = [x for x in bundles[1:] if x["extension_point"] == "com.apple.fileprovider-nonui"]
         if len(vpn) != 1 or len(fp) != 1:
             raise ValueError(f"Expected one Packet Tunnel and one File Provider, got {len(vpn)} and {len(fp)}")
-        if fp[0]["document_group"] != group:
+        if len(bundles) != len(POINTS) + 1 or {x["extension_point"] for x in bundles[1:]} != POINTS:
+            raise ValueError("Missing, duplicate or unexpected shared-container extension")
+        if not signed and fp[0]["document_group"] != group:
             raise ValueError("File Provider NSExtensionFileProviderDocumentGroup must equal App Group")
         # A truly unsigned IPA must not embed an old provisioning identity.
-        if any(n.endswith("/embedded.mobileprovision") and n.startswith(main_dir) for n in names):
+        if not signed and any(n.endswith("/embedded.mobileprovision") and n.startswith(main_dir) for n in names):
             raise ValueError("Unsigned IPA contains embedded provisioning profiles; signer must supply its own")
 
         return {

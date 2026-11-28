@@ -20,6 +20,15 @@ private struct LXWidgetControlRequest: Decodable {
 open class ExtensionProvider: NEPacketTunnelProvider {
     private static let logger = Logger(category: "ExtensionProvider")
 
+    private actor StartedSession {
+        var operation: String?
+        var attempt: String?
+
+        func set(_ op: String?, _ id: String?) { operation = op; attempt = id }
+        func ids() -> (String?, String?) { (operation, attempt) }
+    }
+    private let startedSession = StartedSession()
+
     public private(set) var commandServer: LibboxCommandServer?
     private lazy var platformInterface = ExtensionPlatformInterface(self)
     public var tunnelOptions: [String: NSObject]?
@@ -186,6 +195,7 @@ open class ExtensionProvider: NEPacketTunnelProvider {
     #endif
 
     override public init() {
+        DiagnosticsLog.record("tunnel.init.entered")
         LibboxPrepareCrashSignalHandlers()
         #if os(macOS)
             if Variant.useSystemExtension {
@@ -201,6 +211,7 @@ open class ExtensionProvider: NEPacketTunnelProvider {
         #endif
         LibboxReinstallCrashSignalHandlers()
         super.init()
+        DiagnosticsLog.record("tunnel.init.ready")
     }
 
     override open func startTunnel(options startOptions: [String: NSObject]?) async throws {
@@ -210,6 +221,7 @@ open class ExtensionProvider: NEPacketTunnelProvider {
         // identifiers in the options) or externally (Control Center control,
         // On Demand) with snapshot-only options; both paths are visible.
         let tunnelStartBegan = Date()
+        await startedSession.set(nil, nil)
         let operationID = startOptions?["diagnosticOperationID"] as? String
         let attemptID = startOptions?["diagnosticAttemptID"] as? String ?? UUID().uuidString
         DiagnosticsLog.record("tunnel.start.entered", operation: operationID, attempt: attemptID,
@@ -222,6 +234,7 @@ open class ExtensionProvider: NEPacketTunnelProvider {
         DiagnosticsLog.checkSharedContainerProbe(expectedSession: startOptions?["diagnosticSessionID"] as? String)
         do {
             try await startTunnelBody(startOptions, operationID: operationID, attemptID: attemptID)
+            await startedSession.set(operationID, attemptID)
             DiagnosticsLog.record("tunnel.start.completed", result: .pass, operation: operationID,
                                 attempt: attemptID,
                                 durationMs: Int(Date().timeIntervalSince(tunnelStartBegan) * 1000))
@@ -491,6 +504,7 @@ open class ExtensionProvider: NEPacketTunnelProvider {
     }
 
     override open func stopTunnel(with reason: NEProviderStopReason) async {
+        await startedSession.set(nil, nil)
         DiagnosticsLog.record("tunnel.stop", details: "reason=\(reason.rawValue)")
         writeMessage("(packet-tunnel) stopping, reason: \(reason)")
         #if os(iOS)
@@ -592,6 +606,22 @@ open class ExtensionProvider: NEPacketTunnelProvider {
     }
 
     override open func handleAppMessage(_ messageData: Data) async -> Data? {
+        #if os(iOS)
+        let prefix = VPNStartReceipt.prefix
+        if messageData.count == prefix.utf8.count + 36,
+           let message = String(data: messageData, encoding: .utf8), message.hasPrefix(prefix),
+           let id = UUID(uuidString: String(message.dropFirst(prefix.count))) {
+            let (operation, attempt) = await startedSession.ids()
+            let stages: [String]
+            if FilePath.hasSharedContainer {
+                stages = []
+            } else {
+                stages = await Task.detached(priority: .utility) { DiagnosticsLog.startStages(operation: id.uuidString) }.value
+            }
+            return try? JSONEncoder().encode(VPNStartReceipt(operation: operation, attempt: attempt,
+                                                             group: AppConfiguration.signingDiagnostics, stages: stages))
+        }
+        #endif
         // The control command must be recognized BEFORE the legacy settings
         // decoder. Otherwise a widget tap would trigger reloadService().
         if let request = try? JSONDecoder().decode(LXWidgetControlRequest.self, from: messageData) {

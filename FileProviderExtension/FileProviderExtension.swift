@@ -4,30 +4,10 @@ import UniformTypeIdentifiers
 class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
     let domain: NSFileProviderDomain
 
-    // File Provider's document group is a signed, static Info.plist value.
-    // Never choose an arbitrary group independently from the host application.
     private static let workingDirectoryURL: URL? = {
-        guard let extensionInfo = Bundle.main.object(forInfoDictionaryKey: "NSExtension") as? [String: Any],
-              let group = extensionInfo["NSExtensionFileProviderDocumentGroup"] as? String,
-              !group.isEmpty else {
-            NSLog("File Provider: missing NSExtensionFileProviderDocumentGroup")
-            return nil
-        }
-        let signedGroups = SignedEntitlements.stringArray("com.apple.security.application-groups")
-        // Some re-signers produce DER-only entitlements. In that case the OS
-        // container access check is authoritative; XML parsing is not required.
-        if !signedGroups.isEmpty && !signedGroups.contains(group) {
-            NSLog("File Provider: document group is not in signed XML entitlements")
-            return nil
-        }
-        guard let container = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: group) else {
-            NSLog("File Provider: signed document group container unavailable")
-            return nil
-        }
-        return container
-            .appendingPathComponent("Library", isDirectory: true)
-            .appendingPathComponent("Caches", isDirectory: true)
-            .appendingPathComponent("Working", isDirectory: true)
+        guard SharedGroupContract.filesReady else { return nil }
+        return SharedGroupContract.container?
+            .appendingPathComponent("Library/Caches/Working", isDirectory: true)
     }()
 
     private func requireWorkingDirectory() throws -> URL {
@@ -67,25 +47,10 @@ class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
         DiagnosticsLog.record("fpx.working_dir", result: .pass)
     }
 
-    /// Document group container for cross-process diagnostics. Resolved
-    /// independently of workingDirectoryURL (which stays lazy): this uses the
-    /// same signed Info.plist value, but never touches the working directory.
-    private static let diagnosticsContainer: URL? = {
-        guard let extensionInfo = Bundle.main.object(forInfoDictionaryKey: "NSExtension") as? [String: Any],
-              let group = extensionInfo["NSExtensionFileProviderDocumentGroup"] as? String,
-              !group.isEmpty else { return nil }
-        return FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: group)
-    }()
-
     required init(domain: NSFileProviderDomain) {
         self.domain = domain
         super.init()
-        DiagnosticsLog.configureSharedDirectory(Self.diagnosticsContainer)
-        let signedGroups = SignedEntitlements.stringArray("com.apple.security.application-groups")
-        let declaredGroup = (Bundle.main.object(forInfoDictionaryKey: "NSExtension") as? [String: Any])?["NSExtensionFileProviderDocumentGroup"] as? String
-        DiagnosticsLog.record("appgroup.access",
-                                   result: Self.diagnosticsContainer != nil ? .pass : .fail,
-                                   details: "group=\(declaredGroup ?? "none") signedGroups=\(signedGroups.count) containsDeclared=\(signedGroups.contains(declaredGroup ?? "")) container=\(Self.diagnosticsContainer != nil)")
+        SharedGroupContract.recordAccess()
         do {
             _ = try requireWorkingDirectory()
         } catch {

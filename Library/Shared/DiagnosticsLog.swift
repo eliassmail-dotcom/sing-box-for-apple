@@ -25,6 +25,7 @@ public enum DiagnosticsLog {
         case tunnel = "TUNNEL"
         case fileProvider = "FILEPROVIDER"
         case widget = "WIDGET"
+        case intents = "INTENTS", share = "SHARE", action = "ACTION"
     }
 
     public enum Result: String {
@@ -38,6 +39,7 @@ public enum DiagnosticsLog {
         let ts: Int64
         let process: String
         let session: String
+        var build: String? = nil
         let operation: String?
         let attempt: String?
         let stage: String
@@ -147,6 +149,7 @@ public enum DiagnosticsLog {
             ts: Int64(Date().timeIntervalSince1970 * 1000),
             process: process.rawValue,
             session: session,
+            build: Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String,
             operation: operation,
             attempt: attempt,
             stage: stage,
@@ -284,6 +287,19 @@ public enum DiagnosticsLog {
             byId[event.id] = event
         }
         return byId.values.sorted { $0.ts < $1.ts }
+    }
+
+    /// Only structural evidence for one requested operation crosses the NE message channel.
+    /// Exclude event details: they are not necessary to identify the last completed stage.
+    static func startStages(operation: String) -> [String] {
+        let events = readEvents(from: localDirectory(), allProcesses: false)
+            .filter { $0.process == Process.tunnel.rawValue && $0.operation == operation }
+            .sorted { $0.ts < $1.ts }
+        var lines = ["TUNNEL observedEvents=\(events.count)"]
+        for event in events.suffix(23) {
+            lines.append("ts=\(event.ts) at=\(event.attempt ?? "none") stage=\(event.stage) result=\(event.result) err=\(event.errorDomain ?? "none")/\(event.errorCode ?? 0)")
+        }
+        return lines
     }
 
     /// Human-readable report: header lines, the merged timeline and the
@@ -507,15 +523,10 @@ public enum DiagnosticsLog {
     // MARK: - Helpers
 
     private static func detectProcess() -> Process {
-        let bundleID = (Bundle.main.bundleIdentifier ?? "").lowercased()
-        if bundleID.contains("fileprovider") {
-            return .fileProvider
-        }
-        if bundleID.contains("widget") {
-            return .widget
-        }
-        if Bundle.main.object(forInfoDictionaryKey: "NSExtension") != nil {
-            return .tunnel
+        if let point = SharedGroupContract.extensionPoint(Bundle.main.infoDictionary ?? [:]),
+           let role = SharedGroupContract.Role(extensionPoint: point),
+           let process = Process(rawValue: role.rawValue) {
+            return process
         }
         return .app
     }
@@ -534,6 +545,7 @@ public enum DiagnosticsLog {
 private extension DiagnosticsLog.Event {
     var singleLine: String {
         var parts = ["ts=\(ts)", "p=\(process)", "s=\(session)"]
+        if let build { parts.append("build=\(build)") }
         if let operation { parts.append("op=\(operation)") }
         if let attempt { parts.append("at=\(attempt)") }
         parts.append("stage=\(stage)")

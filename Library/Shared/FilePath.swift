@@ -9,18 +9,23 @@ public enum FilePath {
     }
 
     /// True when this process is signed with an app group it can actually access.
-    /// The VPN tunnel requires the shared container; without it the app stays
-    /// usable (settings, diagnostics) but the tunnel cannot run.
+    /// Isolated VPN starts receive their configuration via NetworkExtension options.
     public static let hasSharedContainer: Bool = sharedContainerURL != nil
 
     private static let defaultSharedDirectory: URL = {
         if let url = sharedContainerURL {
+            #if os(iOS) && !JAILBREAK
+            // These Library consumers can start independently of the host.
+            if [.action, .share, .intents].contains(DiagnosticsLog.process) {
+                SharedGroupContract.recordAccess()
+            }
+            #endif
             return url
         }
         // No usable app group (e.g. the re-signing profile has none): fall back to
         // process-local storage so the app does not crash at launch. Note that the
         // main app and the extension have separate local containers, so they cannot
-        // exchange data through this fallback - VPN is unavailable in this state.
+        // exchange files through this fallback.
         let url = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
         try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
         return url

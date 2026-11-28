@@ -7,6 +7,12 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		B51100000000000000000102 /* DiagnosticsLog.swift in Sources */ = {isa = PBXBuildFile; fileRef = B51000000000000000000002 /* DiagnosticsLog.swift */; };
+		B51100000000000000000002 /* DiagnosticsLog.swift in Sources */ = {isa = PBXBuildFile; fileRef = B51000000000000000000002 /* DiagnosticsLog.swift */; };
+		B51100000000000000000101 /* SignedEntitlements.swift in Sources */ = {isa = PBXBuildFile; fileRef = B51000000000000000000001 /* SignedEntitlements.swift */; };
+		B51100000000000000000001 /* SignedEntitlements.swift in Sources */ = {isa = PBXBuildFile; fileRef = B51000000000000000000001 /* SignedEntitlements.swift */; };
+		B51100000000000000000100 /* SharedGroupContract.swift in Sources */ = {isa = PBXBuildFile; fileRef = B51000000000000000000000 /* SharedGroupContract.swift */; };
+		B51100000000000000000000 /* SharedGroupContract.swift in Sources */ = {isa = PBXBuildFile; fileRef = B51000000000000000000000 /* SharedGroupContract.swift */; };
 		3A017F922A4AB2E4009149FA /* GRDB in Frameworks */ = {isa = PBXBuildFile; productRef = 3A017F912A4AB2E4009149FA /* GRDB */; };
 		3A096F8F2A4ED3DE00D4A2ED /* Extension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 3A096F862A4ED3DE00D4A2ED /* Extension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		3A2E87F22ED5A91100644195 /* Runestone in Frameworks */ = {isa = PBXBuildFile; productRef = 3A2E87F12ED5A91100644195 /* Runestone */; };
@@ -532,6 +538,9 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		B51000000000000000000002 /* DiagnosticsLog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Library/Shared/DiagnosticsLog.swift; sourceTree = SOURCE_ROOT; };
+		B51000000000000000000001 /* SignedEntitlements.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Library/Shared/SignedEntitlements.swift; sourceTree = SOURCE_ROOT; };
+		B51000000000000000000000 /* SharedGroupContract.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Library/Shared/SharedGroupContract.swift; sourceTree = SOURCE_ROOT; };
 		3A096F862A4ED3DE00D4A2ED /* Extension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = Extension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		3A3DEBE12A4FFA1A00373BF4 /* ExtensionFoundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = ExtensionFoundation.framework; path = Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS17.0.sdk/System/Library/Frameworks/ExtensionFoundation.framework; sourceTree = DEVELOPER_DIR; };
 		3A3DEBE62A4FFA6000373BF4 /* AppIntents.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = AppIntents.framework; path = Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS17.0.sdk/System/Library/Frameworks/AppIntents.framework; sourceTree = DEVELOPER_DIR; };
@@ -1949,6 +1958,9 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				B51100000000000000000002 /* DiagnosticsLog.swift in Sources */,
+				B51100000000000000000001 /* SignedEntitlements.swift in Sources */,
+				B51100000000000000000000 /* SharedGroupContract.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -1970,6 +1982,9 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				B51100000000000000000102 /* DiagnosticsLog.swift in Sources */,
+				B51100000000000000000101 /* SignedEntitlements.swift in Sources */,
+				B51100000000000000000100 /* SharedGroupContract.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -2246,7 +2261,7 @@
 				CODE_SIGN_ENTITLEMENTS = Extension/Extension.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 33;
+				CURRENT_PROJECT_VERSION = 51;
 				DEVELOPMENT_TEAM = P8XK3KHB48;
 				ENABLE_HARDENED_RUNTIME = YES;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -2286,7 +2301,7 @@
 				CODE_SIGN_ENTITLEMENTS = Extension/Extension.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 33;
+				CURRENT_PROJECT_VERSION = 51;
 				DEVELOPMENT_TEAM = P8XK3KHB48;
 				ENABLE_HARDENED_RUNTIME = YES;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -2586,7 +2601,7 @@
 				CODE_SIGN_ENTITLEMENTS = IntentsExtension/IntentsExtension.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 33;
+				CURRENT_PROJECT_VERSION = 51;
 				DEVELOPMENT_TEAM = P8XK3KHB48;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = IntentsExtension/Info.plist;
@@ -2625,7 +2640,7 @@
 				CODE_SIGN_ENTITLEMENTS = IntentsExtension/IntentsExtension.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 33;
+				CURRENT_PROJECT_VERSION = 51;
 				DEVELOPMENT_TEAM = P8XK3KHB48;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = IntentsExtension/Info.plist;
@@ -2662,7 +2677,7 @@
 		3A7B322F2FDE1D54008C0F7F /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				APP_GROUP_IDENTIFIER = "group.a1a3126d75ee90bd.2";
+				APP_GROUP_IDENTIFIER = "$(SFI_SIGNING_APP_GROUP)";
 				CODE_SIGNING_ALLOWED = NO;
 				CODE_SIGN_STYLE = Manual;
 				CREATE_INFOPLIST_SECTION_IN_BINARY = YES;
@@ -2687,7 +2702,7 @@
 		3A7B32302FDE1D54008C0F7F /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				APP_GROUP_IDENTIFIER = "group.a1a3126d75ee90bd.2";
+				APP_GROUP_IDENTIFIER = "$(SFI_SIGNING_APP_GROUP)";
 				CODE_SIGNING_ALLOWED = NO;
 				CODE_SIGN_STYLE = Manual;
 				CREATE_INFOPLIST_SECTION_IN_BINARY = YES;
@@ -2712,11 +2727,11 @@
 		3AAAFB2F2EF5218F004C69AD /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				APP_GROUP_IDENTIFIER = "group.a1a3126d75ee90bd.2";
+				APP_GROUP_IDENTIFIER = "$(SFI_SIGNING_APP_GROUP)";
 				CODE_SIGN_ENTITLEMENTS = FileProviderExtension/FileProviderExtension.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 33;
+				CURRENT_PROJECT_VERSION = 51;
 				DEVELOPMENT_TEAM = P8XK3KHB48;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = FileProviderExtension/Info.plist;
@@ -2745,11 +2760,11 @@
 		3AAAFB302EF5218F004C69AD /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				APP_GROUP_IDENTIFIER = "group.a1a3126d75ee90bd.2";
+				APP_GROUP_IDENTIFIER = "$(SFI_SIGNING_APP_GROUP)";
 				CODE_SIGN_ENTITLEMENTS = FileProviderExtension/FileProviderExtension.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 33;
+				CURRENT_PROJECT_VERSION = 51;
 				DEVELOPMENT_TEAM = P8XK3KHB48;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = FileProviderExtension/Info.plist;
@@ -2855,7 +2870,7 @@
 				CODE_SIGN_ENTITLEMENTS = TVExtension/TVExtension.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 33;
+				CURRENT_PROJECT_VERSION = 51;
 				DEVELOPMENT_TEAM = P8XK3KHB48;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = TVExtension/Info.plist;
@@ -2891,7 +2906,7 @@
 				CODE_SIGN_ENTITLEMENTS = TVExtension/TVExtension.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 33;
+				CURRENT_PROJECT_VERSION = 51;
 				DEVELOPMENT_TEAM = P8XK3KHB48;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = TVExtension/Info.plist;
@@ -2930,7 +2945,7 @@
 				CODE_SIGN_ENTITLEMENTS = WidgetExtension/WidgetExtension.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 33;
+				CURRENT_PROJECT_VERSION = 51;
 				DEVELOPMENT_TEAM = P8XK3KHB48;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = WidgetExtension/Info.plist;
@@ -2961,7 +2976,7 @@
 				CODE_SIGN_ENTITLEMENTS = WidgetExtension/WidgetExtension.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 33;
+				CURRENT_PROJECT_VERSION = 51;
 				DEVELOPMENT_TEAM = P8XK3KHB48;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = WidgetExtension/Info.plist;
@@ -2988,7 +3003,7 @@
 		3AE595762F08C34000C13426 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				APP_GROUP_IDENTIFIER = "group.a1a3126d75ee90bd.2";
+				APP_GROUP_IDENTIFIER = "$(SFI_SIGNING_APP_GROUP)";
 				AUTOMATION_APPLE_EVENTS = NO;
 				CODE_SIGN_ENTITLEMENTS = HelperService/RootHelper.entitlements;
 				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
@@ -3029,7 +3044,7 @@
 		3AE595772F08C34000C13426 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				APP_GROUP_IDENTIFIER = "group.a1a3126d75ee90bd.2";
+				APP_GROUP_IDENTIFIER = "$(SFI_SIGNING_APP_GROUP)";
 				AUTOMATION_APPLE_EVENTS = NO;
 				CODE_SIGN_ENTITLEMENTS = HelperService/RootHelper.entitlements;
 				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
@@ -3071,9 +3086,11 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
-				APP_GROUP_IDENTIFIER = "group.a1a3126d75ee90bd.2";
+				APP_GROUP_IDENTIFIER = "$(SFI_SIGNING_APP_GROUP)";
 				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
 				BASE_PACKAGE_IDENTIFIER = app.amethyst4184.singboxlx;
+				SFI_SIGNING_APP_GROUP = "group.a1a3126d75ee90bd.2";
+				"SFI_SIGNING_APP_GROUP[sdk=iphone*]" = "group.$(BASE_PACKAGE_IDENTIFIER)";
 				CLANG_ANALYZER_LOCALIZABILITY_NONLOCALIZED = YES;
 				CLANG_ANALYZER_NONNULL = YES;
 				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
@@ -3141,9 +3158,11 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
-				APP_GROUP_IDENTIFIER = "group.a1a3126d75ee90bd.2";
+				APP_GROUP_IDENTIFIER = "$(SFI_SIGNING_APP_GROUP)";
 				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
 				BASE_PACKAGE_IDENTIFIER = app.amethyst4184.singboxlx;
+				SFI_SIGNING_APP_GROUP = "group.a1a3126d75ee90bd.2";
+				"SFI_SIGNING_APP_GROUP[sdk=iphone*]" = "group.$(BASE_PACKAGE_IDENTIFIER)";
 				CLANG_ANALYZER_LOCALIZABILITY_NONLOCALIZED = YES;
 				CLANG_ANALYZER_NONNULL = YES;
 				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
@@ -3208,7 +3227,7 @@
 				CODE_SIGN_ENTITLEMENTS = SFI/SFI.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 33;
+				CURRENT_PROJECT_VERSION = 51;
 				DEVELOPMENT_ASSET_PATHS = "";
 				DEVELOPMENT_TEAM = P8XK3KHB48;
 				ENABLE_PREVIEWS = YES;
@@ -3251,7 +3270,7 @@
 				CODE_SIGN_ENTITLEMENTS = SFI/SFI.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 33;
+				CURRENT_PROJECT_VERSION = 51;
 				DEVELOPMENT_ASSET_PATHS = "";
 				DEVELOPMENT_TEAM = P8XK3KHB48;
 				ENABLE_PREVIEWS = YES;
@@ -3462,7 +3481,7 @@
 		3AEECBFD2A6DF40A006A0E0C /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				APP_GROUP_IDENTIFIER = "group.a1a3126d75ee90bd.2";
+				APP_GROUP_IDENTIFIER = "$(SFI_SIGNING_APP_GROUP)";
 				CODE_SIGN_ENTITLEMENTS = SystemExtension/SystemExtension.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Developer ID Application";
@@ -3510,7 +3529,7 @@
 		3AEECBFE2A6DF40A006A0E0C /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				APP_GROUP_IDENTIFIER = "group.a1a3126d75ee90bd.2";
+				APP_GROUP_IDENTIFIER = "$(SFI_SIGNING_APP_GROUP)";
 				CODE_SIGN_ENTITLEMENTS = SystemExtension/SystemExtension.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Developer ID Application";
@@ -3558,7 +3577,7 @@
 		3AEECC112A6DF9CA006A0E0C /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				APP_GROUP_IDENTIFIER = "group.a1a3126d75ee90bd.2";
+				APP_GROUP_IDENTIFIER = "$(SFI_SIGNING_APP_GROUP)";
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = NO;
@@ -3600,7 +3619,7 @@
 		3AEECC122A6DF9CA006A0E0C /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				APP_GROUP_IDENTIFIER = "group.a1a3126d75ee90bd.2";
+				APP_GROUP_IDENTIFIER = "$(SFI_SIGNING_APP_GROUP)";
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = NO;
@@ -3723,7 +3742,7 @@
 				CODE_SIGN_ENTITLEMENTS = ShareExtension/ShareExtension.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 33;
+				CURRENT_PROJECT_VERSION = 51;
 				DEVELOPMENT_TEAM = P8XK3KHB48;
 				ENABLE_HARDENED_RUNTIME = YES;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -3763,7 +3782,7 @@
 				CODE_SIGN_ENTITLEMENTS = ShareExtension/ShareExtension.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 33;
+				CURRENT_PROJECT_VERSION = 51;
 				DEVELOPMENT_TEAM = P8XK3KHB48;
 				ENABLE_HARDENED_RUNTIME = YES;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -3804,7 +3823,7 @@
 				CODE_SIGN_ENTITLEMENTS = ActionExtension/ActionExtension.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 33;
+				CURRENT_PROJECT_VERSION = 51;
 				DEVELOPMENT_TEAM = P8XK3KHB48;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = ActionExtension/Info.plist;
@@ -3842,7 +3861,7 @@
 				CODE_SIGN_ENTITLEMENTS = ActionExtension/ActionExtension.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 33;
+				CURRENT_PROJECT_VERSION = 51;
 				DEVELOPMENT_TEAM = P8XK3KHB48;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = ActionExtension/Info.plist;
@@ -3875,7 +3894,7 @@
 		3AF7B2092FF10003000A0001 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				APP_GROUP_IDENTIFIER = "group.a1a3126d75ee90bd.2";
+				APP_GROUP_IDENTIFIER = "$(SFI_SIGNING_APP_GROUP)";
 				CLANG_ENABLE_MODULES = YES;
 				CODE_SIGN_ENTITLEMENTS = ShareExtension.System/ShareExtension.entitlements;
 				CODE_SIGN_IDENTITY = "Developer ID Application";
@@ -3911,7 +3930,7 @@
 		3AF7B20A2FF10003000A0001 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				APP_GROUP_IDENTIFIER = "group.a1a3126d75ee90bd.2";
+				APP_GROUP_IDENTIFIER = "$(SFI_SIGNING_APP_GROUP)";
 				CLANG_ENABLE_MODULES = YES;
 				CODE_SIGN_ENTITLEMENTS = ShareExtension.System/ShareExtension.entitlements;
 				CODE_SIGN_IDENTITY = "Developer ID Application";

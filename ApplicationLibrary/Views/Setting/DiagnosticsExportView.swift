@@ -50,7 +50,7 @@ public struct DiagnosticsExportButton: View {
             "signing: \(AppConfiguration.signingDiagnostics)",
             "process: \(DiagnosticsLog.process.rawValue)",
         ]
-        if let url = DiagnosticsLog.writeReportToDocuments(header: header) {
+        if let url = DiagnosticsLog.writeReportToDocuments(header: header + AppConfiguration.signingInventory) {
             DiagnosticsLog.record("diagnostics.export", result: .pass, details: "written to Documents")
             failureText = nil
             shareItem = ShareItem(url: url)

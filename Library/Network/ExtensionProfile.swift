@@ -34,7 +34,10 @@ struct VPNStartupWaitPolicy {
 public class ExtensionProfile: ObservableObject {
     public static let controlKind = AppConfiguration.widgetControlKind
 
-    private let manager: NEVPNManager?
+    private var manager: NEVPNManager?
+    private var needsColdSession = true
+    private var observationIDs: (operation: String?, attempt: String?)?
+
     private var connection: NEVPNConnection?
     private var observer: Any?
     private var observesStatus = false
@@ -112,6 +115,10 @@ public class ExtensionProfile: ObservableObject {
             Task { @MainActor in
                 // Ignore notifications queued before a preferences reload rebound the session.
                 guard let self, self.connection === connection else { return }
+                if let ids = self.observationIDs {
+                    DiagnosticsLog.record("vpn.status.notification", operation: ids.operation, attempt: ids.attempt,
+                                          details: "status=\(connection.status.rawValue)")
+                }
                 self.status = connection.status
                 self.connectedDate = connection.connectedDate
                 if connection.status == .disconnected {
@@ -259,6 +266,7 @@ public class ExtensionProfile: ObservableObject {
             if #available(iOS 17.4, macOS 14.4, *) {
                 apply(\.excludeDeviceCommunication, await SharedPreferences.excludeDeviceCommunication.get())
             }
+            if changed { manager?.protocolConfiguration = protocolConfiguration }
             return changed
         #else
             return false
@@ -332,9 +340,16 @@ public class ExtensionProfile: ObservableObject {
         options["diagnosticSessionID"] = NSString(string: DiagnosticsLog.session)
         options["diagnosticAttemptID"] = NSString(string: firstAttemptID)
         do {
-            let winningAttemptID = try await connectWithOneSessionRecovery(options)
-            DiagnosticsLog.record("vpn.start.connected", result: .pass, operation: operationID,
-                                   attempt: winningAttemptID)
+            defer { observationIDs = nil }
+            let issuedAttempt = try await connectWithOneSessionRecovery(options)
+            DiagnosticsLog.record("vpn.session.connected", result: .pass, operation: operationID,
+                                  details: "requestedAttempt=\(issuedAttempt ?? "none")")
+            #if os(iOS)
+            confirmStart(operation: operationID, issued: issuedAttempt, options: options, expected: expectedDesiredOptions)
+            #else
+            DiagnosticsLog.record("vpn.start.connected", result: .pass, operation: operationID, attempt: issuedAttempt)
+            persistConnectedSnapshot(options: options, expected: expectedDesiredOptions, operation: operationID)
+            #endif
         } catch {
             let nsError = error as NSError
             let stage = nsError.userInfo["VPNStartStage"] as? String ?? "unspecified"
@@ -343,26 +358,56 @@ public class ExtensionProfile: ObservableObject {
                                    details: "stage=\(stage)")
             throw await makeStartDiagnosticError(error, fallbackStage: "start / wait for connected / recovery")
         }
-        if FilePath.hasSharedContainer {
-            do {
-                // Diagnostic correlation identifiers travel only with the
-                // live startVPNTunnel(options:) payload. They must never enter
-                // the persisted snapshots: the snapshot compare-and-swap is a
-                // strict dictionary equality, and a new UUID per start would
-                // look like a concurrent external change.
-                var persistableOptions = options
-                for key in ["diagnosticOperationID", "diagnosticSessionID", "diagnosticAttemptID"] {
-                    persistableOptions.removeValue(forKey: key)
+    }
+
+    // A system-wide connected status cannot attribute a session to our request.
+    // A small read-only reply names the successful start from inside the provider.
+    // It is asynchronous so a missing receipt never delays or restarts a live VPN.
+    #if os(iOS)
+    private func confirmStart(operation: String, issued: String?, options: [String: NSObject], expected: [String: NSObject]?) {
+        guard let session = connection as? NETunnelProviderSession, session.status == .connected else { return }
+        do {
+            try session.sendProviderMessage(Data((VPNStartReceipt.prefix + operation).utf8)) { [weak self] data in
+                Task { @MainActor in
+                    guard let self, let data, data.count <= 16384,
+                          let receipt = try? JSONDecoder().decode(VPNStartReceipt.self, from: data) else {
+                        DiagnosticsLog.record("vpn.start.attribution", operation: operation, details: "providerReplyUnavailable")
+                        return
+                    }
+                    DiagnosticsLog.record("vpn.start.attribution", operation: operation,
+                        details: "providerOperation=\(receipt.operation ?? "external") providerAttempt=\(receipt.attempt ?? "none") \(receipt.group)")
+                    for line in receipt.stages.prefix(24) {
+                        DiagnosticsLog.record("tunnel.receipt", operation: operation, details: line)
+                    }
+                    guard let issued, receipt.matches(operation: operation, issued: issued) else {
+                        DiagnosticsLog.record("vpn.start.sessionObserved", result: .pass, operation: operation,
+                                              details: "existing or concurrent provider start")
+                        return
+                    }
+                    DiagnosticsLog.record("vpn.start.connected", result: .pass, operation: operation, attempt: issued)
+                    guard self.connection === session, session.status == .connected else { return }
+                    self.persistConnectedSnapshot(options: options, expected: expected, operation: operation)
                 }
-                try persistDesiredStartOptions(persistableOptions, expectedCurrent: expectedDesiredOptions)
-                DiagnosticsLog.record("vpn.snapshot.persist", result: .pass, operation: operationID)
-            } catch {
-                // The tunnel is already connected. A snapshot sync failure must
-                // not turn a successful VPN start into a reported start failure.
-                logger.warning("VPN connected, but desired snapshot was not updated: \(error.localizedDescription)")
-                DiagnosticsLog.record("vpn.snapshot.persist", result: .fail, operation: operationID,
-                                       errorDomain: (error as NSError).domain, errorCode: (error as NSError).code)
             }
+        } catch {
+            DiagnosticsLog.record("vpn.start.attribution", operation: operation, errorDomain: (error as NSError).domain,
+                                  errorCode: (error as NSError).code, details: "providerMessageFailed")
+        }
+    }
+    #endif
+
+    private func persistConnectedSnapshot(options: [String: NSObject], expected: [String: NSObject]?, operation: String) {
+        guard FilePath.hasSharedContainer else { return }
+        var persistable = options
+        for key in ["diagnosticOperationID", "diagnosticSessionID", "diagnosticAttemptID"] {
+            persistable.removeValue(forKey: key)
+        }
+        do {
+            try persistDesiredStartOptions(persistable, expectedCurrent: expected)
+            DiagnosticsLog.record("vpn.snapshot.persist", result: .pass, operation: operation)
+        } catch {
+            DiagnosticsLog.record("vpn.snapshot.persist", result: .fail, operation: operation,
+                                  errorDomain: (error as NSError).domain, errorCode: (error as NSError).code)
         }
     }
 
@@ -371,8 +416,7 @@ public class ExtensionProfile: ObservableObject {
     /// a successful session as failed, and never loop indefinitely. This only
     /// retries once after iOS has returned to the disconnected state; a bad
     /// entitlement or config will still surface as an error.
-    /// Returns the attempt ID that actually produced the connected session:
-    /// the first attempt, or the recovery retry when the first one failed.
+    /// Returns the issued attempt, if any. Only a provider receipt establishes attribution.
     private func connectWithOneSessionRecovery(_ options: [String: NSObject]) async throws -> String? {
         let operationID = options["diagnosticOperationID"] as? String
         let attemptID = options["diagnosticAttemptID"] as? String
@@ -509,11 +553,15 @@ public class ExtensionProfile: ObservableObject {
             if observation.shouldFail(status: connection.status, now: ProcessInfo.processInfo.systemUptime) {
                 var disconnectError: NSError?
                 if #available(iOS 16.0, macOS 13.0, tvOS 17.0, *) {
+                    DiagnosticsLog.record("vpn.lastError.query", operation: operationID, attempt: attemptID)
+                    let began = ProcessInfo.processInfo.systemUptime
                     do {
                         try await connection.fetchLastDisconnectError()
                     } catch {
                         disconnectError = error as NSError
                     }
+                    DiagnosticsLog.record("vpn.lastError.returned", operation: operationID, attempt: attemptID,
+                        durationMs: Int((ProcessInfo.processInfo.systemUptime - began) * 1000))
                 }
                 // The status can change during the asynchronous system query.
                 // Never retry a connection that has started in the meantime.
@@ -541,7 +589,6 @@ public class ExtensionProfile: ObservableObject {
     }
 
     private func start(with options: [String: NSObject]) async throws -> Bool {
-        guard let manager else { return false }
         let operationID = options["diagnosticOperationID"] as? String
         let attemptID = options["diagnosticAttemptID"] as? String
         func recorded<T>(_ stage: String, result: DiagnosticsLog.Result = .pass,
@@ -559,6 +606,24 @@ public class ExtensionProfile: ObservableObject {
                 throw error
             }
         }
+        observationIDs = (operationID, attemptID)
+        #if os(iOS)
+        if needsColdSession {
+            // An object held by the dashboard may predate installation or re-signing.
+            // Acquire the registered manager before issuing the first provider message.
+            let candidates = try await recorded("vpn.cold.loadAll") { try await NETunnelProviderManager.loadAllFromPreferences() }
+            guard let current = try Self.ownedManager(in: candidates) else {
+                throw NSError(domain: "ExtensionProfile.Preferences", code: 1,
+                              userInfo: [NSLocalizedDescriptionKey: "The installed VPN configuration is unavailable."])
+            }
+            DiagnosticsLog.record("vpn.cold.manager", operation: operationID, attempt: attemptID,
+                                  details: "provider=\(AppConfiguration.extensionBundleID) status=\(current.connection.status.rawValue) rebound=\(manager !== current)")
+            manager = current
+            rebindConnection()
+            needsColdSession = false
+        }
+        #endif
+        guard let manager else { return false }
         try await recorded("vpn.fetchProfile") {
             try await fetchProfile()
         }
@@ -589,6 +654,7 @@ public class ExtensionProfile: ObservableObject {
                 var config = proto.providerConfiguration ?? [:]
                 if config.removeValue(forKey: "wasOnDemandEnabled") != nil {
                     proto.providerConfiguration = config
+                    manager.protocolConfiguration = proto
                     changed = true
                 }
             }
@@ -620,15 +686,18 @@ public class ExtensionProfile: ObservableObject {
             }
             // Saving an On Demand manager may already have started the tunnel.
             // Starting it again during .connecting can cause a spurious first-launch error.
-            if connection.status == .connected || connection.status == .connecting ||
-                connection.status == .reasserting {
+            if connection.status.isStarted {
                 logger.info("Using existing NetworkExtension session, status=\(connection.status.rawValue)")
                 DiagnosticsLog.record("vpn.start.sessionReuse", operation: operationID, attempt: attemptID,
                                        details: "status=\(connection.status.rawValue)")
                 return false
             } else {
+                guard connection.status == .disconnected, let providerSession = connection as? NETunnelProviderSession else {
+                    throw NSError(domain: "ExtensionProfile.Start", code: 6,
+                        userInfo: [NSLocalizedDescriptionKey: "VPN session is not ready for a new connection."])
+                }
                 try await recorded("vpn.startVPNTunnel") {
-                    try connection.startVPNTunnel(options: options)
+                    try providerSession.startTunnel(options: options)
                 }
                 return true
             }
@@ -865,16 +934,21 @@ public class ExtensionProfile: ObservableObject {
         }
     }
 
+    static func ownedManager(in managers: [NETunnelProviderManager]) throws -> NETunnelProviderManager? {
+        let expected = Variant.useSystemExtension ? AppConfiguration.systemExtensionBundleID : AppConfiguration.extensionBundleID
+        let matching = managers.filter { ($0.protocolConfiguration as? NETunnelProviderProtocol)?.providerBundleIdentifier == expected }
+        if matching.count <= 1 { return matching.first }
+        let active = matching.filter { $0.connection.status.isStarted }
+        if active.count == 1 { return active[0] }
+        let enabled = matching.filter(\.isEnabled)
+        if active.isEmpty && enabled.count == 1 { return enabled[0] }
+        throw NSError(domain: "ExtensionProfile.Preferences", code: 2,
+                      userInfo: [NSLocalizedDescriptionKey: "Several VPN configurations match this packet tunnel."])
+    }
+
     public static func load() async throws -> ExtensionProfile? {
         let managers = try await NETunnelProviderManager.loadAllFromPreferences()
-        // A re-signed installation must never attach to another application's
-        // NE manager or an obsolete provider from a previous signing identity.
-        let expectedIDs = Set(AppConfiguration.packetTunnelBundleIDs)
-        guard let owned = managers.first(where: {
-            guard let tunnel = $0.protocolConfiguration as? NETunnelProviderProtocol,
-                  let provider = tunnel.providerBundleIdentifier else { return false }
-            return expectedIDs.contains(provider)
-        }) else { return nil }
+        guard let owned = try ownedManager(in: managers) else { return nil }
         let profile = ExtensionProfile(owned)
         if profile.status == .disconnected {
             schedulePromoteOOMDraft()
@@ -882,7 +956,17 @@ public class ExtensionProfile: ObservableObject {
         return profile
     }
 
+    private static var installation: Task<Void, Error>?
+
     public static func install() async throws {
+        if let installation { return try await installation.value }
+        let task = Task { try await installRegisteredManager() }
+        installation = task
+        defer { installation = nil }
+        try await task.value
+    }
+
+    private static func installRegisteredManager() async throws {
         #if os(iOS)
             // Do not reject VPN installation based solely on App Group
             // signatures: NETunnelProviderManager is the authority for whether
@@ -897,6 +981,9 @@ public class ExtensionProfile: ObservableObject {
                 ])
             }
         #endif
+        // Installation is idempotent and never removes a registered profile.
+        let managers = try await NETunnelProviderManager.loadAllFromPreferences()
+        if try ownedManager(in: managers) != nil { return }
         let manager = NETunnelProviderManager()
         manager.localizedDescription = Variant.applicationName
         let tunnelProtocol = NETunnelProviderProtocol()

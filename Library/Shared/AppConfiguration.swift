@@ -244,6 +244,18 @@ public enum AppConfiguration {
         return declared.count == 1 ? declared.first : nil
     }
 
+    #if os(iOS) && !JAILBREAK
+    public static var resolvedAppGroupID: String? { SharedGroupContract.resolved }
+    public static var appGroupSelectionAmbiguous: Bool {
+        SharedGroupContract.decision.group == nil && SharedGroupContract.decision.candidates.count > 1
+    }
+    public static var fileProviderGroupReady: Bool { SharedGroupContract.filesReady }
+    public static var signingDiagnostics: String { SharedGroupContract.observation }
+    public static var signingInventory: [String] { SharedGroupContract.inventory }
+    #else
+    public static var fileProviderGroupReady: Bool { resolvedAppGroupID != nil && documentDeclaredGroup == resolvedAppGroupID }
+    public static var signingInventory: [String] { [] }
+
     private static let hostDeclaredGroup = hostBundle?.object(forInfoDictionaryKey: "AppGroupIdentifier") as? String
     private static let tunnelDeclaredGroup = packetTunnelBundle?.object(forInfoDictionaryKey: "AppGroupIdentifier") as? String
 
@@ -328,5 +340,5 @@ public enum AppConfiguration {
             "resolved=\(resolvedAppGroupID ?? "none"); " +
             "ambiguous=\(appGroupSelectionAmbiguous)"
     }
-
+    #endif
 }
