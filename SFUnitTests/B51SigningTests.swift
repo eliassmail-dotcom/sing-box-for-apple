@@ -72,6 +72,25 @@ final class B51SigningTests: XCTestCase {
         XCTAssertFalse(VPNStartReceipt(operation: nil, attempt: "widget", group: "", stages: []).matches(operation: "op1", issued: "try1"))
     }
 
+    func testReportDistinguishesCurrentProcessAndIPCFromHistoricalEvents() {
+        func event(_ role: String, _ build: String?, _ stage: String, _ details: String) -> DiagnosticsLog.Event {
+            DiagnosticsLog.Event(id: UUID().uuidString, ts: 1, process: role, session: "unit", build: build,
+                                 operation: nil, attempt: nil, stage: stage, result: "PASS", errorDomain: nil,
+                                 errorCode: nil, durationMs: nil, details: details)
+        }
+        let observations = DiagnosticsLog.groupObservations(in: [
+            event("FILEPROVIDER", nil, "appgroup.access", "reason=legacy"),
+            event("WIDGET", "50", "appgroup.access", "reason=legacy"),
+            event("APP", "51", "appgroup.access", "selected=group.x reason=authorizedDeclaration"),
+            event("APP", "51", "vpn.start.attribution", "providerOperation=unit selected=group.x reason=authorizedDeclaration")
+        ], build: "51")
+        XCTAssertEqual(observations.count, 7)
+        XCTAssertTrue(observations.contains { $0.contains("role=APP build=51 source=process") })
+        XCTAssertTrue(observations.contains { $0.contains("role=TUNNEL build=51 source=providerMessage") })
+        XCTAssertTrue(observations.contains("observed role=FILEPROVIDER build=51 unobserved"))
+        XCTAssertTrue(observations.contains("observed role=WIDGET build=51 unobserved"))
+    }
+
     @MainActor
     func testInstallAndColdStartFindOnlyOwnedManager() throws {
         func manager(_ provider: String, enabled: Bool = true) -> NETunnelProviderManager {
@@ -119,7 +138,7 @@ final class B51StorageTests: XCTestCase {
     }
 
     private func seed(_ root: URL, name: String) throws {
-        _ = try Library.Database.open(directory: root, importing: nil)
+        _ = try Database.open(directory: root, importing: nil)
         let configs = root.appendingPathComponent("configs")
         try fm.createDirectory(at: configs, withIntermediateDirectories: true)
         try Data(name.utf8).write(to: configs.appendingPathComponent("config_1.json"))
@@ -129,14 +148,14 @@ final class B51StorageTests: XCTestCase {
     }
 
     func testCleanInstallationHasNoImportMarker() throws {
-        _ = try Library.Database.open(directory: target, importing: source)
+        _ = try Database.open(directory: target, importing: source)
         XCTAssertEqual(try sql(target, "SELECT COUNT(*) FROM profiles"), "0")
         XCTAssertEqual(try sql(target, "SELECT COUNT(*) FROM sqlite_master WHERE name='sfi_imported_private_b50'"), "0")
     }
 
     func testUpgradeFromIsolatedPreservesBytesPreferencesServersAndIDsOnlyOnce() throws {
         try seed(source, name: "private")
-        for _ in 0..<2 { _ = try Library.Database.open(directory: target, importing: source) }
+        for _ in 0..<2 { _ = try Database.open(directory: target, importing: source) }
         XCTAssertEqual(try sql(target, "SELECT name FROM profiles WHERE id=1"), "private")
         XCTAssertEqual(try sql(target, "SELECT COUNT(*) FROM profiles"), "1")
         XCTAssertEqual(try sql(target, "SELECT hex(data) FROM preferences WHERE name='fixture'"), "CAFE")
@@ -148,7 +167,7 @@ final class B51StorageTests: XCTestCase {
     func testExistingSharedStoreSurvivesSameIDAndFilenameCollision() throws {
         try seed(source, name: "private")
         try seed(target, name: "shared")
-        _ = try Library.Database.open(directory: target, importing: source)
+        _ = try Database.open(directory: target, importing: source)
         XCTAssertEqual(try sql(target, "SELECT name FROM profiles WHERE id=1"), "shared")
         let path = try XCTUnwrap(sql(target, "SELECT path FROM profiles WHERE name='private'"))
         XCTAssertEqual(try String(contentsOf: target.appendingPathComponent(path), encoding: .utf8), "private")
@@ -160,11 +179,11 @@ final class B51StorageTests: XCTestCase {
         try fm.createDirectory(at: target, withIntermediateDirectories: true)
         let blocker = target.appendingPathComponent("configs")
         try Data("existing".utf8).write(to: blocker)
-        _ = try Library.Database.open(directory: target, importing: source)
+        _ = try Database.open(directory: target, importing: source)
         XCTAssertEqual(try sql(target, "SELECT COUNT(*) FROM profiles"), "0")
         XCTAssertEqual(try String(contentsOf: blocker, encoding: .utf8), "existing")
         try fm.removeItem(at: blocker)
-        _ = try Library.Database.open(directory: target, importing: source)
+        _ = try Database.open(directory: target, importing: source)
         XCTAssertEqual(try sql(target, "SELECT COUNT(*) FROM profiles"), "1")
     }
 }

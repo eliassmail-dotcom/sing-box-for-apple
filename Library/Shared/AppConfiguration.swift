@@ -252,6 +252,7 @@ public enum AppConfiguration {
     public static var fileProviderGroupReady: Bool { SharedGroupContract.filesReady }
     public static var signingDiagnostics: String { SharedGroupContract.observation }
     public static var signingInventory: [String] { SharedGroupContract.inventory }
+    public static func recordExtensionGroupAccess() { SharedGroupContract.recordAccess() }
     #else
     public static var fileProviderGroupReady: Bool { resolvedAppGroupID != nil && documentDeclaredGroup == resolvedAppGroupID }
     public static var signingInventory: [String] { [] }

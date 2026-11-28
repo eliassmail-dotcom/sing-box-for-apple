@@ -14,12 +14,6 @@ public enum FilePath {
 
     private static let defaultSharedDirectory: URL = {
         if let url = sharedContainerURL {
-            #if os(iOS) && !JAILBREAK
-            // These Library consumers can start independently of the host.
-            if [.action, .share, .intents].contains(DiagnosticsLog.process) {
-                SharedGroupContract.recordAccess()
-            }
-            #endif
             return url
         }
         // No usable app group (e.g. the re-signing profile has none): fall back to

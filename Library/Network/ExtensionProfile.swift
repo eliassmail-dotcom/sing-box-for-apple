@@ -239,6 +239,7 @@ public class ExtensionProfile: ObservableObject {
                 var config = proto.providerConfiguration ?? [:]
                 if config.removeValue(forKey: "wasOnDemandEnabled") != nil {
                     proto.providerConfiguration = config
+                    manager.protocolConfiguration = proto
                 }
             }
         }
@@ -367,9 +368,9 @@ public class ExtensionProfile: ObservableObject {
     private func confirmStart(operation: String, issued: String?, options: [String: NSObject], expected: [String: NSObject]?) {
         guard let session = connection as? NETunnelProviderSession, session.status == .connected else { return }
         do {
-            try session.sendProviderMessage(Data((VPNStartReceipt.prefix + operation).utf8)) { [weak self] data in
+            try session.sendProviderMessage(Data((VPNStartReceipt.prefix + operation).utf8)) { data in
                 Task { @MainActor in
-                    guard let self, let data, data.count <= 16384,
+                    guard let data, data.count <= 16384,
                           let receipt = try? JSONDecoder().decode(VPNStartReceipt.self, from: data) else {
                         DiagnosticsLog.record("vpn.start.attribution", operation: operation, details: "providerReplyUnavailable")
                         return
@@ -883,6 +884,7 @@ public class ExtensionProfile: ObservableObject {
                 var config = proto.providerConfiguration ?? [:]
                 config["wasOnDemandEnabled"] = true
                 proto.providerConfiguration = config
+                manager.protocolConfiguration = proto
             }
             manager.isOnDemandEnabled = false
             try await manager.saveToPreferences()
@@ -907,7 +909,13 @@ public class ExtensionProfile: ObservableObject {
         }
         // Keep old desired/last-good until a new connection is confirmed.
         let expectedDesiredOptions = currentDesiredStartOptionsForWrite()
-        let options = try await prepareStartOptions()
+        var options = try await prepareStartOptions()
+        let operation = UUID().uuidString
+        let attempt = UUID().uuidString
+        options["diagnosticOperationID"] = NSString(string: operation)
+        options["diagnosticAttemptID"] = NSString(string: attempt)
+        options["diagnosticSessionID"] = NSString(string: DiagnosticsLog.session)
+        defer { observationIDs = nil }
         try await stopImpl()
         var waitSeconds = 0
         while status != .disconnected {
@@ -918,19 +926,15 @@ public class ExtensionProfile: ObservableObject {
             }
         }
         do {
-            _ = try await start(with: options)
-            try await awaitConnected(operationID: nil, attemptID: nil)
+            let issued = try await start(with: options)
+            try await awaitConnected(operationID: operation, attemptID: attempt)
+            #if os(iOS)
+            confirmStart(operation: operation, issued: issued ? attempt : nil, options: options, expected: expectedDesiredOptions)
+            #else
+            if issued { persistConnectedSnapshot(options: options, expected: expectedDesiredOptions, operation: operation) }
+            #endif
         } catch {
             throw await makeStartDiagnosticError(error, fallbackStage: "restart / wait for connected")
-        }
-        if FilePath.hasSharedContainer {
-            do {
-                try persistDesiredStartOptions(options, expectedCurrent: expectedDesiredOptions)
-            } catch {
-                // The new tunnel is already connected; do not misreport it as
-                // disconnected solely because the shared snapshot could not sync.
-                logger.warning("VPN restarted, but desired snapshot was not updated: \(error.localizedDescription)")
-            }
         }
     }
 

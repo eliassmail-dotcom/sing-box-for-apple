@@ -194,8 +194,7 @@ open class ExtensionProvider: NEPacketTunnelProvider {
         private var locationDelegate: stubLocationDelegate?
     #endif
 
-    override public init() {
-        DiagnosticsLog.record("tunnel.init.entered")
+    private static func installCrashReporting() {
         LibboxPrepareCrashSignalHandlers()
         #if os(macOS)
             if Variant.useSystemExtension {
@@ -210,6 +209,16 @@ open class ExtensionProvider: NEPacketTunnelProvider {
             NativeCrashReporter.installForCurrentProcess()
         #endif
         LibboxReinstallCrashSignalHandlers()
+    }
+
+    #if os(iOS)
+    private static let crashReporting: Void = installCrashReporting()
+    #endif
+
+    override public init() {
+        #if !os(iOS)
+        Self.installCrashReporting()
+        #endif
         super.init()
         DiagnosticsLog.record("tunnel.init.ready")
     }
@@ -221,17 +230,26 @@ open class ExtensionProvider: NEPacketTunnelProvider {
         // identifiers in the options) or externally (Control Center control,
         // On Demand) with snapshot-only options; both paths are visible.
         let tunnelStartBegan = Date()
-        await startedSession.set(nil, nil)
         let operationID = startOptions?["diagnosticOperationID"] as? String
         let attemptID = startOptions?["diagnosticAttemptID"] as? String ?? UUID().uuidString
         DiagnosticsLog.record("tunnel.start.entered", operation: operationID, attempt: attemptID,
                             details: "origin=\(operationID != nil ? "app" : "external")")
+        await startedSession.set(nil, nil)
         DiagnosticsLog.configureSharedDirectory(FilePath.hasSharedContainer ? FilePath.sharedDirectory : nil)
         DiagnosticsLog.record("appgroup.access",
                             result: FilePath.hasSharedContainer ? .pass : .fail,
                             details: AppConfiguration.signingDiagnostics)
         // Probe IO runs on the diagnostics queue, never on this critical path.
         DiagnosticsLog.checkSharedContainerProbe(expectedSession: startOptions?["diagnosticSessionID"] as? String)
+        #if os(iOS)
+        // Keep optional filesystem and crash-handler setup out of NE's constructor.
+        // Install once, after callback entry and before the first Libbox service.
+        let crashStart = ProcessInfo.processInfo.systemUptime
+        DiagnosticsLog.record("tunnel.crashReporter.entered", operation: operationID, attempt: attemptID)
+        _ = Self.crashReporting
+        DiagnosticsLog.record("tunnel.crashReporter.ready", operation: operationID, attempt: attemptID,
+                              durationMs: Int((ProcessInfo.processInfo.systemUptime - crashStart) * 1000))
+        #endif
         do {
             try await startTunnelBody(startOptions, operationID: operationID, attemptID: attemptID)
             await startedSession.set(operationID, attemptID)

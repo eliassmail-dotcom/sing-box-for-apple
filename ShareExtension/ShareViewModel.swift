@@ -23,6 +23,9 @@ final class ShareViewModel: ObservableObject {
     private var session: TaildropSendSession?
 
     static func setupService() {
+        #if os(iOS) && !JAILBREAK
+        AppConfiguration.recordExtensionGroupAccess()
+        #endif
         do {
             try ServiceSetup.apply(crashReportSource: "ShareExtension")
         } catch {

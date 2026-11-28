@@ -317,6 +317,9 @@ public enum DiagnosticsLog {
         lines.append("droppedEvents: \(dropped)")
 
         let events = collectEvents()
+        if let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String {
+            lines.append(contentsOf: groupObservations(in: events, build: build))
+        }
         let seen = Set(events.map(\.process))
         for expected in ["APP", "TUNNEL", "FILEPROVIDER"] where !seen.contains(expected) {
             lines.append("UNKNOWN: no \(expected) events - extension diagnostics inaccessible")
@@ -331,6 +334,22 @@ public enum DiagnosticsLog {
             lines.append(event.singleLine)
         }
         return lines.joined(separator: "\n")
+    }
+
+    static func groupObservations(in events: [Event], build: String) -> [String] {
+        let current = events.filter { $0.build == build }
+        return SharedGroupContract.Role.allCases.map { role in
+            let event = current.last {
+                guard $0.details?.contains("reason=") == true else { return false }
+                if $0.process == role.rawValue && $0.stage == "appgroup.access" { return true }
+                return role == .tunnel && $0.process == Process.app.rawValue
+                    && $0.stage == "vpn.start.attribution" && $0.details?.hasPrefix("providerOperation=") == true
+            }
+            let label = "observed role=\(role.rawValue) build=\(build)"
+            guard let event else { return "\(label) unobserved" }
+            let source = event.stage == "appgroup.access" ? "process" : "providerMessage"
+            return "\(label) source=\(source) ts=\(event.ts) \(event.details ?? "")"
+        }
     }
 
     /// Writes the report into the app's Documents directory (visible in the

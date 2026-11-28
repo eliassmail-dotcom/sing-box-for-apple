@@ -38,6 +38,7 @@ assert any(i.stat().st_size > 0 for i in (p / 'PlugIns/WidgetExtension.appex/Met
     coreVersion="LX.37", deliveryStatus="Physical iPhone acceptance pending"), indent=2))
 PY
 zip -qry SFI-b51-LX37-portable.ipa Payload
+python3 ../scripts/verify_unsigned_ipa.py SFI-b51-LX37-portable.ipa --build 51 > portable-preflight.json
 # Preserve the full original declaration for in-place upgrades of the working b50
 # signing installation. Other signers can bind their own exact group before signing.
 base="$RUNNER_TEMP/SFI-b50.ipa"
@@ -47,4 +48,5 @@ group=$(python3 -c 'import sys,plistlib,zipfile; print(plistlib.loads(zipfile.Zi
 python3 ../scripts/prepare_ipa_for_signer.py SFI-b51-LX37-portable.ipa SFI-b51-LX37-unsigned.ipa --app-group "$group"
 unzip -tq SFI-b51-LX37-unsigned.ipa
 python3 ../scripts/verify_unsigned_ipa.py SFI-b51-LX37-unsigned.ipa --build 51 | tee signing-preflight.json
-shasum -a 256 SFI-b51-LX37-unsigned.ipa > SHA256SUMS
+zip -qj b51-signing-tools.zip ../scripts/prepare_ipa_for_signer.py ../scripts/verify_unsigned_ipa.py
+shasum -a 256 SFI-b51-LX37-unsigned.ipa SFI-b51-LX37-portable.ipa b51-signing-tools.zip > SHA256SUMS
