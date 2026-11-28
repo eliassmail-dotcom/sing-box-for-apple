@@ -107,22 +107,17 @@ public enum StrategyModeCatalog {
     }
 
     public static func isAvailable(_ mode: StrategyModeSpec, strategyTags: [String], geminiTags: [String]?) -> Bool {
-        guard strategyTarget(mode, strategyTags: strategyTags) != nil else { return false }
-        if let geminiTags {
-            return geminiTarget(mode, geminiTags: geminiTags) != nil
-        }
-        return true
+        // Availability belongs to the main Strategy selector. Gemini may
+        // be absent, have a manual selection, or expose different groups.
+        strategyTarget(mode, strategyTags: strategyTags) != nil
     }
 
-    /// The single mode matching the live selector state of both groups, or
-    /// nil when the configuration is mixed / manually changed.
+    /// Match the live main Strategy selector only. A manual Gemini selection
+    /// must not clear the active tile or turn a node-rotation tap into a mode
+    /// change that would overwrite the user's Gemini selection.
     public static func activeMode(strategySelected: String, geminiSelected: String?, strategyTags: [String], geminiTags: [String]?) -> StrategyModeSpec? {
         modes.first { mode in
-            guard mode.strategyCandidates.contains(strategySelected) else { return false }
-            if let geminiTags, let geminiSelected {
-                return mode.geminiCandidates.contains(geminiSelected)
-            }
-            return true
+            mode.strategyCandidates.contains(strategySelected)
         }
     }
 }
